@@ -1,0 +1,15 @@
+{
+  "dataset": "PoPu Tactilus",
+  "stage": "P2/R2",
+  "unit_of_analysis": "one source JSON record",
+  "eligible_population": "P1 status=OK and posture in empty/supine/prone/left/right",
+  "excluded_population": "P1 WARN others.json records without fixed posture and variation labels",
+  "metrics": [
+    "median_total_signal",
+    "median_active_cells",
+    "temporal_total_cv"
+  ],
+  "warn_rule": "per-posture robust z-score > 4.5 on any metric",
+  "reject_rule": "source is unreadable or structurally invalid during P2 re-read",
+  "important_boundary": "WARN is a visual-review candidate, not a confirmed sensor or label defect."
+}

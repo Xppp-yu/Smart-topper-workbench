@@ -1,0 +1,29 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# Local machine paths and secrets
+configs/paths.local.json
+.env
+
+# Raw and generated data stay outside Git
+data/public_raw/*
+!data/public_raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Generated artifacts
+models/*
+!models/.gitkeep
+outputs/figures/*
+!outputs/figures/.gitkeep
+outputs/metrics/*
+!outputs/metrics/.gitkeep
+outputs/reports/*
+!outputs/reports/.gitkeep
+outputs/models/*
+!outputs/models/.gitkeep
+

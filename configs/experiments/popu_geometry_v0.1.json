@@ -1,0 +1,14 @@
+{
+  "dataset": "PoPu Tactilus",
+  "stage": "P3/R3",
+  "input_population": "P2 ACCEPT and WARN records; P2 EXCLUDED records remain excluded",
+  "unit_of_analysis": "P2 representative frame from one source JSON record",
+  "mask_rule": {
+    "positive_percentile": 50.0,
+    "minimum_raw_threshold": 1.0,
+    "minimum_component_cells": 3,
+    "minimum_component_fraction_of_largest": 0.02
+  },
+  "outputs": ["contact mask", "bbox", "centroid", "centre of pressure", "principal axis"],
+  "important_boundary": "The mask is a repeatable geometry candidate, not a calibrated anatomical-body or physical-pressure boundary."
+}

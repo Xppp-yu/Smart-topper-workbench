@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+import numpy as np
+
+from topper_perception.geometry.popu import build_contact_mask, describe_geometry
+
+
+def test_mask_removes_tiny_islands_and_keeps_contact_cluster() -> None:
+    values = np.zeros((6, 6), dtype=float)
+    values[2:4, 2:5] = 10
+    values[0, 0] = 10
+
+    mask, threshold, components = build_contact_mask(values, positive_percentile=10, minimum_component_cells=3)
+
+    assert threshold == 10
+    assert components == 1
+    assert mask.sum() == 6
+    assert mask[0, 0] is np.False_
+
+
+def test_geometry_reports_bbox_and_centre_of_pressure() -> None:
+    values = np.zeros((5, 5), dtype=float)
+    values[1, 1] = 2
+    values[1, 2] = 4
+    values[2, 1] = 4
+    values[2, 2] = 8
+
+    geometry, mask = describe_geometry(values, positive_percentile=0, minimum_component_cells=1)
+
+    assert geometry["geometry_status"] == "OK"
+    assert geometry["bbox_height"] == 2
+    assert geometry["bbox_width"] == 2
+    assert geometry["cop_row"] > 1.5
+    assert geometry["cop_column"] > 1.5
+    assert mask.sum() == 4

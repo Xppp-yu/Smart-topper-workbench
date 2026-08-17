@@ -1,0 +1,33 @@
+[project]
+name = "smarttopper-team-workbench"
+version = "0.1.0"
+description = "Isolated Windows workbench for smart-topper team compatibility, validation, and delivery."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "ipykernel>=6.29,<8",
+    "matplotlib>=3.9,<4",
+    "numpy>=2.0,<3",
+    "pandas>=2.2,<4",
+    "scikit-learn>=1.5,<2",
+    "scipy>=1.14,<2",
+    "seaborn>=0.13,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/topper_perception"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
