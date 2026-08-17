@@ -227,11 +227,12 @@ def _select_representative_samples(
         if "WARN" in p2:
             warn.append(sample_id)
             continue
-        if all(status == "OK" for status in statuses):
-            accept.append(sample_id)
         partial_failure = "OK" in statuses and any(status != "OK" for status in statuses)
         if partial_failure or _bbox_fraction_spread(strategy_rows) > spread_threshold:
             divergence.append(sample_id)
+            continue
+        if all(status == "OK" for status in statuses):
+            accept.append(sample_id)
     return {
         "accept": accept[: int(overlay["accept_count"])],
         "warn": warn[: int(overlay["warn_count"])],

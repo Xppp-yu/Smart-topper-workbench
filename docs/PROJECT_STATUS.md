@@ -5,7 +5,7 @@
 
 ## 当前一句话状态
 
-PoPu Tactilus 的数据接入、全量结构盘点、质量策略和首次 Geometry 提取已完成；P3.1 的 Mask 策略比较与 P3.2 的区域标注—压力记录对齐审计代码已就绪、尚未运行。当前不能直接训练部位或姿态模型。
+PoPu P3 已收口：P4a 研究特征工程冻结使用 `largest_component` 主连通域 Mask，冻结版 Geometry 为 `5,098 OK / 2 WARN / 0 REJECT`；P3.2 同时确认人体 COCO 标注均为一对三歧义，区域监督继续 HOLD。下一步可推进 P4a 无标签特征表，不能直接训练身体部位模型。
 
 ## 阶段看板
 
@@ -14,11 +14,11 @@ PoPu Tactilus 的数据接入、全量结构盘点、质量策略和首次 Geome
 | P0 | Windows 环境、数据路径与最小读取链路 | COMPLETE | 健康检查、真实 PoPu 图、PMD 可读性检查 | 数据版本和研究任务可被定位 |
 | P1/R1 | 全量 PoPu Tactilus Inventory | COMPLETE | [P1 阶段报告](stage_reports/P1_POPU_TACTILUS_INVENTORY_v0.1.md)、CSV、JSON、标签分布图 | 明确有标签集和未标注 `others.json` 的用途 |
 | P2/R2 | 样本画廊与 `ACCEPT/WARN/REJECT` 质量门 | COMPLETE | [P2 阶段报告](stage_reports/P2_POPU_TACTILUS_QUALITY_GATE_v0.1.md)、质量 CSV、两张画廊图；`5,006 ACCEPT / 94 WARN / 60 EXCLUDED / 0 REJECT` | WARN 暂保留，后续比较全量有标签与仅 ACCEPT 两个口径 |
-| P3/R3 | 接触 Mask 与 Geometry | PARTIAL | [P3 阶段报告](stage_reports/P3_POPU_CONTACT_MASK_AND_GEOMETRY_v0.1.md)、Geometry CSV、Mask/Geometry 叠加图；无读取拒绝 | P3.1 比较 Mask 策略并冻结一个 Geometry 输入规则 |
-| P3.1/R3.1 | Mask 候选策略比较 | READY_TO_RUN | `compare_popu_mask_strategies.py`、单元测试通过；尚无真实数据输出 | 复核稳定性指标和代表性叠加图，不自动按分数冻结 |
-| P3.2/R3.2 | COCO 区域标注—压力记录对齐审计 | READY_TO_RUN | `audit_popu_segmentation.py`、单元测试通过；尚无真实数据输出 | 获得可追溯的逐记录、逐帧配对规则；否则区域监督训练保持 HOLD |
-| P4a/R4a | 无标签特征表 | BLOCKED_BY_P3.1 | 尚未开始 | Geometry 输入规则冻结；每行样本可追溯，原始/空间/质量特征与标签列分离 |
-| P4b/R4b | 区域标签关联与监督特征集 | BLOCKED_BY_P3.2_AND_P4A | 尚未开始 | 有文档可追溯的逐记录、逐帧配对规则；否则不生成区域监督训练集 |
+| P3/R3 | 接触 Mask 与 Geometry | COMPLETE | [首轮 P3 报告](stage_reports/P3_POPU_CONTACT_MASK_AND_GEOMETRY_v0.1.md)、[P3.1 冻结报告](stage_reports/P3_1_POPU_MASK_STRATEGY_FREEZE_v0.1.md)、冻结配置与 Geometry v0.2 | P4a 只使用版本化冻结规则；新真值到位时才重新打开 Mask 决策 |
+| P3.1/R3.1 | Mask 候选策略比较 | COMPLETE | 三策略 `15,480` 行、`3+3+3` 叠加图；冻结 `largest_component`，v0.2 为 `5,098 OK / 2 WARN / 0 REJECT` | 进入 P4a，并保留 `mask_strategy` 与完整追溯字段 |
+| P3.2/R3.2 | COCO 区域标注—压力记录对齐审计 | COMPLETE / SUPERVISION_HOLD | [P3.2 审计报告](stage_reports/P3_2_POPU_SEGMENTATION_ALIGNMENT_AUDIT_v0.1.md)；`1,670` 人体标注一对三歧义，`60` 一对一候选均为空床 | 获得官方映射或独立同步真值前，不生成区域监督训练集 |
+| P4a/R4a | 无标签特征表 | READY_TO_IMPLEMENT | 输入规则已冻结为 `popu_geometry_frozen_v0.2.json` | 每行样本可追溯，原始/空间/质量特征与标签列分离 |
+| P4b/R4b | 区域标签关联与监督特征集 | BLOCKED_BY_MISSING_PAIRING_AND_P4A | P3.2 已证明当前人体标注无法唯一配对 | 有文档可追溯的逐记录、逐帧配对规则；否则不生成区域监督训练集 |
 | P5/R5 | 姿态 Baseline 与受试者隔离评价 | BLOCKED_BY_P4A | 尚未开始 | GroupKFold/LOSO、逐样本预测和错误图 |
 | P6/R6 | `UNKNOWN/REJECT` 与错误分析 | BLOCKED_BY_P5 | 尚未开始 | 阈值仅由验证受试者选择 |
 | P7/R7 | 降密度、坏点、区域研究 | BLOCKED_BY_P6 | 尚未开始 | 不将软件消融误称为硬件验证 |

@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 from scipy import ndimage
 
+from .mask_strategies import build_strategy_mask
+
 
 GEOMETRY_COLUMNS = (
     "sample_id",
@@ -17,6 +19,7 @@ GEOMETRY_COLUMNS = (
     "variation",
     "p2_quality_status",
     "representative_frame_index",
+    "mask_strategy",
     "geometry_status",
     "geometry_reason",
     "mask_threshold_raw",
@@ -85,23 +88,26 @@ def build_contact_mask(
 
 def _empty_geometry(
     *,
+    strategy: str,
     threshold: float,
     component_count: int,
 ) -> dict[str, object]:
     return {
+        "mask_strategy": strategy,
         "geometry_status": "WARN",
         "geometry_reason": "empty_contact_mask",
         "mask_threshold_raw": threshold,
         "mask_cell_count": 0,
         "mask_fraction": 0.0,
         "component_count": component_count,
-        **{column: "" for column in GEOMETRY_COLUMNS[13:]},
+        **{column: "" for column in GEOMETRY_COLUMNS[14:]},
     }
 
 
 def describe_geometry(
     matrix: np.ndarray,
     *,
+    strategy: str = "relative_filtered",
     positive_percentile: float = 50.0,
     minimum_raw_threshold: float = 1.0,
     minimum_component_cells: int = 3,
@@ -109,16 +115,22 @@ def describe_geometry(
 ) -> tuple[dict[str, object], np.ndarray]:
     """Return mask, bbox, centroid, centre of pressure and PCA-axis geometry."""
     values = np.asarray(matrix, dtype=np.float64)
-    mask, threshold, component_count = build_contact_mask(
+    mask, threshold = build_strategy_mask(
         values,
+        strategy=strategy,
         positive_percentile=positive_percentile,
         minimum_raw_threshold=minimum_raw_threshold,
         minimum_component_cells=minimum_component_cells,
         minimum_component_fraction_of_largest=minimum_component_fraction_of_largest,
     )
+    _, component_count = ndimage.label(mask)
     coordinates = np.argwhere(mask)
     if coordinates.size == 0:
-        return _empty_geometry(threshold=threshold, component_count=component_count), mask
+        return _empty_geometry(
+            strategy=strategy,
+            threshold=threshold,
+            component_count=int(component_count),
+        ), mask
 
     row_min, column_min = coordinates.min(axis=0)
     row_max, column_max = coordinates.max(axis=0)
@@ -126,28 +138,45 @@ def describe_geometry(
     weights = values[mask]
     weight_sum = float(np.sum(weights))
     if weight_sum <= 0:
-        return _empty_geometry(threshold=threshold, component_count=component_count), mask
+        return _empty_geometry(
+            strategy=strategy,
+            threshold=threshold,
+            component_count=int(component_count),
+        ), mask
     cop_row = float(np.average(coordinates[:, 0], weights=weights))
     cop_column = float(np.average(coordinates[:, 1], weights=weights))
 
-    centered = coordinates.astype(float) - np.asarray([cop_row, cop_column])
-    covariance = np.cov(centered, rowvar=False, aweights=weights)
-    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-    major_value, minor_value = float(eigenvalues[-1]), float(eigenvalues[0])
-    major_vector = eigenvectors[:, -1]
-    axis_degrees = float(np.degrees(np.arctan2(major_vector[0], major_vector[1])))
-    # A line has no direction: normalize its angle to [-90, 90).
-    axis_degrees = ((axis_degrees + 90.0) % 180.0) - 90.0
-    anisotropy = (major_value - minor_value) / major_value if major_value > 0 else 0.0
+    geometry_status = "OK"
+    geometry_reason = ""
+    axis_degrees: float | str = ""
+    anisotropy: float | str = ""
+    if coordinates.shape[0] >= 2:
+        centered = coordinates.astype(float) - np.asarray([cop_row, cop_column])
+        covariance = np.cov(centered, rowvar=False, aweights=weights)
+        if np.isfinite(covariance).all():
+            eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+            major_value, minor_value = float(eigenvalues[-1]), float(eigenvalues[0])
+            major_vector = eigenvectors[:, -1]
+            axis_degrees = float(np.degrees(np.arctan2(major_vector[0], major_vector[1])))
+            # A line has no direction: normalize its angle to [-90, 90).
+            axis_degrees = ((axis_degrees + 90.0) % 180.0) - 90.0
+            anisotropy = (major_value - minor_value) / major_value if major_value > 0 else 0.0
+        else:
+            geometry_status = "WARN"
+            geometry_reason = "non_finite_principal_axis"
+    else:
+        geometry_status = "WARN"
+        geometry_reason = "insufficient_cells_for_principal_axis"
 
     rows, columns = values.shape
     result: dict[str, object] = {
-        "geometry_status": "OK",
-        "geometry_reason": "",
+        "mask_strategy": strategy,
+        "geometry_status": geometry_status,
+        "geometry_reason": geometry_reason,
         "mask_threshold_raw": threshold,
         "mask_cell_count": int(mask.sum()),
         "mask_fraction": float(mask.mean()),
-        "component_count": component_count,
+        "component_count": int(component_count),
         "bbox_row_min": int(row_min),
         "bbox_row_max": int(row_max),
         "bbox_column_min": int(column_min),
@@ -161,7 +190,7 @@ def describe_geometry(
         "cop_row_fraction": cop_row / max(rows - 1, 1),
         "cop_column_fraction": cop_column / max(columns - 1, 1),
         "principal_axis_degrees": axis_degrees,
-        "principal_axis_anisotropy": float(anisotropy),
+        "principal_axis_anisotropy": anisotropy,
         "contact_signal_sum": weight_sum,
     }
     return result, mask

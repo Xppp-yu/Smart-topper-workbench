@@ -33,3 +33,40 @@ def test_geometry_reports_bbox_and_centre_of_pressure() -> None:
     assert geometry["cop_row"] > 1.5
     assert geometry["cop_column"] > 1.5
     assert mask.sum() == 4
+
+
+def test_geometry_can_use_frozen_largest_component_strategy() -> None:
+    values = np.zeros((7, 7), dtype=float)
+    values[1:4, 1:4] = 10
+    values[5, 5] = 10
+
+    geometry, mask = describe_geometry(
+        values,
+        strategy="largest_component",
+        positive_percentile=10,
+        minimum_component_cells=1,
+    )
+
+    assert geometry["mask_strategy"] == "largest_component"
+    assert geometry["component_count"] == 1
+    assert geometry["bbox_height"] == 3
+    assert geometry["bbox_width"] == 3
+    assert mask.sum() == 9
+
+
+def test_single_cell_geometry_warns_instead_of_emitting_nan_axis() -> None:
+    values = np.zeros((4, 4), dtype=float)
+    values[2, 1] = 10
+
+    geometry, mask = describe_geometry(
+        values,
+        strategy="largest_component",
+        positive_percentile=10,
+        minimum_component_cells=1,
+    )
+
+    assert mask.sum() == 1
+    assert geometry["geometry_status"] == "WARN"
+    assert geometry["geometry_reason"] == "insufficient_cells_for_principal_axis"
+    assert geometry["principal_axis_degrees"] == ""
+    assert geometry["principal_axis_anisotropy"] == ""

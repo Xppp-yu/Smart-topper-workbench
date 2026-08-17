@@ -18,6 +18,7 @@ from topper_perception.geometry.popu import (
     describe_geometry,
     summarise_geometry,
 )
+from topper_perception.geometry.mask_strategies import MASK_STRATEGIES
 from topper_perception.io.popu import POPU_POSTURES, load_tactilus_record
 
 
@@ -34,6 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--quality-input",
         type=Path,
         default=Path("outputs/metrics/popu_tactilus_quality_results_v0.1.csv"),
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=MASK_STRATEGIES,
+        default="relative_filtered",
+        help="Named contact-mask strategy; keep the default for v0.1 reproducibility.",
     )
     parser.add_argument(
         "--geometry-output",
@@ -76,7 +83,8 @@ def _geometry_row(quality_row: dict[str, str], args: argparse.Namespace) -> dict
         "variation": quality_row["variation"],
         "p2_quality_status": quality_row["quality_status"],
         "representative_frame_index": quality_row["representative_frame_index"],
-        **{column: "" for column in GEOMETRY_COLUMNS[7:]},
+        "mask_strategy": args.strategy,
+        **{column: "" for column in GEOMETRY_COLUMNS[8:]},
     }
     if quality_row["quality_status"] not in ("ACCEPT", "WARN"):
         base.update({"geometry_status": "EXCLUDED", "geometry_reason": "not_in_p2_eligible_population"})
@@ -86,6 +94,7 @@ def _geometry_row(quality_row: dict[str, str], args: argparse.Namespace) -> dict
         values = frames[int(quality_row["representative_frame_index"])].values
         geometry, _ = describe_geometry(
             values,
+            strategy=args.strategy,
             positive_percentile=args.positive_percentile,
             minimum_raw_threshold=args.minimum_raw_threshold,
             minimum_component_cells=args.minimum_component_cells,
@@ -118,6 +127,7 @@ def _load_values_and_mask(row: dict[str, object], args: argparse.Namespace) -> t
     values = frames[int(row["representative_frame_index"])].values
     _, mask = describe_geometry(
         values,
+        strategy=args.strategy,
         positive_percentile=args.positive_percentile,
         minimum_raw_threshold=args.minimum_raw_threshold,
         minimum_component_cells=args.minimum_component_cells,
@@ -176,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             "dataset": "PoPu",
             "input_quality_policy": "P2 ACCEPT and WARN retained; EXCLUDED records stay outside geometry extraction",
             "mask_rule": {
+                "strategy": args.strategy,
                 "positive_percentile": args.positive_percentile,
                 "minimum_raw_threshold": args.minimum_raw_threshold,
                 "minimum_component_cells": args.minimum_component_cells,

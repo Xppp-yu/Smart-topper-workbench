@@ -1,5 +1,7 @@
 # P3/R3 — PoPu 接触 Mask 与 Geometry 报告 v0.1
 
+> 本文件保留 P3 首轮未冻结状态。后续收口结论见 [P3.1 Mask 冻结报告](P3_1_POPU_MASK_STRATEGY_FREEZE_v0.1.md) 与 [P3.2 区域标注对齐审计报告](P3_2_POPU_SEGMENTATION_ALIGNMENT_AUDIT_v0.1.md)。
+
 ## 1. 阶段结论
 
 **状态：PARTIAL（全量计算、测试和可视化完成；当前 Mask 候选未冻结）。**

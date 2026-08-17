@@ -1,0 +1,30 @@
+{
+  "dataset": "PoPu Tactilus",
+  "stage": "P3.1/R3.1 freeze for P4a",
+  "status": "FROZEN_FOR_RESEARCH_FEATURE_ENGINEERING",
+  "input_population": "P2 ACCEPT and WARN fixed-posture records; P2 EXCLUDED records remain excluded",
+  "unit_of_analysis": "P2 representative frame from one source JSON record",
+  "mask_rule": {
+    "strategy": "largest_component",
+    "positive_percentile": 50.0,
+    "minimum_raw_threshold": 1.0,
+    "minimum_component_cells": 3,
+    "minimum_component_fraction_of_largest": 0.02,
+    "inactive_parameters_for_this_strategy": [
+      "minimum_component_cells",
+      "minimum_component_fraction_of_largest"
+    ]
+  },
+  "selection_evidence": {
+    "comparison_summary": "outputs/reports/popu_mask_strategy_comparison_summary_v0.1.json",
+    "comparison_table": "outputs/metrics/popu_mask_strategy_comparison_v0.1.csv",
+    "overlay_figure": "outputs/figures/popu_mask_strategy_overlays_v0.1.png"
+  },
+  "selection_reason": "Largest-component produced 5100/5100 usable eligible records, one connected component by construction, the smallest median bbox area, and no empty-mask WARN. It is frozen as a stable main-body geometry input, not as anatomical truth.",
+  "known_limitations": [
+    "May discard real but disconnected limb-contact islands.",
+    "Has no independent anatomical or calibrated physical-contact ground truth.",
+    "Must not be interpreted as Head/Torso/Arm/Leg segmentation.",
+    "The freeze applies to PoPu research feature engineering only and may be reopened with independently paired truth or proprietary hardware data."
+  ]
+}
