@@ -18,7 +18,10 @@ from topper_perception.labels.popu import BODY_PART_CATEGORIES, audit_segmentati
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_COLUMNS = (
     "annotation_file", "subject_id", "posture", "variation", "image_count",
-    "canvas_height", "canvas_width", "annotation_count", "annotation_category_ids",
+    "image_id", "image_file_name", "canvas_height", "canvas_width",
+    "annotation_count", "annotation_category_ids",
+    "category_name_mismatch_count", "annotation_image_reference_error_count",
+    "annotation_bbox_error_count", "annotation_category_error_count",
     "candidate_tactilus_record_count", "candidate_tactilus_records",
     "invalid_polygon_point_count", "structural_errors", "alignment_status",
     "supervision_boundary",

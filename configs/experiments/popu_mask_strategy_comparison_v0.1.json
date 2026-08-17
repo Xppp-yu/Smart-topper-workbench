@@ -1,0 +1,27 @@
+{
+  "dataset": "PoPu Tactilus",
+  "stage": "P3.1/R3.1",
+  "unit_of_analysis": "all snapshots of one source JSON record",
+  "candidate_strategies": ["relative_filtered", "largest_component", "relative_closed"],
+  "mask_rule": {
+    "positive_percentile": 50.0,
+    "minimum_raw_threshold": 1.0,
+    "minimum_component_cells": 3,
+    "minimum_component_fraction_of_largest": 0.02
+  },
+  "paths": {
+    "quality_input": "outputs/metrics/popu_tactilus_quality_results_v0.1.csv",
+    "output": "outputs/metrics/popu_mask_strategy_comparison_v0.1.csv",
+    "summary_output": "outputs/reports/popu_mask_strategy_comparison_summary_v0.1.json",
+    "stability_figure_output": "outputs/figures/popu_mask_strategy_stability_v0.1.png",
+    "overlay_figure_output": "outputs/figures/popu_mask_strategy_overlays_v0.1.png"
+  },
+  "overlay_selection": {
+    "accept_count": 3,
+    "warn_count": 3,
+    "divergence_count": 3,
+    "frame_index": 0,
+    "divergence_bbox_fraction_spread": 0.05
+  },
+  "decision_boundary": "Stability and bbox metrics rank candidates only. Freeze no mask rule until representative overlays and failure cases are reviewed by a human."
+}

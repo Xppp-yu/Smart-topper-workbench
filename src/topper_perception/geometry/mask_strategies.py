@@ -7,6 +7,7 @@ segmentation or a calibrated pressure-contact boundary.
 from __future__ import annotations
 
 import math
+from typing import Sequence
 
 import numpy as np
 from scipy import ndimage
@@ -105,3 +106,80 @@ def jaccard(left: np.ndarray, right: np.ndarray) -> float:
     """Return overlap for two binary masks; two empty masks are not informative."""
     union = np.logical_or(left, right).sum()
     return float(np.logical_and(left, right).sum() / union) if union else float("nan")
+
+
+def mask_bbox(mask: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Return the inclusive ``(row_min, row_max, column_min, column_max)`` of a mask.
+
+    ``None`` for an empty mask so temporal comparisons can skip empty frames
+    instead of fabricating a zero-area box.
+    """
+    coordinates = np.argwhere(mask)
+    if coordinates.size == 0:
+        return None
+    row_min, column_min = coordinates.min(axis=0)
+    row_max, column_max = coordinates.max(axis=0)
+    return int(row_min), int(row_max), int(column_min), int(column_max)
+
+
+def bbox_center(bbox: tuple[int, int, int, int]) -> tuple[float, float]:
+    """Return the ``(row, column)`` centre of an inclusive bounding box."""
+    return (bbox[0] + bbox[1]) / 2.0, (bbox[2] + bbox[3]) / 2.0
+
+
+def bbox_iou(
+    left: tuple[int, int, int, int], right: tuple[int, int, int, int]
+) -> float:
+    """Intersection-over-union for two inclusive axis-aligned boxes."""
+    row_min = max(left[0], right[0])
+    row_max = min(left[1], right[1])
+    column_min = max(left[2], right[2])
+    column_max = min(left[3], right[3])
+    intersection = max(0, row_max - row_min + 1) * max(0, column_max - column_min + 1)
+    area_left = (left[1] - left[0] + 1) * (left[3] - left[2] + 1)
+    area_right = (right[1] - right[0] + 1) * (right[3] - right[2] + 1)
+    union = area_left + area_right - intersection
+    return float(intersection / union) if union > 0 else float("nan")
+
+
+def bbox_center_shift(
+    left: tuple[int, int, int, int], right: tuple[int, int, int, int]
+) -> float:
+    """Euclidean distance between two bbox centres, in sensor-cell units."""
+    left_row, left_column = bbox_center(left)
+    right_row, right_column = bbox_center(right)
+    return float(np.hypot(right_row - left_row, right_column - left_column))
+
+
+def consecutive_bbox_stability(masks: Sequence[np.ndarray]) -> dict[str, float]:
+    """Aggregate bbox stability across consecutive frames of one record.
+
+    IoU and centre shift are computed only on adjacent non-empty pairs; size
+    statistics use every non-empty frame. A fully empty sequence yields NaN
+    for every metric rather than inventing a zero-size box.
+    """
+    boxes = [mask_bbox(mask) for mask in masks]
+    ious = [
+        bbox_iou(left, right)
+        for left, right in zip(boxes, boxes[1:])
+        if left is not None and right is not None
+    ]
+    shifts = [
+        bbox_center_shift(left, right)
+        for left, right in zip(boxes, boxes[1:])
+        if left is not None and right is not None
+    ]
+    widths = [box[3] - box[2] + 1 for box in boxes if box is not None]
+    heights = [box[1] - box[0] + 1 for box in boxes if box is not None]
+    return {
+        "mean_consecutive_bbox_iou": float(np.mean(ious)) if ious else float("nan"),
+        "mean_bbox_center_shift": float(np.mean(shifts)) if shifts else float("nan"),
+        "median_bbox_width": float(np.median(widths)) if widths else float("nan"),
+        "median_bbox_height": float(np.median(heights)) if heights else float("nan"),
+        "bbox_width_iqr": (
+            float(np.percentile(widths, 75) - np.percentile(widths, 25)) if widths else float("nan")
+        ),
+        "bbox_height_iqr": (
+            float(np.percentile(heights, 75) - np.percentile(heights, 25)) if heights else float("nan")
+        ),
+    }
