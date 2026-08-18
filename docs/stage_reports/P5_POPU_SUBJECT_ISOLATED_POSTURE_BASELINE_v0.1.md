@@ -29,7 +29,7 @@ uv run python scripts/baseline_popu.py
 | 预处理 | `SimpleImputer(median) + StandardScaler` 全封装进 Pipeline，仅各训练折拟合 |
 | 特征 | 仅 P4a summary 的 71 个 `feature_columns`；标签/元数据列全部排除 |
 | 选型 | 开发集 OOF `macro_f1` 最高；`dummy` 永不入选；平局取 `balanced_accuracy` |
-| 测试 | P5 v0.1 实际口径：held-out test 在开发集选型后对**每个候选模型各评估一次**；模型选择未读取任何 test 分数。严格的“仅对最终候选使用一次 test”留到 P5.1 收紧 |
+| 测试 | P5 v0.1 实际口径：held-out test 在开发集选型后对**每个候选模型各评估一次**；模型选择未读取任何 test 分数。P5.1 起改用 repeated subject-grouped CV 复核候选，不再声称存在一个未查看的 PoPu test；真正外部确认留给 SLP/PressurePose/PMD 适用任务与未来自研同步数据 |
 
 候选：`dummy(stratified)` 下限、`logreg(multinomial)`、`rf(n=200)`、`knn(k=5)`。
 
@@ -56,7 +56,7 @@ uv run python scripts/baseline_popu.py
 | rf | 0.9180 (0.023) | 0.9184 | 0.8992 | 0.9438 | 0.9442 | 0.9308 |
 | knn | 0.8674 (0.026) | 0.8676 | 0.8364 | 0.8828 | 0.8838 | 0.8561 |
 
-**当前首轮领先候选 = `logreg@multinomial`**（开发集 OOF macro-F1 最高 0.9260；held-out 上也最高 0.9466，选型与测试一致，无过拟合迹象）。注意：P5 v0.1 对每个候选模型都各评估了一次 held-out test，未按“仅对最终候选使用一次 test”的严格口径执行，因此 logreg 只称**首轮领先候选，未正式冻结**。
+**当前首轮领先候选 = `logreg@multinomial`**（开发集 OOF macro-F1 最高 0.9260；held-out 上也最高 0.9466，选型与测试一致，无过拟合迹象）。注意：P5 v0.1 对每个候选模型都各评估了一次 held-out test；P5.1 起不再沿用“仅对最终候选使用一次 test”的严格口径，改用 repeated subject-grouped CV 复核候选（且不声称存在未查看的 PoPu test）。因此 logreg 只称**首轮领先候选，未正式冻结**。
 
 逐类别（logreg，primary test）：`empty` P/R/F1 = 1.0/1.0/1.0，`supine` 0.9458，`prone` 0.9190，`left` 0.9294，`right` 0.9389。
 
@@ -91,7 +91,7 @@ uv run python scripts/baseline_popu.py
 - 受试者隔离协议按冻结配置执行：12 个 held-out 与 48 个开发受试者完全隔离；`GroupKFold` 保证同一受试者只落一个 fold（单元测试 `test_split_subjects_*` 与代码路径）。
 - 只使用 71 个特征列，且与 P4a summary `feature_columns` 逐一核对相等；`feature_columns()` 从构造上排除 `subject_id/posture/variation/路径/snapshot/cohort` 等（单元测试）。
 - 填补/标准化封装在 Pipeline 内、仅各训练折拟合（单元测试 `test_pipeline_imputer_fits_only_on_training_fold` 直接断言 imputer 统计量==训练折中位数）。
-- held-out test 只评估一次，模型选择完全基于开发集（`select_best_model` 只读 `split=dev` 行，单元测试）。
+- held-out test 对每个候选各评估一次（v0.1 口径，未重复抽样），模型选择完全基于开发集（`select_best_model` 只读 `split=dev` 行，单元测试）。
 - 52 条测试全绿；产物齐备且行数核对一致（预测表 404,240 行 = 2×4×全量 snapshot）。
 
 ### 合理推断
@@ -109,13 +109,13 @@ uv run python scripts/baseline_popu.py
 ## 8. 对后续阶段的决策
 
 - P5/R5 首轮基线完成；`logreg@multinomial`（Pipeline：imputer median → scaler → LR）为**当前首轮领先候选**，尚未正式冻结。
-- 先进入 P5.1：横向比较框架修正（严格“仅对最终候选评估一次 held-out test”）、模块化增强、候选复核。P5.1 通过前不正式冻结模型，也不设置 `UNKNOWN/REJECT` 阈值。
+- 先进入 P5.1：横向比较框架修正（改用 repeated subject-grouped CV 排名，不再声称存在未查看的 PoPu test）、模块化增强、候选复核。P5.1 通过前不正式冻结模型，也不设置 `UNKNOWN/REJECT` 阈值。
 - 不训练区域模型；PoPu 区域监督继续 HOLD。
 - P5.1 复核通过后，再进入 P6：以验证受试者 OOF 置信度选择 `UNKNOWN/REJECT` 阈值，并分析高置信错误。
 
 ## 9. 下一阶段最小输入与放行条件
 
-P5.1 最小输入：本阶段的逐样本预测表（含置信度）+ 当前首轮领先候选 `logreg`。放行条件：以严格“仅对最终候选评估一次 held-out test”口径复核候选排序；P5.1 通过后才允许冻结模型并进入 P6。
+P5.1 最小输入：本阶段的逐样本预测表（含置信度）+ 当前首轮领先候选 `logreg`。放行条件：以 repeated subject-grouped CV 口径复核候选排序（逐 snapshot 与逐记录/逐受试者稳定性均报告）；P5.1 通过后才允许冻结模型并进入 P6。
 
 P6 最小输入（在 P5.1 之后）：P5.1 冻结的候选 + 逐样本预测表（含置信度）。放行条件：阈值仅由验证（开发集 OOF）受试者选择；`UNKNOWN/REJECT` 对空床与卧姿、高低置信错误的取舍被明确记录。
 

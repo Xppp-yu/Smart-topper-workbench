@@ -1,0 +1,102 @@
+{
+  "stage": "P5.1/R5.1",
+  "baseline_version": "v0.1",
+  "status": "READY_TO_RUN",
+  "framework_status": "FRAMEWORK_IMPLEMENTED",
+  "status_note": "Config-driven model registry, grouped evaluator, and record aggregation are implemented and tested. The full repeated subject-grouped cross-validation comparison on the P4a feature table has NOT been run; no candidate is frozen and no UNKNOWN/REJECT threshold is set.",
+  "dataset": "PoPu Tactilus",
+  "task": "fixed-posture 5-class subject-isolated candidate comparison via repeated subject-grouped cross-validation",
+  "labels": ["empty", "supine", "prone", "left", "right"],
+  "feature_schema": {
+    "version": "v0.1",
+    "feature_table": "data/processed/popu/popu_features_p4a_v0.1.csv",
+    "feature_summary": "outputs/reports/popu_features_p4a_summary_v0.1.json",
+    "feature_count": 71
+  },
+  "group_key": "subject_id",
+  "random_seed": 42,
+  "models": [
+    {
+      "name": "dummy",
+      "version": "dummy@stratified",
+      "estimator": "DummyClassifier",
+      "params": { "strategy": "stratified" },
+      "preprocessing": [],
+      "role": "lower_bound"
+    },
+    {
+      "name": "logistic_regression",
+      "version": "logreg@multinomial",
+      "estimator": "LogisticRegression",
+      "params": { "solver": "lbfgs", "max_iter": 5000 },
+      "preprocessing": [
+        { "estimator": "SimpleImputer", "params": { "strategy": "median" } },
+        { "estimator": "StandardScaler", "params": {} }
+      ],
+      "role": "candidate"
+    },
+    {
+      "name": "random_forest",
+      "version": "rf@n200",
+      "estimator": "RandomForestClassifier",
+      "params": { "n_estimators": 200, "n_jobs": -1 },
+      "preprocessing": [
+        { "estimator": "SimpleImputer", "params": { "strategy": "median" } }
+      ],
+      "role": "candidate"
+    },
+    {
+      "name": "knn",
+      "version": "knn@k5",
+      "estimator": "KNeighborsClassifier",
+      "params": { "n_neighbors": 5 },
+      "preprocessing": [
+        { "estimator": "SimpleImputer", "params": { "strategy": "median" } },
+        { "estimator": "StandardScaler", "params": {} }
+      ],
+      "role": "candidate"
+    }
+  ],
+  "preprocessing": {
+    "principle": "imputer/scaler are always inside each candidate Pipeline and are fitted per fold on that fold's training subjects only, never on the full table",
+    "imputation": "SimpleImputer(strategy=median) for the 22 NaN empty/WARN rows (principal_axis/anisotropy)",
+    "scaling": "StandardScaler for distance and gradient-based estimators"
+  },
+  "evaluation_protocol": {
+    "kind": "repeated_subject_grouped_cv",
+    "group": "subject_id",
+    "n_splits": 5,
+    "n_repeats": 3,
+    "shuffle": true,
+    "seeds": [11, 22, 33],
+    "all_candidates_share_folds": "every candidate is evaluated on the exact same subject folds (same seeds/config) so rankings are comparable",
+    "preprocessing_per_fold": "only fitted on training subjects of each fold",
+    "no_unseen_popu_test_claim": "all 60 PoPu subjects were already used as dev OOF or held-out in P5 v0.1, so there is no re-nameable 'never-seen' PoPu test. P5.1 ranks candidates with repeated grouped CV; P5 v0.1 held-out results stay as historical first-round exploration evidence."
+  },
+  "model_selection": {
+    "criterion": "macro_f1",
+    "scope": "grouped-CV out-of-fold predictions only; never reads any historical held-out test",
+    "exclude": ["dummy"],
+    "tie_break": "balanced_accuracy"
+  },
+  "evaluation_levels": {
+    "snapshot": "per-snapshot OOF predictions with fold_id/sample_id/group_id/y_true/y_pred/confidence traceability",
+    "record": "mean-probability aggregation over the 10 snapshots of each PoPu record (record_id = source_relative_path); label/group conflicts are rejected",
+    "subject": "per-group/per-subject accuracy and macro-F1 reported alongside snapshot metrics; worst subject is flagged"
+  },
+  "planned_outputs": {
+    "oof_predictions": "data/processed/popu/popu_model_comparison_p5_1_oof_predictions_v0.1.csv",
+    "model_summary": "outputs/metrics/popu_model_comparison_p5_1_summary_v0.1.csv",
+    "per_subject": "outputs/metrics/popu_model_comparison_p5_1_per_subject_v0.1.csv",
+    "record_level": "outputs/metrics/popu_model_comparison_p5_1_record_level_v0.1.csv",
+    "report": "outputs/reports/popu_model_comparison_p5_1_summary_v0.1.json"
+  },
+  "external_validation": {
+    "limitation": "P5.1 cannot restore an unseen PoPu test. Real external confirmation is deferred to SLP/PressurePose/PMD tasks where applicable and to future self-developed synchronized data; those datasets must be evaluated separately and never row-joined with PoPu.",
+    "data_status": {
+      "SLP2022": "PRESENT_NOT_INTEGRATED (downloaded, no Adapter/Manifest yet)",
+      "PressurePose": "PRESENT_NOT_INTEGRATED (downloaded, no Adapter/Manifest yet)",
+      "TIP": "NOT_IN_WORKBENCH (not yet downloaded into this workbench copy)"
+    }
+  }
+}

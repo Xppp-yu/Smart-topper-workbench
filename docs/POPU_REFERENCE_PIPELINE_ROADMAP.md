@@ -33,7 +33,7 @@ PoPu 是**公开压力矩阵数据集**，用于在真实压力信号上建立�
 
 ```text
 P5 首轮 Baseline（已完成）
-    → P5.1 横向比较与候选复核
+    → P5.1 横向比较与候选复核（框架已实现，比较待运行）
     → P6 UNKNOWN/REJECT 与错误分析
     → P7 软件鲁棒性（降密度、坏点、噪声）
     → PoPu 参考验证包
@@ -42,8 +42,8 @@ P5 首轮 Baseline（已完成）
 ### P5.1 横向比较与候选复核
 
 - 输入：P5 v0.1 逐样本预测表（含置信度）+ 当前首轮领先候选 `logreg`。
-- 输出：修正后的横向比较框架（严格“仅对最终候选使用一次 held-out test”）、模块化增强、候选复核结果。
-- 通过条件：严格单次 test 口径下候选排序与 v0.1 一致或可解释地变化；候选具备完整追溯（config / split / 指标 / 预测明细）。
+- 输出：配置驱动模型注册 + 通用分组 evaluator + 记录聚合的横向比较框架（repeated subject-grouped CV；不再沿用“仅对最终候选使用一次 held-out test”口径，也不声称存在未查看的 PoPu test）、模块化增强、候选复核结果。
+- 通过条件：repeated subject-grouped CV 口径下候选排序与 v0.1 一致或可解释地变化；逐 snapshot 与逐记录/逐受试者稳定性都报告；候选具备完整追溯（config / split / 指标 / 预测明细）。
 - 停止条件：**候选冻结**；冻结前不设置 UNKNOWN/REJECT 阈值、不进入 WSL 工程化。
 
 ### P6 UNKNOWN/REJECT 与错误分析
