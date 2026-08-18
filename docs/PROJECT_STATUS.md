@@ -1,11 +1,11 @@
 # Smart Topper Windows Research Workbench — 项目状态
 
-最后更新：2026-08-17  
+最后更新：2026-08-18  
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成。
 
 ## 当前一句话状态
 
-PoPu P3 已收口：P4a 研究特征工程冻结使用 `largest_component` 主连通域 Mask，冻结版 Geometry 为 `5,098 OK / 2 WARN / 0 REJECT`；P3.2 同时确认人体 COCO 标注均为一对三歧义，区域监督继续 HOLD。下一步可推进 P4a 无标签特征表，不能直接训练身体部位模型。
+P5/R5 首轮 Baseline 已完成：在 P4a 特征表上完成受试者隔离的五分类 Baseline（empty/supine/prone/left/right）。协议为 12 个 held-out 受试者 + 开发集 GroupKFold 选型；`logreg` 为当前首轮领先候选（primary test macro-F1 0.9466），dummy 下限 0.20。候选尚未正式冻结——P5 v0.1 对每个候选模型各评估了一次 held-out test，P5.1 横向复核通过前不冻结模型或 UNKNOWN 阈值。结果仅为 PoPu 首轮公开数据候选，区域监督继续 HOLD。
 
 ## 阶段看板
 
@@ -17,10 +17,11 @@ PoPu P3 已收口：P4a 研究特征工程冻结使用 `largest_component` 主�
 | P3/R3 | 接触 Mask 与 Geometry | COMPLETE | [首轮 P3 报告](stage_reports/P3_POPU_CONTACT_MASK_AND_GEOMETRY_v0.1.md)、[P3.1 冻结报告](stage_reports/P3_1_POPU_MASK_STRATEGY_FREEZE_v0.1.md)、冻结配置与 Geometry v0.2 | P4a 只使用版本化冻结规则；新真值到位时才重新打开 Mask 决策 |
 | P3.1/R3.1 | Mask 候选策略比较 | COMPLETE | 三策略 `15,480` 行、`3+3+3` 叠加图；冻结 `largest_component`，v0.2 为 `5,098 OK / 2 WARN / 0 REJECT` | 进入 P4a，并保留 `mask_strategy` 与完整追溯字段 |
 | P3.2/R3.2 | COCO 区域标注—压力记录对齐审计 | COMPLETE / SUPERVISION_HOLD | [P3.2 审计报告](stage_reports/P3_2_POPU_SEGMENTATION_ALIGNMENT_AUDIT_v0.1.md)；`1,670` 人体标注一对三歧义，`60` 一对一候选均为空床 | 获得官方映射或独立同步真值前，不生成区域监督训练集 |
-| P4a/R4a | 无标签特征表 | READY_TO_IMPLEMENT | 输入规则已冻结为 `popu_geometry_frozen_v0.2.json` | 每行样本可追溯，原始/空间/质量特征与标签列分离 |
+| P4a/R4a | 无标签特征表 | COMPLETE | [P4a 阶段报告](stage_reports/P4a_POPU_LABEL_FREE_FEATURES_v0.1.md)、`51,000` 行特征表、primary cohort、EXCLUDED manifest；`40 passed` | 每行样本可追溯，原始/空间/质量特征与标签列分离 |
 | P4b/R4b | 区域标签关联与监督特征集 | BLOCKED_BY_MISSING_PAIRING_AND_P4A | P3.2 已证明当前人体标注无法唯一配对 | 有文档可追溯的逐记录、逐帧配对规则；否则不生成区域监督训练集 |
-| P5/R5 | 姿态 Baseline 与受试者隔离评价 | BLOCKED_BY_P4A | 尚未开始 | GroupKFold/LOSO、逐样本预测和错误图 |
-| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | BLOCKED_BY_P5 | 尚未开始 | 阈值仅由验证受试者选择 |
+| P5/R5 | 姿态 Baseline 与受试者隔离评价 | COMPLETE — FIRST_ROUND_BASELINE | [P5 阶段报告](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md)、逐样本预测、混淆矩阵、逐受试者表；当前首轮领先候选=`logreg`，primary test macro-F1 0.9466；`52 passed` | P5.1 横向复核候选；复核通过前不正式冻结模型 |
+| P5.1/R5.1 | 横向比较框架修正与候选复核 | READY_TO_IMPLEMENT | P5 v0.1 已对每个候选各评估一次 held-out test；需按“仅对最终候选一次 test”口径收紧并复核 | 严格单次 test 口径下候选排序不变；模块化增强；复核通过后才冻结候选 |
+| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | BLOCKED_BY_P5_1 | P5 逐样本预测（含置信度）+ 当前首轮领先候选 logreg 已就绪，但候选未冻结 | P5.1 复核冻结候选后放行；阈值仅由验证受试者选择 |
 | P7/R7 | 降密度、坏点、区域研究 | BLOCKED_BY_P6 | 尚未开始 | 不将软件消融误称为硬件验证 |
 | P8/R8 | 冻结候选并移交 WSL 工程化 | BLOCKED_BY_P7 | 尚未开始 | 算法规格、配置、切分和限制完整冻结 |
 

@@ -16,10 +16,12 @@ datasets\
 └── smart-topper\
     ├── DATASET_COPY_RECORD.md        数据来源、复制记录和数量证据
     ├── popu\PoPu_data\              PoPu完整Windows研究副本
-    └── pmd\                          PMD完整Windows研究副本
+    ├── pmd\                          PMD完整Windows研究副本
+    ├── PressurePose\                 PRESENT_NOT_INTEGRATED（已下载，尚未建立 Adapter/Manifest/校验）
+    └── SLP2022\                      PRESENT_NOT_INTEGRATED（已下载，尚未建立 Adapter/Manifest/校验）
 ```
 
-原则：这里只保存来源数据与数据版本记录，不存放清洗结果、特征、模型或图表。
+原则：这里只保存来源数据与数据版本记录，不存放清洗结果、特征、模型或图表。`PRESENT_NOT_INTEGRATED` 表示数据副本已在本地，但尚未通过读取 Adapter、坐标映射检查和统一 Manifest 校验，不宣称已经完成适配或验证。
 
 ## 3. smarttopper-team-workbench项目层
 

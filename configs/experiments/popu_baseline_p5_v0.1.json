@@ -1,0 +1,57 @@
+{
+  "stage": "P5/R5",
+  "baseline_version": "v0.1",
+  "dataset": "PoPu Tactilus",
+  "task": "fixed-posture 5-class subject-isolated classification",
+  "labels": ["empty", "supine", "prone", "left", "right"],
+  "input_feature_table": "data/processed/popu/popu_features_p4a_v0.1.csv",
+  "input_feature_summary": "outputs/reports/popu_features_p4a_summary_v0.1.json",
+  "feature_schema_version": "v0.1",
+  "feature_count": 71,
+  "random_state": 42,
+  "group_key": "subject_id",
+  "evaluation_protocol": {
+    "group": "subject_id",
+    "held_out_subjects": ["5", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60"],
+    "held_out_selection_rule": "every 5th subject of numeric sort of 1..60 (12/60 = 20%)",
+    "held_out_is_test_once": "P5 v0.1 actual: test subjects were evaluated once per candidate model, only after model selection on the development set; the strict single-test-on-final-candidate-only discipline is enforced in P5.1",
+    "dev_splitter": "GroupKFold",
+    "dev_n_splits": 5,
+    "dev_shuffle": false,
+    "no_snapshot_split": "no subject's snapshots appear in more than one fold or in both dev and test",
+    "imputation": "SimpleImputer(strategy=median) inside each Pipeline, fitted per training fold only",
+    "scaling": "StandardScaler inside each Pipeline, fitted per training fold only"
+  },
+  "status": "COMPLETE_FIRST_ROUND_BASELINE",
+  "status_note": "P5 v0.1 is a first-round baseline on PoPu public data only. No model is formally frozen; no UNKNOWN/REJECT threshold is set. Candidate freeze and strict once-only held-out test are deferred to P5.1.",
+  "known_deviations_from_strict_protocol": [
+    "held-out test was evaluated once per candidate model (not only on the final candidate) in P5 v0.1",
+    "model selection never read any held-out test score; selection was based solely on development-set GroupKFold OOF macro_f1"
+  ],
+  "models": [
+    { "name": "dummy", "estimator": "DummyClassifier", "params": { "strategy": "stratified" }, "role": "lower_bound", "version": "dummy@stratified" },
+    { "name": "logreg", "estimator": "Pipeline[SimpleImputer(median), StandardScaler, LogisticRegression]", "params": { "solver": "lbfgs", "max_iter": 5000 }, "role": "candidate", "version": "logreg@multinomial" },
+    { "name": "rf", "estimator": "Pipeline[SimpleImputer(median), RandomForestClassifier]", "params": { "n_estimators": 200, "n_jobs": -1 }, "role": "candidate", "version": "rf@n200" },
+    { "name": "knn", "estimator": "Pipeline[SimpleImputer(median), StandardScaler, KNeighborsClassifier]", "params": { "n_neighbors": 5 }, "role": "candidate", "version": "knn@k5" }
+  ],
+  "model_selection": {
+    "criterion": "macro_f1",
+    "scope": "development-set GroupKFold out-of-fold estimate",
+    "exclude": ["dummy"],
+    "tie_break": "balanced_accuracy",
+    "no_test_selection": "held-out test is never used to choose a model or tune a threshold"
+  },
+  "cohorts": [
+    { "name": "primary", "definition": "cohort == 'primary' (fixed posture AND quality_status == ACCEPT)", "is_primary": true },
+    { "name": "combined", "definition": "cohort in ('primary', 'warn') (ACCEPT + WARN sensitivity analysis)", "is_primary": false }
+  ],
+  "outputs": {
+    "predictions": "data/processed/popu/popu_baseline_p5_predictions_v0.1.csv",
+    "model_comparison": "outputs/metrics/popu_baseline_p5_model_comparison_v0.1.csv",
+    "per_class": "outputs/metrics/popu_baseline_p5_per_class_v0.1.csv",
+    "per_subject": "outputs/metrics/popu_baseline_p5_per_subject_v0.1.csv",
+    "confusion": "outputs/metrics/popu_baseline_p5_confusion_v0.1.csv",
+    "summary": "outputs/reports/popu_baseline_p5_summary_v0.1.json",
+    "confusion_figure": "outputs/figures/popu_baseline_p5_confusion_matrices_v0.1.png"
+  }
+}

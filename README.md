@@ -22,23 +22,21 @@ E:\TeamProjects\datasets\smart-topper
 
 ## 当前状态
 
-`WINDOWS-RESEARCH-WORKBENCH / POPU-P3-PARTIAL`
+`WINDOWS-RESEARCH-WORKBENCH / POPU-P5-FIRST-ROUND-BASELINE`
 
-已经完成：
+已经完成（均有真实产物与阶段报告）：
 
-- Windows Python 3.12.13 独立 `.venv`；
-- `uv.lock` 依赖锁；
+- Windows Python 3.12.13 独立 `.venv`；`uv.lock` 依赖锁；
 - Windows本地PoPu与PMD数据副本；
-- 环境与数据路径健康检查；
-- 真实PoPu Tactilus JSON读取；
-- 单帧64×27二维热力图；
-- 五状态共同色标总览；
+- 环境与数据路径健康检查；真实PoPu Tactilus JSON读取；单帧64×27二维热力图；五状态共同色标总览；
 - P1 全量盘点、P2 质量门、P3 首版接触 Mask/Geometry 都已有可追溯输出；
-- P3.1 Mask 候选比较与 P3.2 COCO 区域标注对齐审计已具备代码和单元测试，但尚未生成真实数据输出。
+- P3.1 Mask 候选策略比较（冻结 `largest_component`）与 P3.2 COCO 区域标注对齐审计（区域监督 HOLD）均已真实运行并记录结论；
+- P4a 无标签逐 snapshot 特征表（51,000 行 × 71 特征）已首轮真实运行；
+- P5 受试者隔离五分类 Baseline（dummy/logreg/rf/knn）已首轮真实运行；`logreg` 为当前首轮领先候选（primary test macro-F1 0.9466），尚未正式冻结。
 
 P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存中保留当前文件与最终的紧凑清单，不会把 5,160 个记录或所有压力矩阵整体载入内存。
 
-尚未完成：P3.1 Mask 策略冻结、P3.2 标注配对审计、特征表、姿态/部位 Baseline、UNKNOWN/REJECT、Density、Fault、区域算法和最终研究报告。
+尚未完成：P5.1 横向比较与候选复核、P6 UNKNOWN/REJECT、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告；P5.1 完成前不正式冻结模型或 UNKNOWN 阈值。
 
 ## 新的固定定位
 
@@ -96,7 +94,7 @@ uv run python scripts\run_healthcheck.py --config configs\paths.local.json
 uv run pytest -q
 ```
 
-P1/R1 全量 PoPu Tactilus Inventory（会写入 CSV、JSON 和 PNG；本次尚未执行）：
+P1/R1 全量 PoPu Tactilus Inventory（会写入 CSV、JSON 和 PNG；已执行，重跑会覆盖同名 v0.1 产物）：
 
 ```powershell
 uv run python scripts\inventory_popu.py --config configs\paths.local.json
@@ -135,6 +133,20 @@ uv run python scripts\compare_popu_mask_strategies.py
 ```
 
 该结果只能用于筛选稳定的 Geometry 输入规则；稳定不等于解剖正确，仍须配合叠加图和 P3.2 标签对齐审计人工复核。
+
+P4a/R4a 无标签特征表（读取 P1/P2 结果，逐 snapshot 生成 71 列数值特征；特征与标签/追溯列严格分离；`others.json` 只进 EXCLUDED manifest）：
+
+```powershell
+uv run python scripts\features_popu.py
+```
+
+P5/R5 受试者隔离姿态 Baseline（读取 P4a 特征表；12 个 held-out 受试者 + 开发集 GroupKFold 选型；dummy/logreg/rf/knn；primary 与 combined 双口径）：
+
+```powershell
+uv run python scripts\baseline_popu.py
+```
+
+注意：P5 v0.1 对每个候选模型各评估了一次 held-out test，模型选择未读取任何 test 分数；`logreg` 仅为首轮领先候选，P5.1 严格复核通过前不冻结模型或 UNKNOWN 阈值。
 
 ## PoPu二维热力图
 
