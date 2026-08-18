@@ -1,0 +1,52 @@
+{
+  "dataset": "PoPu Tactilus",
+  "stage": "P4a/A3",
+  "feature_schema_version": "v0.1",
+  "input_inventory": "data/processed/popu/popu_tactilus_inventory_v0.1.csv",
+  "input_quality_results": "outputs/metrics/popu_tactilus_quality_results_v0.1.csv",
+  "eligible_quality_statuses": ["ACCEPT", "WARN"],
+  "excluded_population": "records without a fixed posture label (others.json) or without ACCEPT/WARN quality status",
+  "mask_rule": {
+    "strategy": "largest_component",
+    "positive_percentile": 50.0,
+    "minimum_raw_threshold": 1.0,
+    "minimum_component_cells": 3,
+    "minimum_component_fraction_of_largest": 0.02,
+    "source": "configs/experiments/popu_geometry_frozen_v0.2.json",
+    "boundary": "A relative raw-signal contact mask, not an anatomical or calibrated physical-contact boundary."
+  },
+  "grid": {
+    "row_bands": 4,
+    "column_bands": 3,
+    "partition_rule": "equal-width bands via np.linspace(0, N, bands+1).astype(int); 64 rows -> 16-row bands, 27 columns -> 9-column bands",
+    "statistics": ["sum", "fraction", "peak"]
+  },
+  "matrix_orientation": "row-major origin=upper-left; rows=64 columns=27 as restored by topper_perception.io.popu.load_tactilus_record",
+  "label_and_metadata_columns": [
+    "sample_id",
+    "dataset_id",
+    "source_relative_path",
+    "subject_id",
+    "posture",
+    "variation",
+    "snapshot_index",
+    "snapshot_key",
+    "quality_status",
+    "cohort",
+    "rows",
+    "columns",
+    "matrix_orientation",
+    "mask_rule_version",
+    "feature_schema_version",
+    "feature_status",
+    "feature_reason"
+  ],
+  "outputs": {
+    "feature_table": "data/processed/popu/popu_features_p4a_v0.1.csv",
+    "excluded_manifest": "data/processed/popu/popu_features_p4a_excluded_v0.1.csv",
+    "primary_cohort_keys": "data/processed/popu/popu_features_p4a_primary_cohort_v0.1.csv",
+    "summary": "outputs/reports/popu_features_p4a_summary_v0.1.json",
+    "distribution": "outputs/metrics/popu_features_p4a_distribution_v0.1.csv",
+    "overview_figure": "outputs/figures/popu_features_p4a_overview_v0.1.png"
+  }
+}
