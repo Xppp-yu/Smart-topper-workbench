@@ -106,6 +106,11 @@ def test_supported_kinds_are_registered() -> None:
     assert "StandardScaler" in PREPROCESSING_REGISTRY
 
 
+def test_p5_1_b_new_candidate_kinds_are_registered() -> None:
+    for name in ("CentroidClassifier", "CalibratedLinearSVM", "ExtraTreesClassifier"):
+        assert name in CLASSIFIER_REGISTRY
+
+
 def test_unknown_estimator_fails_with_clear_error() -> None:
     with pytest.raises(ValueError, match="NotARealClassifier"):
         build_model(_logreg_cfg(estimator="NotARealClassifier"), random_state=0)

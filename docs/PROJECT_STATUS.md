@@ -5,7 +5,7 @@
 
 ## 当前一句话状态
 
-P5/R5 首轮 Baseline 已完成：在 P4a 特征表上完成受试者隔离的五分类 Baseline（empty/supine/prone/left/right）。协议为 12 个 held-out 受试者 + 开发集 GroupKFold 选型；`logreg` 为当前首轮领先候选（primary test macro-F1 0.9466），dummy 下限 0.20。候选尚未正式冻结——P5 v0.1 对每个候选模型各评估了一次 held-out test；P5.1 的配置驱动模型注册、分组 evaluator、记录聚合框架已实现并通过测试（`READY_TO_RUN — FRAMEWORK_IMPLEMENTED`），全量横向复核运行前不冻结模型或 UNKNOWN 阈值。结果仅为 PoPu 首轮公开数据候选，区域监督继续 HOLD。
+P5.1 横向复核已完成：在 P4a 特征表上以 repeated subject-grouped CV（5 折 × 3 repeats，group=subject_id）完成 7 候选比较、特征消融并冻结 `calibrated_linear_svm` 为 **PoPu research candidate**（record macro-F1 0.9452；logreg 0.9424 在 margin 0.005 内统计平局，由 tie-break 1 记录 balanced-acc 胜出）。P5 v0.1 的 held-out 首轮证据保留为历史（primary test macro-F1 0.9466），不被改写。P6 `UNKNOWN/REJECT` 与错误分析放行。结果仅为 PoPu 公开数据研究候选，区域监督继续 HOLD。
 
 ## 阶段看板
 
@@ -19,9 +19,9 @@ P5/R5 首轮 Baseline 已完成：在 P4a 特征表上完成受试者隔离的�
 | P3.2/R3.2 | COCO 区域标注—压力记录对齐审计 | COMPLETE / SUPERVISION_HOLD | [P3.2 审计报告](stage_reports/P3_2_POPU_SEGMENTATION_ALIGNMENT_AUDIT_v0.1.md)；`1,670` 人体标注一对三歧义，`60` 一对一候选均为空床 | 获得官方映射或独立同步真值前，不生成区域监督训练集 |
 | P4a/R4a | 无标签特征表 | COMPLETE | [P4a 阶段报告](stage_reports/P4a_POPU_LABEL_FREE_FEATURES_v0.1.md)、`51,000` 行特征表、primary cohort、EXCLUDED manifest；`40 passed` | 每行样本可追溯，原始/空间/质量特征与标签列分离 |
 | P4b/R4b | 区域标签关联与监督特征集 | BLOCKED_BY_MISSING_PAIRING_AND_P4A | P3.2 已证明当前人体标注无法唯一配对 | 有文档可追溯的逐记录、逐帧配对规则；否则不生成区域监督训练集 |
-| P5/R5 | 姿态 Baseline 与受试者隔离评价 | COMPLETE — FIRST_ROUND_BASELINE | [P5 阶段报告](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md)、逐样本预测、混淆矩阵、逐受试者表；当前首轮领先候选=`logreg`，primary test macro-F1 0.9466；`52 passed` | P5.1 横向复核候选；复核通过前不正式冻结模型 |
-| P5.1/R5.1 | 横向比较框架修正与候选复核 | READY_TO_RUN — FRAMEWORK_IMPLEMENTED | 配置驱动模型注册、通用分组 evaluator、记录聚合已实现并通过 `31` 条新增测试（全量 `83 passed`）；尚未运行 P5.1 全量比较，候选未冻结 | repeated subject-grouped CV 口径下候选排序与 v0.1 一致或可解释地变化；逐 snapshot/记录/受试者稳定性都报告；复核通过后才冻结候选 |
-| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | BLOCKED_BY_P5_1 | P5 逐样本预测（含置信度）+ 当前首轮领先候选 logreg 已就绪，但候选未冻结 | P5.1 复核冻结候选后放行；阈值仅由验证受试者选择 |
+| P5/R5 | 姿态 Baseline 与受试者隔离评价 | COMPLETE — FIRST_ROUND_BASELINE | [P5 阶段报告](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md)、逐样本预测、混淆矩阵、逐受试者表；首轮领先候选=`logreg`（历史证据），primary test macro-F1 0.9466；`52 passed` | 已被 P5.1 满足（候选在 repeated grouped CV 口径下复核并冻结） |
+| P5.1/R5.1 | 横向比较框架修正与候选复核 | COMPLETE — CANDIDATE_FROZEN | [P5.1 阶段报告](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md)、OOF 1,051,260 行、record 105,126 行、逐受试者/逐类别/消融表、混淆矩阵与图；winner=`calibrated_linear_svm`（record macro-F1 0.9452），冻结 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；`115 passed` | P6 放行；UNKNOWN/REJECT 阈值仅由验证受试者选择 |
+| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | READY_TO_IMPLEMENT | P5.1 冻结候选 `popu_research_candidate_p5_1_v0.1`（svm，record macro-F1 0.9452）+ record/OOF 预测表（含置信度）已就绪 | 阈值仅由验证受试者选择；高置信错误需个案分析 |
 | P7/R7 | 降密度、坏点、区域研究 | BLOCKED_BY_P6 | 尚未开始 | 不将软件消融误称为硬件验证 |
 | P8/R8 | 冻结候选并移交 WSL 工程化 | BLOCKED_BY_P7 | 尚未开始 | 算法规格、配置、切分和限制完整冻结 |
 

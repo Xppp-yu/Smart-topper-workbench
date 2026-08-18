@@ -16,7 +16,7 @@ PoPu 是**公开压力矩阵数据集**，用于在真实压力信号上建立�
 | 算法方法学（切分、选型、指标）的可行性 | 与 SLP/PressurePose/PMD 逐行配对或共享受试者 |
 | — | 身体区域（Head/Torso/Arm/Leg、肩/腰/骨盆）的逐记录监督真值（区域监督 HOLD） |
 
-## 3. 已完成：P0–P5 v0.1
+## 3. 已完成：P0–P5.1
 
 | 阶段 | 内容 | 状态 | 阶段报告 |
 |---|---|---|---|
@@ -28,23 +28,24 @@ PoPu 是**公开压力矩阵数据集**，用于在真实压力信号上建立�
 | P3.2 | COCO 区域标注—压力记录对齐审计（区域监督 HOLD） | COMPLETE | [P3.2](stage_reports/P3_2_POPU_SEGMENTATION_ALIGNMENT_AUDIT_v0.1.md) |
 | P4a | 无标签逐 snapshot 特征表（51,000 行 × 71 特征） | COMPLETE | [P4a](stage_reports/P4a_POPU_LABEL_FREE_FEATURES_v0.1.md) |
 | P5 | 受试者隔离姿态 Baseline（首轮，候选未冻结） | COMPLETE — FIRST_ROUND_BASELINE | [P5](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md) |
+| P5.1 | 横向比较与候选复核（repeated subject-grouped CV + 特征消融 + 冻结候选） | COMPLETE — CANDIDATE_FROZEN | [P5.1](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md) |
 
 ## 4. 推进顺序与每阶段的输入 / 输出 / 通过 / 停止
 
 ```text
 P5 首轮 Baseline（已完成）
-    → P5.1 横向比较与候选复核（框架已实现，比较待运行）
-    → P6 UNKNOWN/REJECT 与错误分析
+    → P5.1 横向比较与候选复核（已完成，候选已冻结）
+    → P6 UNKNOWN/REJECT 与错误分析（放行，待实现）
     → P7 软件鲁棒性（降密度、坏点、噪声）
     → PoPu 参考验证包
 ```
 
 ### P5.1 横向比较与候选复核
 
-- 输入：P5 v0.1 逐样本预测表（含置信度）+ 当前首轮领先候选 `logreg`。
-- 输出：配置驱动模型注册 + 通用分组 evaluator + 记录聚合的横向比较框架（repeated subject-grouped CV；不再沿用“仅对最终候选使用一次 held-out test”口径，也不声称存在未查看的 PoPu test）、模块化增强、候选复核结果。
-- 通过条件：repeated subject-grouped CV 口径下候选排序与 v0.1 一致或可解释地变化；逐 snapshot 与逐记录/逐受试者稳定性都报告；候选具备完整追溯（config / split / 指标 / 预测明细）。
-- 停止条件：**候选冻结**；冻结前不设置 UNKNOWN/REJECT 阈值、不进入 WSL 工程化。
+- 输入：P4a v0.1 特征表（50,060 snapshots / 60 subjects / 5,006 records）+ 冻结的比较协议。
+- 输出：配置驱动模型注册 + 通用分组 evaluator（逐 snapshot 概率列）+ 记录聚合（每 JSON 10 snapshot 概率平均）；repeated subject-grouped CV（5 折 × 3 repeats，group=subject_id）7 候选横向比较、top-2 × 5 特征消融、候选冻结。
+- 通过条件：候选排序可解释（`calibrated_linear_svm` record macro-F1 0.9452 为最优，logreg 0.9424 在 margin 0.005 内统计平局、由 tie-break 1 胜出）；逐 snapshot/记录/受试者稳定性都报告；候选具备完整追溯（config / split / 指标 / 预测明细）。
+- 停止条件：**候选冻结**为 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；冻结前不设置 UNKNOWN/REJECT 阈值、不进入 WSL 工程化。
 
 ### P6 UNKNOWN/REJECT 与错误分析
 
@@ -87,4 +88,4 @@ P5 首轮 Baseline（已完成）
 - 阶段总看板与状态： [PROJECT_STATUS.md](PROJECT_STATUS.md)
 - 验证方法学与证据边界总蓝图： [VALIDATION_WORKFLOW_MASTER.md](VALIDATION_WORKFLOW_MASTER.md)
 - 阶段报告目录： [stage_reports/](stage_reports/)
-- 冻结协议： P4a [popu_features_p4a_v0.1.json](../configs/experiments/popu_features_p4a_v0.1.json)、P5 [popu_baseline_p5_v0.1.json](../configs/experiments/popu_baseline_p5_v0.1.json)
+- 冻结协议： P4a [popu_features_p4a_v0.1.json](../configs/experiments/popu_features_p4a_v0.1.json)、P5 [popu_baseline_p5_v0.1.json](../configs/experiments/popu_baseline_p5_v0.1.json)、P5.1 [popu_model_comparison_p5_1_v0.1.json](../configs/experiments/popu_model_comparison_p5_1_v0.1.json)

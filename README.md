@@ -22,7 +22,7 @@ E:\TeamProjects\datasets\smart-topper
 
 ## 当前状态
 
-`WINDOWS-RESEARCH-WORKBENCH / POPU-P5-FIRST-ROUND-BASELINE`
+`WINDOWS-RESEARCH-WORKBENCH / POPU-P5.1-CANDIDATE-FROZEN`
 
 已经完成（均有真实产物与阶段报告）：
 
@@ -32,11 +32,12 @@ E:\TeamProjects\datasets\smart-topper
 - P1 全量盘点、P2 质量门、P3 首版接触 Mask/Geometry 都已有可追溯输出；
 - P3.1 Mask 候选策略比较（冻结 `largest_component`）与 P3.2 COCO 区域标注对齐审计（区域监督 HOLD）均已真实运行并记录结论；
 - P4a 无标签逐 snapshot 特征表（51,000 行 × 71 特征）已首轮真实运行；
-- P5 受试者隔离五分类 Baseline（dummy/logreg/rf/knn）已首轮真实运行；`logreg` 为当前首轮领先候选（primary test macro-F1 0.9466），尚未正式冻结。
+- P5 受试者隔离五分类 Baseline（dummy/logreg/rf/knn）已首轮真实运行；`logreg` 为历史首轮领先候选（primary test macro-F1 0.9466），未冻结；
+- P5.1 repeated subject-grouped CV 横向比较已真实运行并冻结 `calibrated_linear_svm` 为 **PoPu research candidate**（7 候选 × top-2 特征消融 × 全量 OOF/record/逐受试者产物；record macro-F1 0.9452，logreg 0.9424 在 margin 内统计平局、由 tie-break 1 胜出；16,097 B，独立重载 smoke OK）。
 
 P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存中保留当前文件与最终的紧凑清单，不会把 5,160 个记录或所有压力矩阵整体载入内存。
 
-尚未完成：P5.1 横向比较与候选复核、P6 UNKNOWN/REJECT、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告；P5.1 完成前不正式冻结模型或 UNKNOWN 阈值。
+尚未完成：P6 UNKNOWN/REJECT 与错误分析、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告。P5.1 已冻结研究候选，但该候选仍须在 P6 设阈值、P7 做软件鲁棒性消融后才能构成 PoPu 参考验证包；P5.1 冻结前不设置 UNKNOWN/REJECT 阈值。
 
 ## 新的固定定位
 
@@ -146,7 +147,15 @@ P5/R5 受试者隔离姿态 Baseline（读取 P4a 特征表；12 个 held-out �
 uv run python scripts\baseline_popu.py
 ```
 
-注意：P5 v0.1 对每个候选模型各评估了一次 held-out test，模型选择未读取任何 test 分数；`logreg` 仅为首轮领先候选，P5.1 严格复核通过前不冻结模型或 UNKNOWN 阈值。
+注意：P5 v0.1 对每个候选模型各评估了一次 held-out test，模型选择未读取任何 test 分数；`logreg` 仅为历史首轮领先候选。
+
+P5.1/R5.1 受试者分组横向比较与候选冻结（读取 P4a 特征表；7 候选 × repeated subject-grouped CV（5 折 × 3 repeats，group=subject_id）× top-2 特征消融；冻结 winner=`calibrated_linear_svm` 为 `popu_research_candidate_p5_1_v0.1`）：
+
+```powershell
+uv run python scripts\model_comparison_popu.py --config configs\experiments\popu_model_comparison_p5_1_v0.1.json
+```
+
+注意：结果为 PoPu 公开数据上的**研究候选**，不是产品模型、未经外部验证；候选以 `FrozenClassOrderClassifier` 包裹以保证冻结标签顺序，独立 joblib 重载后 predict/predict_proba 冒烟通过；完整结果见 [P5.1 阶段报告](docs/stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md)。
 
 ## PoPu二维热力图
 

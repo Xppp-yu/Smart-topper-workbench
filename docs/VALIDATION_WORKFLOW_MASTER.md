@@ -139,7 +139,7 @@ A1 Inventory / Quality  已完成（P1、P2）
 A2 Mask / Geometry      P3.1 已完成，largest_component 已冻结供研究使用
 A1 区域标签对齐         P3.2 已完成；人体标注一对三歧义，区域监督 HOLD
 A3 无标签特征           P4a 已完成（51,000 行 × 71 特征，首轮真实运行）
-A4 姿态 Baseline        P5 首轮基线已完成（logreg=当前首轮领先候选，未冻结）；P5.1 框架已实现，横向复核待运行
+A4 姿态 Baseline        P5 首轮基线已完成（logreg=历史首轮领先候选，未冻结）；P5.1 横向复核已完成（winner=calibrated_linear_svm，record macro-F1 0.9452），候选已冻结
 A5 区域候选             等待标签配对结论
 A6 鲁棒性/密度          P5.1 之后进入（P6/P7）
 B0-B5 自研硬件真值线    尚未启动，但现在应先冻结其协议
@@ -150,7 +150,7 @@ B0-B5 自研硬件真值线    尚未启动，但现在应先冻结其协议
 1. P3.1 已冻结 `largest_component` 作为**研究用**接触 Mask 规则；
 2. P3.2 已确认 COCO 可作结构参考，但当前不能作人体逐记录监督真值；
 3. P4a 已生成不依赖区域真值的特征表（51,000 行 × 71 特征）；
-4. P5 首轮受试者隔离基线已跑通，`logreg` 为当前首轮领先候选；下一步 P5.1 横向比较复核（框架已实现，repeated grouped CV），通过后才冻结候选；
+4. P5 首轮受试者隔离基线已跑通（`logreg` 为历史首轮领先候选）；P5.1 横向比较复核已完成并冻结 `calibrated_linear_svm`（record macro-F1 0.9452）为 PoPu research candidate；
 5. 同时起草 B0/B1：自研传感器坐标、采样、同步真值和标注协议；
 6. 有了 P5.1 复核的候选结果后，再定义硬件验证的最低验收门槛，而不是反过来按模型成绩补故事。
 
@@ -158,13 +158,13 @@ B0-B5 自研硬件真值线    尚未启动，但现在应先冻结其协议
 
 ```text
 P5 首轮 Baseline（已完成，候选未冻结）
-    ↓ P5.1 横向比较：repeated subject-grouped CV 排名 + 配置驱动注册/分组 evaluator/记录聚合 + 候选复核；不再声称存在未查看的 PoPu test（完成前不冻结模型/UNKNOWN 阈值）
-    ↓ P6 UNKNOWN/REJECT 与高置信错误分析
+    ↓ P5.1 横向比较（已完成）：repeated subject-grouped CV 排名 + 配置驱动注册/分组 evaluator/记录聚合；winner=calibrated_linear_svm（record macro-F1 0.9452），候选已冻结为 popu_research_candidate_p5_1_v0.1
+    ↓ P6 UNKNOWN/REJECT 与高置信错误分析（放行，待实现）
     ↓ P7 软件鲁棒性：降密度、坏点、噪声消融
     ↓ PoPu 参考验证包（输入—真值—方法—结果—限制闭合）
 ```
 
-区域监督继续 HOLD，不等待区域真值即可推进 P5.1/P6/P7。
+区域监督继续 HOLD，不等待区域真值即可推进 P6/P7。
 
 ## 7. 最后的交付包长什么样
 

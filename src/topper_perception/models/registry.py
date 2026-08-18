@@ -13,12 +13,15 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
+from topper_perception.models.calibrated_svm import CalibratedLinearSVM
+from topper_perception.models.template import CentroidClassifier
 
 # Estimator kinds supported by the registry.  New candidates (for example a CNN
 # later) register here or in an extending module; unknown kinds fail loudly.
@@ -27,6 +30,9 @@ CLASSIFIER_REGISTRY: dict[str, type] = {
     "LogisticRegression": LogisticRegression,
     "RandomForestClassifier": RandomForestClassifier,
     "KNeighborsClassifier": KNeighborsClassifier,
+    "ExtraTreesClassifier": ExtraTreesClassifier,
+    "CentroidClassifier": CentroidClassifier,
+    "CalibratedLinearSVM": CalibratedLinearSVM,
 }
 
 # Preprocessing steps that may appear inside a candidate's Pipeline.  Keeping

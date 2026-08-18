@@ -1,9 +1,9 @@
 {
   "stage": "P5.1/R5.1",
   "baseline_version": "v0.1",
-  "status": "READY_TO_RUN",
-  "framework_status": "FRAMEWORK_IMPLEMENTED",
-  "status_note": "Config-driven model registry, grouped evaluator, and record aggregation are implemented and tested. The full repeated subject-grouped cross-validation comparison on the P4a feature table has NOT been run; no candidate is frozen and no UNKNOWN/REJECT threshold is set.",
+  "status": "COMPLETE",
+  "framework_status": "COMPLETE",
+  "status_note": "P5.1-B full real run completed: 7 candidates evaluated by repeated subject-grouped CV (5-fold x 3 repeats, seeds 11/22/33, group=subject_id) on the P4a v0.1 primary cohort (50,060 snapshots / 60 subjects / 5,006 records). Selected calibrated_linear_svm (record_macro_f1_mean 0.9452) via the frozen selection ladder: within-margin tie with logistic_regression (0.9424, margin 0.005), tie-break 1 record_balanced_acc_mean 0.9429 vs 0.9418. Feature ablation run for top-2 x 5 groups (all-group reused from round 1). Candidate frozen as popu_research_candidate_p5_1_v0.1 (joblib 16,097 B, independent reload predict/predict_proba smoke OK, classes_order_matches=true). Full suite 115 tests green. Artifacts verified (OOF 1,051,260 rows, record 105,126, per_subject 420, per_class 35, fold_repeat 105, ablation 2x5).",
   "dataset": "PoPu Tactilus",
   "task": "fixed-posture 5-class subject-isolated candidate comparison via repeated subject-grouped cross-validation",
   "labels": ["empty", "supine", "prone", "left", "right"],
@@ -12,6 +12,13 @@
     "feature_table": "data/processed/popu/popu_features_p4a_v0.1.csv",
     "feature_summary": "outputs/reports/popu_features_p4a_summary_v0.1.json",
     "feature_count": 71
+  },
+  "columns": {
+    "sample_id": "sample_id",
+    "label": "posture",
+    "group": "subject_id",
+    "cohort": "cohort",
+    "record_id_from": "sample_id via the P4a contract popu-tactilus::<source_relative_path>#frame=<N>; the 10 snapshots of one JSON share the same source_relative_path"
   },
   "group_key": "subject_id",
   "random_seed": 42,
@@ -36,9 +43,41 @@
       "role": "candidate"
     },
     {
+      "name": "centroid",
+      "version": "centroid@template",
+      "estimator": "CentroidClassifier",
+      "params": { "metric": "euclidean" },
+      "preprocessing": [
+        { "estimator": "SimpleImputer", "params": { "strategy": "median" } },
+        { "estimator": "StandardScaler", "params": {} }
+      ],
+      "role": "candidate"
+    },
+    {
+      "name": "calibrated_linear_svm",
+      "version": "svm@calibrated_linear",
+      "estimator": "CalibratedLinearSVM",
+      "params": { "C": 1.0, "max_iter": 5000, "cv": 3, "method": "sigmoid" },
+      "preprocessing": [
+        { "estimator": "SimpleImputer", "params": { "strategy": "median" } },
+        { "estimator": "StandardScaler", "params": {} }
+      ],
+      "role": "candidate"
+    },
+    {
       "name": "random_forest",
       "version": "rf@n200",
       "estimator": "RandomForestClassifier",
+      "params": { "n_estimators": 200, "n_jobs": -1 },
+      "preprocessing": [
+        { "estimator": "SimpleImputer", "params": { "strategy": "median" } }
+      ],
+      "role": "candidate"
+    },
+    {
+      "name": "extra_trees",
+      "version": "et@n200",
+      "estimator": "ExtraTreesClassifier",
       "params": { "n_estimators": 200, "n_jobs": -1 },
       "preprocessing": [
         { "estimator": "SimpleImputer", "params": { "strategy": "median" } }
@@ -60,7 +99,7 @@
   "preprocessing": {
     "principle": "imputer/scaler are always inside each candidate Pipeline and are fitted per fold on that fold's training subjects only, never on the full table",
     "imputation": "SimpleImputer(strategy=median) for the 22 NaN empty/WARN rows (principal_axis/anisotropy)",
-    "scaling": "StandardScaler for distance and gradient-based estimators"
+    "scaling": "StandardScaler for distance/gradient-based estimators (logistic_regression, centroid, calibrated_linear_svm, knn)"
   },
   "evaluation_protocol": {
     "kind": "repeated_subject_grouped_cv",
@@ -69,27 +108,85 @@
     "n_repeats": 3,
     "shuffle": true,
     "seeds": [11, 22, 33],
+    "seeds_are_repeats": "one subject-grouped fold set is generated per seed in the list, giving exactly 3 repeats; all candidates share the same fold sets",
     "all_candidates_share_folds": "every candidate is evaluated on the exact same subject folds (same seeds/config) so rankings are comparable",
     "preprocessing_per_fold": "only fitted on training subjects of each fold",
+    "metrics_per_repeat": "each repeat computes metrics separately on its own out-of-fold samples; mean/std across the 3 repeats are reported, never a pooled 150k-row score",
     "no_unseen_popu_test_claim": "all 60 PoPu subjects were already used as dev OOF or held-out in P5 v0.1, so there is no re-nameable 'never-seen' PoPu test. P5.1 ranks candidates with repeated grouped CV; P5 v0.1 held-out results stay as historical first-round exploration evidence."
   },
   "model_selection": {
-    "criterion": "macro_f1",
+    "criterion": "record_macro_f1_mean",
+    "criterion_note": "record-level macro-F1 mean across the 3 repeats is the PRIMARY ranking caliber (P5.1-B 三)",
     "scope": "grouped-CV out-of-fold predictions only; never reads any historical held-out test",
     "exclude": ["dummy"],
-    "tie_break": "balanced_accuracy"
+    "tie_break": "record_balanced_acc_mean",
+    "worst_subject_criterion": "worst_subject_macro_f1_mean",
+    "complexity_priority": [
+      "dummy",
+      "centroid",
+      "logistic_regression",
+      "calibrated_linear_svm",
+      "knn",
+      "random_forest",
+      "extra_trees"
+    ],
+    "margin": 0.005,
+    "margin_note": "candidates within 0.005 record macro-F1 of the top are treated as statistically tied; the fixed tie-break ladder then decides, complexity only as the final tie-break"
   },
   "evaluation_levels": {
-    "snapshot": "per-snapshot OOF predictions with fold_id/sample_id/group_id/y_true/y_pred/confidence traceability",
-    "record": "mean-probability aggregation over the 10 snapshots of each PoPu record (record_id = source_relative_path); label/group conflicts are rejected",
-    "subject": "per-group/per-subject accuracy and macro-F1 reported alongside snapshot metrics; worst subject is flagged"
+    "snapshot": "per-snapshot OOF predictions with repeat/fold_id/sample_id/group_id/y_true/y_pred/confidence/per-class proba__<label> traceability",
+    "record": "mean-probability aggregation over the 10 snapshots of each PoPu record per repeat (record_id = source_relative_path); label/group conflicts are rejected; PRIMARY ranking caliber",
+    "subject": "per-subject record-level accuracy/macro-F1 mean+std across repeats; worst subject (lowest accuracy_mean) flagged"
+  },
+  "feature_ablation": {
+    "round1": "all 71 features across all 7 candidates",
+    "round2": "top-2 round-1 candidates (by record_macro_f1_mean) only; the 'all' group reuses the identical round-1 results",
+    "groups": {
+      "intensity_only": "intensity group: intensity_* + nonzero_cell_count/nonzero_fraction/positive_mean (14 features)",
+      "mask_geometry_only": "geometry group: mask_*/bbox_*/centroid_*/cop_*/principal_* + component_count/contact_signal_sum + bbox_aspect_ratio/mask_extent/mask_compactness (21 features)",
+      "grid_zones_only": "grid zones group: zone_*_r<c>c<c> (36 features)",
+      "intensity_geometry": "intensity + geometry (35 features)",
+      "all": "all 71 features"
+    },
+    "no_cartesian_product": "round 2 is top-2 models x 5 groups, never every candidate x every group"
+  },
+  "candidate_freeze": {
+    "condition": "after the full real run and artifact verification, the selected candidate is refit on the FULL primary cohort (all 60 subjects)",
+    "name": "popu_research_candidate_p5_1_v0.1",
+    "output_dir": "outputs/models",
+    "model_file": "popu_research_candidate_p5_1_v0.1.joblib",
+    "metadata_file": "popu_research_candidate_p5_1_v0.1.metadata.json",
+    "label": "PoPu research candidate — a research-stage result on public PoPu data only; NOT a product model and NOT externally validated",
+    "save": [
+      "the full Pipeline (imputer/scaler/classifier)",
+      "feature schema (ordered feature columns)",
+      "label order",
+      "model config (estimator + params + version)",
+      "training data version (P4a v0.1 primary cohort, 50,060 snapshots / 60 subjects)",
+      "random seed",
+      "known limitations"
+    ],
+    "smoke_test": "independent load + predict/predict_proba on a held slice after joblib reload"
+  },
+  "runtime_budget": {
+    "max_full_run_seconds": 7200,
+    "note": "a one-fold smoke-timing pass runs per candidate first (fit on fold-0 train, predict on fold-0 val) to record fit/inference time and pickle size; a candidate whose estimated full run (one-fold fit time x n_folds) exceeds this budget is marked SKIPPED with the recorded reason. Default budget is generous so no candidate is skipped under normal conditions."
   },
   "planned_outputs": {
     "oof_predictions": "data/processed/popu/popu_model_comparison_p5_1_oof_predictions_v0.1.csv",
-    "model_summary": "outputs/metrics/popu_model_comparison_p5_1_summary_v0.1.csv",
-    "per_subject": "outputs/metrics/popu_model_comparison_p5_1_per_subject_v0.1.csv",
     "record_level": "outputs/metrics/popu_model_comparison_p5_1_record_level_v0.1.csv",
-    "report": "outputs/reports/popu_model_comparison_p5_1_summary_v0.1.json"
+    "model_summary": "outputs/metrics/popu_model_comparison_p5_1_summary_v0.1.csv",
+    "per_class": "outputs/metrics/popu_model_comparison_p5_1_per_class_v0.1.csv",
+    "per_subject": "outputs/metrics/popu_model_comparison_p5_1_per_subject_v0.1.csv",
+    "fold_repeat": "outputs/metrics/popu_model_comparison_p5_1_fold_repeat_v0.1.csv",
+    "feature_ablation": "outputs/metrics/popu_model_comparison_p5_1_feature_ablation_v0.1.csv",
+    "confusion": "outputs/metrics/popu_model_comparison_p5_1_confusion_v0.1.csv",
+    "confusion_figure": "outputs/figures/popu_model_comparison_p5_1_confusion_matrices_v0.1.png",
+    "stability_figure": "outputs/figures/popu_model_comparison_p5_1_stability_v0.1.png",
+    "worst_subject_figure": "outputs/figures/popu_model_comparison_p5_1_worst_subject_v0.1.png",
+    "summary": "outputs/reports/popu_model_comparison_p5_1_summary_v0.1.json",
+    "candidate_model": "outputs/models/popu_research_candidate_p5_1_v0.1.joblib",
+    "candidate_metadata": "outputs/models/popu_research_candidate_p5_1_v0.1.metadata.json"
   },
   "external_validation": {
     "limitation": "P5.1 cannot restore an unseen PoPu test. Real external confirmation is deferred to SLP/PressurePose/PMD tasks where applicable and to future self-developed synchronized data; those datasets must be evaluated separately and never row-joined with PoPu.",

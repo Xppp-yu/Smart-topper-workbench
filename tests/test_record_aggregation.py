@@ -92,3 +92,50 @@ def test_record_id_from_sample_id_rejects_malformed() -> None:
 
 def test_record_id_from_source_path_is_the_path() -> None:
     assert aggregation.record_id_from_source_path("popu/s1/r1/f1.json") == "popu/s1/r1/f1.json"
+
+
+def test_record_aggregation_groups_by_repeat_and_record_id() -> None:
+    df = pd.DataFrame(
+        {
+            "repeat": [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1],
+            "record_id": ["r1", "r1", "r1", "r2", "r2", "r2", "r1", "r1", "r1", "r2", "r2", "r2"],
+            "group_id": ["s1", "s1", "s1", "s2", "s2", "s2", "s1", "s1", "s1", "s2", "s2", "s2"],
+            "y_true": ["A", "A", "A", "B", "B", "B", "A", "A", "A", "B", "B", "B"],
+            "proba__A": [0.9, 0.8, 0.7, 0.1, 0.2, 0.3, 0.6, 0.6, 0.6, 0.2, 0.2, 0.2],
+            "proba__B": [0.1, 0.2, 0.3, 0.9, 0.8, 0.7, 0.4, 0.4, 0.4, 0.8, 0.8, 0.8],
+        }
+    )
+    result = aggregation.aggregate_record_predictions(
+        df, record_id_col="record_id", group_id_col="group_id", y_true_col="y_true",
+        label_columns=["proba__A", "proba__B"], repeat_id_col="repeat",
+    )
+    # 2 repeats x 2 records; the snapshots of r1 in repeat 0 must NOT be mixed
+    # with the snapshots of r1 in repeat 1.
+    assert len(result) == 4
+    assert "repeat" in result.columns
+    r1_r0 = result[(result["repeat"] == 0) & (result["record_id"] == "r1")].iloc[0]
+    assert r1_r0["proba__A"] == pytest.approx(0.8)  # mean of 0.9, 0.8, 0.7
+    assert r1_r0["y_pred"] == "A"
+    r2_r1 = result[(result["repeat"] == 1) & (result["record_id"] == "r2")].iloc[0]
+    assert r2_r1["proba__B"] == pytest.approx(0.8)
+    assert r2_r1["y_pred"] == "B"
+
+
+def test_record_aggregation_supports_proba_prefixed_columns_without_repeat() -> None:
+    df = pd.DataFrame(
+        {
+            "record_id": ["r1", "r1"],
+            "group_id": ["s1", "s1"],
+            "y_true": ["A", "A"],
+            "proba__A": [0.7, 0.9],
+            "proba__B": [0.3, 0.1],
+        }
+    )
+    result = aggregation.aggregate_record_predictions(
+        df, record_id_col="record_id", group_id_col="group_id", y_true_col="y_true",
+        label_columns=["proba__A", "proba__B"],
+    )
+    row = result.iloc[0]
+    assert row["proba__A"] == pytest.approx(0.8)
+    assert row["y_pred"] == "A"
+    assert row["proba__B"] == pytest.approx(0.2)

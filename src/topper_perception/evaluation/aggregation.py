@@ -50,27 +50,68 @@ def aggregate_record_predictions(
     group_id_col: str,
     y_true_col: str,
     label_columns: Sequence[str],
+    proba_prefix: str = "proba__",
+    repeat_id_col: str | None = None,
 ) -> pd.DataFrame:
     """Aggregate per-snapshot probabilities to one prediction per record.
 
-    ``label_columns`` are probability columns whose names ARE the class labels
-    (for example ``"empty"``/``"supine"``).  For each record the snapshot
-    probabilities are averaged (mean by default), ``y_pred`` is the argmax class
-    and ``confidence`` its mean probability.  A record whose snapshots disagree
-    on the true label or the subject/group raises ``ValueError``.
+    ``label_columns`` are probability columns.  By default their names carry the
+    ``proba__`` prefix (``proba__empty``/``proba__supine``); when a column does
+    not start with ``proba_prefix`` the column name itself is treated as the
+    class label, which keeps the pre-P5.1-B behavior (bare ``"empty"`` columns)
+    working unchanged.
+
+    When ``repeat_id_col`` is provided, aggregation groups by
+    ``(repeat, record_id)`` so snapshots of the same record from different CV
+    repeats are never mixed into one prediction; the repeat value is carried
+    onto the output row.
+
+    For each record the snapshot probabilities are averaged (mean), ``y_pred``
+    is the argmax class and ``confidence`` its mean probability.  A record whose
+    snapshots disagree on the true label or the subject/group raises
+    ``ValueError``.
     """
+    required_columns = [record_id_col, group_id_col, y_true_col, *label_columns]
+    if repeat_id_col is not None:
+        required_columns.append(repeat_id_col)
     missing = [
-        column
-        for column in (record_id_col, group_id_col, y_true_col, *label_columns)
-        if column not in predictions.columns
+        column for column in required_columns if column not in predictions.columns
     ]
     if missing:
         raise ValueError(f"Missing columns in predictions: {missing}")
     if not label_columns:
         raise ValueError("label_columns must contain at least one class probability column")
 
+    def class_of(column: str) -> str:
+        if proba_prefix and column.startswith(proba_prefix):
+            return column[len(proba_prefix):]
+        return column
+
+    label_to_column: dict[str, str] = {}
+    for column in label_columns:
+        label = class_of(str(column))
+        if label in label_to_column:
+            raise ValueError(
+                f"Duplicate class label {label!r} across label_columns "
+                f"{list(label_columns)}"
+            )
+        label_to_column[label] = str(column)
+    class_labels = list(label_to_column)
+
+    # A single-column groupby yields scalar keys; a two-column groupby yields
+    # tuples.  Using the string form when there is no repeat keeps record_id
+    # values scalar for backward compatibility.
+    grouping = (
+        [repeat_id_col, record_id_col] if repeat_id_col is not None else record_id_col
+    )
+
     rows: list[dict[str, object]] = []
-    for record_id, group in predictions.groupby(record_id_col, sort=False):
+    for key, group in predictions.groupby(grouping, sort=False):
+        if repeat_id_col is not None:
+            repeat_value, record_id = key
+        else:
+            repeat_value, record_id = None, key
+
         record_groups = group[group_id_col].unique()
         if len(record_groups) != 1:
             raise ValueError(
@@ -82,8 +123,10 @@ def aggregate_record_predictions(
                 f"record {record_id!r} has conflicting labels: {list(record_labels)}"
             )
 
-        means = {column: float(group[column].mean()) for column in label_columns}
-        predicted_label = max(label_columns, key=lambda column: means[column])
+        means = {
+            label: float(group[column].mean()) for label, column in label_to_column.items()
+        }
+        predicted_label = max(class_labels, key=lambda label: means[label])
         row: dict[str, object] = {
             "record_id": str(record_id),
             group_id_col: str(record_groups[0]),
@@ -92,7 +135,9 @@ def aggregate_record_predictions(
             "confidence": means[predicted_label],
             "n_snapshots": int(len(group)),
         }
-        row.update({column: means[column] for column in label_columns})
+        if repeat_id_col is not None:
+            row[repeat_id_col] = repeat_value
+        row.update({column: means[label] for label, column in label_to_column.items()})
         rows.append(row)
 
     return pd.DataFrame(rows)

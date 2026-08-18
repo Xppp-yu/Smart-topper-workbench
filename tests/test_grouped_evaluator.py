@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from topper_perception.evaluation import grouped
+from topper_perception.evaluation import aggregation, grouped
 from topper_perception.models.registry import build_model
 
 # A stratified dummy may predict a class that a small validation fold never
@@ -65,6 +65,30 @@ def _dummy_model(seed: int = 0):
         },
         random_state=seed,
     )
+
+
+def _record_synthetic_data(n_records: int = 8, snapshots_per_record: int = 10, seed: int = 0):
+    """Grouped synthetic data shaped like the PoPu record contract.
+
+    Each record belongs to exactly one group (subject) and carries exactly
+    ``snapshots_per_record`` frames whose sample_id follows the P4a contract
+    ``popu-tactilus::<source_relative_path>#frame=<N>``.
+    """
+    rng = np.random.RandomState(seed)
+    n = n_records * snapshots_per_record
+    records = np.repeat(np.arange(n_records), snapshots_per_record)
+    groups = records  # one subject per record
+    y = np.where(records % 2 == 0, "A", "B").astype(str)
+    x = rng.randn(n, 3)
+    x[:, 0] += np.where(records % 2 == 0, 1.5, -1.5)
+    frame_numbers = np.arange(n) % snapshots_per_record
+    sample_ids = np.array(
+        [
+            f"popu-tactilus::sub{r}/rec{r}.json#frame={i}"
+            for r, i in zip(records, frame_numbers)
+        ]
+    )
+    return x, y, groups.astype(str), sample_ids
 
 
 def test_group_folds_do_not_leak_groups() -> None:
@@ -148,6 +172,24 @@ def test_oof_evaluation_predicts_each_sample_once() -> None:
     preds = result.predictions
     assert len(preds) == len(sample_ids)
     assert set(preds["sample_id"]) == set(sample_ids.astype(str))
+
+
+def test_oof_evaluation_rejects_groups_misaligned_with_samples() -> None:
+    x, y, groups, sample_ids = _synthetic_data()
+    folds = grouped.generate_group_folds(groups, n_splits=4, shuffle=False)
+
+    # A groups sequence whose length does not match x must fail loudly with
+    # a clear error instead of indexing the group array out of bounds while
+    # emitting per-sample rows.
+    with pytest.raises(ValueError, match="groups"):
+        grouped.evaluate_grouped_oof(
+            _logreg_model(),
+            x,
+            y,
+            ["alpha", "beta", "gamma"],
+            folds,
+            sample_ids=sample_ids,
+        )
 
 
 def test_oof_predictions_carry_traceability_columns() -> None:
@@ -243,9 +285,169 @@ def test_p5_1_config_models_build_and_run_end_to_end() -> None:
         shuffle=False,
     )
 
+    # The frozen config labels describe PoPu; the synthetic data here is A/B, so
+    # pass labels matching the synthetic classes to avoid a label-drift error.
     for model_cfg in cfg["models"]:
         model = build_model(model_cfg, random_state=int(cfg["random_seed"]))
         result = grouped.evaluate_grouped_oof(
-            model, x, y, groups, folds, sample_ids=sample_ids, labels=cfg["labels"]
+            model, x, y, groups, folds, sample_ids=sample_ids, labels=["A", "B"]
         )
         assert len(result.predictions) == len(x)
+
+
+def test_oof_predictions_include_per_class_proba_columns() -> None:
+    x, y, groups, sample_ids = _synthetic_data()
+    folds = grouped.generate_group_folds(groups, n_splits=4, shuffle=False)
+    result = grouped.evaluate_grouped_oof(
+        _logreg_model(), x, y, groups, folds, sample_ids=sample_ids, labels=["A", "B"]
+    )
+    assert {"proba__A", "proba__B"} <= set(result.predictions.columns)
+
+
+def test_oof_proba_rows_are_finite_and_sum_to_one() -> None:
+    x, y, groups, sample_ids = _synthetic_data()
+    folds = grouped.generate_group_folds(groups, n_splits=4, shuffle=False)
+    result = grouped.evaluate_grouped_oof(
+        _logreg_model(), x, y, groups, folds, sample_ids=sample_ids, labels=["A", "B"]
+    )
+    proba = result.predictions[["proba__A", "proba__B"]].to_numpy(dtype=float)
+    assert np.isfinite(proba).all()
+    assert np.allclose(proba.sum(axis=1), 1.0, atol=1e-4)
+
+
+def test_oof_proba_columns_align_to_frozen_label_order() -> None:
+    x, y, groups, sample_ids = _synthetic_data()
+    folds = grouped.generate_group_folds(groups, n_splits=4, shuffle=False)
+    result = grouped.evaluate_grouped_oof(
+        _logreg_model(), x, y, groups, folds, sample_ids=sample_ids, labels=["B", "A"]
+    )
+    preds = result.predictions
+    # argmax over the frozen-order proba columns must equal y_pred regardless of
+    # whether the frozen order happens to match sklearn's sorted classes_.
+    argmax = np.where(preds["proba__B"] >= preds["proba__A"], "B", "A")
+    assert (argmax == preds["y_pred"].to_numpy()).all()
+
+
+def test_oof_estimator_with_unfrozen_class_raises() -> None:
+    x, y, groups, sample_ids = _synthetic_data()
+    folds = grouped.generate_group_folds(groups, n_splits=4, shuffle=False)
+    # The estimator sees both A and B, but the frozen label set claims only A:
+    # that is label drift and must fail loudly, never silently misalign.
+    with pytest.raises(ValueError, match="class"):
+        grouped.evaluate_grouped_oof(
+            _logreg_model(), x, y, groups, folds, sample_ids=sample_ids, labels=["A"]
+        )
+
+
+def test_snapshot_metrics_are_computed_per_repeat() -> None:
+    x, y, groups, sample_ids = _synthetic_data()
+    folds = grouped.generate_repeated_group_folds(
+        groups, n_splits=4, shuffle=True, seed=7, n_repeats=2
+    )
+    result = grouped.evaluate_grouped_oof(
+        _logreg_model(), x, y, groups, folds, sample_ids=sample_ids, labels=["A", "B"]
+    )
+    per_repeat = grouped.snapshot_metrics_per_repeat(result)
+    assert len(per_repeat) == 2
+    assert [row["repeat"] for row in per_repeat] == [0, 1]
+    for row in per_repeat:
+        assert {"accuracy", "balanced_accuracy", "macro_f1"} <= set(row)
+    reduced = grouped.reduce_repeat_metrics(per_repeat)
+    assert set(reduced) == {"accuracy", "balanced_accuracy", "macro_f1"}
+    for metric in reduced.values():
+        assert 0.0 <= metric["mean"] <= 1.0
+        assert metric["std"] >= 0.0
+
+
+def test_subject_metrics_averaged_across_repeats_with_worst_flagged() -> None:
+    x, y, groups, sample_ids = _synthetic_data(n_groups=6, samples_per_group=20)
+    folds = grouped.generate_repeated_group_folds(
+        groups, n_splits=3, shuffle=True, seed=3, n_repeats=2
+    )
+    result = grouped.evaluate_grouped_oof(
+        _logreg_model(), x, y, groups, folds, sample_ids=sample_ids, labels=["A", "B"]
+    )
+    subjects = grouped.repeated_subject_metrics(result.predictions, labels=["A", "B"])
+    assert len(subjects) == 6
+    for row in subjects:
+        assert {"subject_id", "accuracy_mean", "macro_f1_mean"} <= set(row)
+    worst = [row for row in subjects if row["is_worst"]]
+    assert len(worst) == 1
+    assert worst[0]["accuracy_mean"] == min(row["accuracy_mean"] for row in subjects)
+
+
+def test_record_level_selection_uses_criterion_then_complexity() -> None:
+    rows = [
+        {"model": "random_forest", "record_macro_f1_mean": 0.91, "record_balanced_acc_mean": 0.90, "worst_subject_macro_f1_mean": 0.72},
+        {"model": "logistic_regression", "record_macro_f1_mean": 0.907, "record_balanced_acc_mean": 0.905, "worst_subject_macro_f1_mean": 0.70},
+        {"model": "knn", "record_macro_f1_mean": 0.90, "record_balanced_acc_mean": 0.89, "worst_subject_macro_f1_mean": 0.68},
+    ]
+    order = ["logistic_regression", "knn", "random_forest"]
+    # Within margin, a lower-complexity candidate wins even if a more complex
+    # one has a slightly higher primary score.
+    winner = grouped.select_best_candidate(
+        rows, criterion="record_macro_f1_mean", tie_break="record_balanced_acc_mean",
+        worst_subject_criterion="worst_subject_macro_f1_mean",
+        complexity_order=order, exclude=(), margin=0.005,
+    )
+    assert winner == "logistic_regression"
+    # With a zero margin the top primary score alone decides.
+    strict = grouped.select_best_candidate(
+        rows, criterion="record_macro_f1_mean", tie_break="record_balanced_acc_mean",
+        worst_subject_criterion="worst_subject_macro_f1_mean",
+        complexity_order=order, exclude=(), margin=0.0,
+    )
+    assert strict == "random_forest"
+
+
+def test_record_level_selection_tie_break_order() -> None:
+    rows = [
+        {"model": "a", "record_macro_f1_mean": 0.90, "record_balanced_acc_mean": 0.89, "worst_subject_macro_f1_mean": 0.70},
+        {"model": "b", "record_macro_f1_mean": 0.90, "record_balanced_acc_mean": 0.90, "worst_subject_macro_f1_mean": 0.70},
+        {"model": "c", "record_macro_f1_mean": 0.90, "record_balanced_acc_mean": 0.90, "worst_subject_macro_f1_mean": 0.75},
+    ]
+    best = grouped.select_best_candidate(
+        rows, criterion="record_macro_f1_mean", tie_break="record_balanced_acc_mean",
+        worst_subject_criterion="worst_subject_macro_f1_mean",
+        complexity_order=["a", "b", "c"], exclude=(), margin=0.0,
+    )
+    assert best == "c"
+
+
+def test_record_level_selection_excludes_and_fails_without_candidates() -> None:
+    rows = [
+        {"model": "dummy", "record_macro_f1_mean": 0.20, "record_balanced_acc_mean": 0.20, "worst_subject_macro_f1_mean": 0.20},
+    ]
+    with pytest.raises(ValueError):
+        grouped.select_best_candidate(
+            rows, criterion="record_macro_f1_mean", tie_break="record_balanced_acc_mean",
+            worst_subject_criterion="worst_subject_macro_f1_mean",
+            complexity_order=["logistic_regression"], exclude=("dummy",),
+        )
+
+
+def test_evaluator_to_aggregation_end_to_end() -> None:
+    x, y, groups, sample_ids = _record_synthetic_data(n_records=8, snapshots_per_record=10)
+    folds = grouped.generate_repeated_group_folds(
+        groups, n_splits=4, shuffle=True, seed=11, n_repeats=2
+    )
+    result = grouped.evaluate_grouped_oof(
+        _logreg_model(), x, y, groups, folds, sample_ids=sample_ids, labels=["A", "B"]
+    )
+    preds = result.predictions.copy()
+    preds["record_id"] = preds["sample_id"].map(
+        lambda sid: aggregation.record_id_from_sample_id(str(sid))
+    )
+    records = aggregation.aggregate_record_predictions(
+        preds, record_id_col="record_id", group_id_col="group_id", y_true_col="y_true",
+        label_columns=["proba__A", "proba__B"], repeat_id_col="repeat",
+    )
+    # 8 records x 2 repeats, and the 10 snapshots of each (repeat, record) are
+    # never mixed across repeats or across records.
+    assert len(records) == 8 * 2
+    assert records["n_snapshots"].unique().tolist() == [10]
+    first = records.iloc[0]
+    src = preds[
+        (preds["repeat"] == first["repeat"]) & (preds["record_id"] == first["record_id"])
+    ]
+    assert first["proba__A"] == pytest.approx(float(src["proba__A"].mean()))
