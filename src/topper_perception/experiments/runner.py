@@ -122,10 +122,26 @@ def run_popu_neural(
     return run_popu_neural_smoke(parameters, seed, experiment_dir)
 
 
+def run_popu_neural_mini(
+    parameters: Mapping[str, Any], seed: int, experiment_dir: Path
+) -> dict[str, Any]:
+    """Lazily import and delegate to the torch-only PoPu neural Mini runner.
+
+    Same deferred-import rationale as :func:`run_popu_neural`; this entry point
+    drives the P5.2-B multi-epoch Mini screening with early stopping, a fixed
+    best-checkpoint rule, and the viability gate. It is registered under a
+    distinct ``runner_type`` so the frozen P5.2-A smoke path is untouched.
+    """
+    from topper_perception.neural.mini import run_popu_neural_mini as _run
+
+    return _run(parameters, seed, experiment_dir)
+
+
 #: Registry mapping ``runner_type`` to its execution function.
 RUNNER_REGISTRY: dict[str, RunnerFn] = {
     "dummy": run_dummy_smoke,
     "popu_neural": run_popu_neural,
+    "popu_neural_mini": run_popu_neural_mini,
 }
 
 

@@ -61,12 +61,13 @@ P5 首轮 Baseline（已完成）
 - 通过条件：受试者切分隔离、train-fold normalization、标签映射、左右翻转标签交换、checkpoint/resume、CPU 与 CUDA Smoke、模型重载预测全部通过。
 - 停止条件：此阶段不跑 Full CV；通过后由 Controller 另行签发 P5.2-B 的 EXP 配置。
 
-#### P5.2-B：Mini 筛选
+#### P5.2-B：Mini 筛选（MINI_READY_TO_RUN，未运行）
 
-- 输入：P5.2-A 通过的候选 + 开发受试者固定子集。
-- 输出：3-5 epochs、固定种子与早停规则的 Mini Run 产物。
-- 通过条件：排除明显不可行的架构/输入方案；不形成最终排名。
-- 停止条件：只有通过资源、稳定性和方向性 Gate 的候选进入 Full。
+- 输入：P5.2-A 通过的候选 + 开发受试者固定子集（冻结 `["1","2","3","4","5","6"]`，看结果前固定）。
+- 输出：3-5 epochs、固定种子（seed=42）、早停（`val_loss`/`min`/`patience=2`/`min_epochs=3`）与 best-checkpoint（`argmin val_loss`）规则的 Mini Run 产物；逐 epoch/逐类别指标、checkpoint/resume/reload、固定 seed 复现。
+- 通过条件：排除明显不可行候选（指标有限 + 学习信号 `best_val_balanced_accuracy > 1/5 + 0.05`）；协议问题记 `needs_fix`；不形成最终排名。
+- 停止条件：只有 `proceed` 的候选进入 Full。
+- 就绪产物：[协议报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_PROTOCOL_v0.1.md)、[冻结配置](../configs/experiments/popu_neural_mini_v0.1.json)、`runner_type=popu_neural_mini`；尚未运行真实 Mini/Full。
 
 #### P5.2-C：Full 公平比较
 
@@ -117,4 +118,4 @@ P5 首轮 Baseline（已完成）
 - 阶段总看板与状态： [PROJECT_STATUS.md](PROJECT_STATUS.md)
 - 验证方法学与证据边界总蓝图： [VALIDATION_WORKFLOW_MASTER.md](VALIDATION_WORKFLOW_MASTER.md)
 - 阶段报告目录： [stage_reports/](stage_reports/)
-- 冻结协议： P4a [popu_features_p4a_v0.1.json](../configs/experiments/popu_features_p4a_v0.1.json)、P5 [popu_baseline_p5_v0.1.json](../configs/experiments/popu_baseline_p5_v0.1.json)、P5.1 [popu_model_comparison_p5_1_v0.1.json](../configs/experiments/popu_model_comparison_p5_1_v0.1.json)
+- 冻结协议： P4a [popu_features_p4a_v0.1.json](../configs/experiments/popu_features_p4a_v0.1.json)、P5 [popu_baseline_p5_v0.1.json](../configs/experiments/popu_baseline_p5_v0.1.json)、P5.1 [popu_model_comparison_p5_1_v0.1.json](../configs/experiments/popu_model_comparison_p5_1_v0.1.json)、P5.2-B Mini [popu_neural_mini_v0.1.json](../configs/experiments/popu_neural_mini_v0.1.json)

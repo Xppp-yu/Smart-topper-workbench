@@ -1,0 +1,44 @@
+{
+  "schema_version": "experiment-v0.1",
+  "exp_id": "EXP-P5.2-B-MINI-SCREEN-20260819-R01",
+  "task_id": "TASK-P5.2-B-MINI-SCREEN-v0.1",
+  "scope": "mini",
+  "runner_type": "popu_neural_mini",
+  "seed": 42,
+  "output_root": "outputs/experiments",
+  "parameters": {
+    "subject_selection_rule": "Frozen before any model result: primary-cohort subjects [1..6] in numeric order; no cherry-picking against model output.",
+    "subject_ids": ["1", "2", "3", "4", "5", "6"],
+    "max_samples": 6000,
+    "val_ratio": 0.2,
+    "test_ratio": 0.0,
+    "batch_size": 32,
+    "epochs": 5,
+    "device": "auto",
+    "amp_enabled": true,
+    "flip_augmentation": true,
+    "optimizer": {
+      "lr": 1e-3,
+      "weight_decay": 1e-4
+    },
+    "early_stopping": {
+      "monitor": "val_loss",
+      "mode": "min",
+      "patience": 2,
+      "min_delta": 0.0,
+      "min_epochs": 3
+    },
+    "resource_limits": {
+      "max_train_seconds_per_model": 300,
+      "max_cuda_mb": 8000
+    },
+    "viability": {
+      "chance_margin": 0.05
+    },
+    "model_configs": [
+      { "name": "matrix_mlp", "params": {} },
+      { "name": "tiny_cnn", "params": {} },
+      { "name": "small_resnet", "params": {} }
+    ]
+  }
+}
