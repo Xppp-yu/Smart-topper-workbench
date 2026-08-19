@@ -2,13 +2,21 @@
 
 ## 1. 结论
 
-**状态：REVIEW_NEEDS_FIX（不是 MINI_READY_TO_RUN，也不是 COMPLETE）。**
+**状态：MINI_READY_TO_RUN — REVIEWER_ACCEPTED（不是 COMPLETE；尚未运行真实 Mini/Full）。**
 
-首轮 Mini 协议与实现已提交，Reviewer 只读复核后返回 `REVIEW_NEEDS_FIX`，本提交是在该结论之上新增的**修复提交**（不重写历史）。修复项：① 主 cohort 明确为 ACCEPT-only（`primary`），并真正读取冻结的 P2 质量 manifest 过滤 WARN/EXCLUDED；② 冻结配置 `device` 由 `auto` 改为 `cuda`，CUDA 不可用时直接失败、不静默回退 CPU；③ 切分改为显式 `train_subject_ids`/`val_subject_ids`（≥2 验证受试者），不再由 ratio 派生；④ 早停只允许 `monitor=val_loss`，拒绝 NaN/Inf metric 与 `min_delta`；⑤ 可行性门：CUDA 缺 `peak_cuda_mb` 记为 `needs_fix`、`overall_verdict` 拒绝未知 verdict 字符串；⑥ 文档在 Reviewer 重新接受前标记 `REVIEW_NEEDS_FIX`；⑦ 冻结配置记录 P2 质量 manifest 的 SHA-256，Mini runner 在读取前校验、manifest.json 记录数据 Manifest 哈希（详见第 9 节）。
+首轮 Mini 协议与实现已提交，Reviewer 只读复核后返回 `REVIEW_NEEDS_FIX`；已按首轮 6 项要求与后续数据 Manifest SHA-256 哈希校验共 7 项修复，全部以新增提交完成（不重写历史，最终修复提交 `4b8b73e`）。修复项：① 主 cohort 明确为 ACCEPT-only（`primary`），并真正读取冻结的 P2 质量 manifest 过滤 WARN/EXCLUDED；② 冻结配置 `device` 由 `auto` 改为 `cuda`，CUDA 不可用时直接失败、不静默回退 CPU；③ 切分改为显式 `train_subject_ids`/`val_subject_ids`（≥2 验证受试者），不再由 ratio 派生；④ 早停只允许 `monitor=val_loss`，拒绝 NaN/Inf metric 与 `min_delta`；⑤ 可行性门：CUDA 缺 `peak_cuda_mb` 记为 `needs_fix`、`overall_verdict` 拒绝未知 verdict 字符串；⑥ 文档在 Reviewer 重新接受前标记 `REVIEW_NEEDS_FIX`；⑦ 冻结配置记录 P2 质量 manifest 的 SHA-256，Mini runner 在读取前校验、manifest.json 记录数据 Manifest 哈希（详见第 5.1 节）。Reviewer 最终复核已接受（`REVIEWER_ACCEPTED`），P5.2-B 正式标记为 `MINI_READY_TO_RUN`。
 
 **本任务没有运行任何真实 Mini 或 Full 实验**——AutoDL 处于关闭状态，本任务禁止连接或启动服务器，也未读取完整 PoPu 数据训练。P5.2-A CPU/CUDA Smoke 保持 COMPLETE；P5.1 `calibrated_linear_svm` 传统候选与 P5.2-A CPU Smoke、CUDA R01/R02 历史产物均未修改或覆盖。
 
-下一步是 **Reviewer 只读复核本修复提交 + 配置冻结 + Controller 授权**之后，才由 Experiment Runner 在 AutoDL 上执行 Mini Run。
+### 1.1 Reviewer 最终复核证据
+
+- 复核对象：HEAD commit `4b8b73e`（叠加在首轮修复提交之上，未重写历史）。
+- 测试：`python -m pytest -q` → **346 passed**，`git diff --check` 通过。
+- 数据 Manifest：`outputs/metrics/popu_tactilus_quality_results_v0.1.csv`，SHA-256 `9d3398a587b183f7e27ea68ada2eda1e5e82ebadb2ac9caf7a74b5763d3e954c`，文件大小 1,187,628 bytes，读取前校验通过。
+- ACCEPT-only cohort 只读预检：516 条记录考虑，11 条排除，505 条 ACCEPT 保留，5,050 个选中 snapshot（505 × 10）。
+- 无阻断 Mini 的问题，P5.2-B 获准标记为 `MINI_READY_TO_RUN`。
+
+下一步是 **部署 Git bundle + 单独上传 P2 质量 manifest 并校验 SHA-256**之后，由 Experiment Runner 在 AutoDL 上执行 Mini Run。
 
 ## 2. 冻结的 Mini 协议
 
@@ -85,7 +93,7 @@ P2 质量 manifest（`outputs/metrics/popu_tactilus_quality_results_v0.1.csv`）
 
 ## 7. 未运行的真实命令
 
-下一阶段的 Mini Run 命令（**本任务未执行**）应由 Experiment Runner 在 AutoDL 打开、Reviewer 复核并授权后运行：
+下一阶段的 Mini Run 命令（**本任务未执行**）应由 Experiment Runner 在 AutoDL 打开、上传 P2 质量 manifest 并校验 SHA-256 后运行：
 
 ```text
 python scripts/run_experiment.py --config configs/experiments/popu_neural_mini_v0.1.json
@@ -93,7 +101,7 @@ python scripts/run_experiment.py --config configs/experiments/popu_neural_mini_v
 
 ## 8. 已知限制
 
-- 本阶段为 `REVIEW_NEEDS_FIX` 修复提交，未产出任何真实 Mini 指标；`REVIEW_NEEDS_FIX` 不等于 Mini 通过或候选排名。
+- 本阶段为 `MINI_READY_TO_RUN` 状态，尚未运行真实 Mini，未产出任何真实 Mini 指标；`MINI_READY_TO_RUN` 不等于 Mini 通过或候选排名。
 - 三模型 Mini 的实际 `proceed/exclude/needs_fix` 结果要等真实运行后才有。
 - 固定开发子集 `[1..6]` 是**筛选**集，不代表全量受试者分布；Full 公平比较仍按 P5.1 的受试者隔离原则在全部受试者上评估。
 - 学习信号阈值 0.25 是最低方向性门槛，不构成任何模型优劣结论。

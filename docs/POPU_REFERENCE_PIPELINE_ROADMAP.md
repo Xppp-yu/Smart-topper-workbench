@@ -61,13 +61,13 @@ P5 首轮 Baseline（已完成）
 - 通过条件：受试者切分隔离、train-fold normalization、标签映射、左右翻转标签交换、checkpoint/resume、CPU 与 CUDA Smoke、模型重载预测全部通过。
 - 停止条件：此阶段不跑 Full CV；通过后由 Controller 另行签发 P5.2-B 的 EXP 配置。
 
-#### P5.2-B：Mini 筛选（REVIEW_NEEDS_FIX，未运行）
+#### P5.2-B：Mini 筛选（MINI_READY_TO_RUN — REVIEWER_ACCEPTED，未运行）
 
 - 输入：P5.2-A 通过的候选 + 开发受试者固定子集（冻结 `["1","2","3","4","5","6"]`，看结果前固定）+ 冻结 P2 质量 manifest（`primary` = ACCEPT-only cohort，WARN/EXCLUDED 不入 Mini；其 SHA-256 冻结并在读取前校验）。
 - 输出：3-5 epochs、固定种子（seed=42）、早停（仅 `val_loss`/`min`/`patience=2`/`min_epochs=3`）与 best-checkpoint（`argmin val_loss`）规则的 Mini Run 产物；`device=cuda`（无 CUDA 直接失败）；显式 `train_subject_ids`/`val_subject_ids`（≥2 验证）；逐 epoch/逐类别指标、checkpoint/resume/reload、固定 seed 复现。
 - 通过条件：排除明显不可行候选（指标有限 + 学习信号 `best_val_balanced_accuracy > 1/5 + 0.05`）；协议问题记 `needs_fix`；不形成最终排名。
 - 停止条件：只有 `proceed` 的候选进入 Full。
-- 就绪产物：[协议报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_PROTOCOL_v0.1.md)、[冻结配置](../configs/experiments/popu_neural_mini_v0.1.json)、`runner_type=popu_neural_mini`；Reviewer 首轮复核返回 `REVIEW_NEEDS_FIX`，已按 6 项要求完成首轮修复提交，并追加数据 Manifest SHA-256 哈希校验；尚未运行真实 Mini/Full。
+- 就绪产物：[协议报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_PROTOCOL_v0.1.md)、[冻结配置](../configs/experiments/popu_neural_mini_v0.1.json)、`runner_type=popu_neural_mini`；Reviewer 首轮复核返回 `REVIEW_NEEDS_FIX`，已按 6 项要求完成首轮修复提交并追加数据 Manifest SHA-256 哈希校验；Reviewer 最终复核已接受（commit `4b8b73e`、`346 passed`、ACCEPT-only cohort 505 ACCEPT / 5,050 snapshots），标记 `MINI_READY_TO_RUN`；尚未运行真实 Mini/Full。
 
 #### P5.2-C：Full 公平比较
 
