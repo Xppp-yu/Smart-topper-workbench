@@ -100,6 +100,27 @@ def test_cpu_run_without_cuda_limit_is_resource_ok() -> None:
     assert result.verdict == "proceed"
 
 
+def test_needs_fix_when_cuda_missing_peak_memory() -> None:
+    # A CUDA run must report its peak memory; a missing value is needs_fix, not
+    # a silent pass (and not a CPU fallback).
+    result = assess_viability(
+        _summary(device="cuda", peak_cuda_mb=None),
+        num_classes=5,
+        resource_limits=_limits(),
+    )
+    assert result.checks["resource_ok"] is False
+    assert result.verdict == "needs_fix"
+
+
+def test_cuda_run_with_peak_memory_is_resource_ok() -> None:
+    result = assess_viability(
+        _summary(device="cuda", peak_cuda_mb=100.0),
+        num_classes=5,
+        resource_limits=_limits(),
+    )
+    assert result.checks["resource_ok"] is True
+
+
 @pytest.mark.parametrize("num_classes", [1, 0, "5", True, 2.5])
 def test_invalid_num_classes_raises(num_classes) -> None:
     with pytest.raises(ValueError):
@@ -138,3 +159,8 @@ def test_overall_verdict_proceed_otherwise() -> None:
 def test_overall_verdict_empty_raises() -> None:
     with pytest.raises(ValueError):
         overall_verdict([])
+
+
+def test_overall_verdict_unknown_verdict_raises() -> None:
+    with pytest.raises(ValueError, match="Unknown per-model verdict"):
+        overall_verdict(["proceed", "bogus"])

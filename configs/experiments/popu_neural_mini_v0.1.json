@@ -8,13 +8,15 @@
   "output_root": "outputs/experiments",
   "parameters": {
     "subject_selection_rule": "Frozen before any model result: primary-cohort subjects [1..6] in numeric order; no cherry-picking against model output.",
+    "cohort": "primary",
+    "quality_manifest": "outputs/metrics/popu_tactilus_quality_results_v0.1.csv",
     "subject_ids": ["1", "2", "3", "4", "5", "6"],
+    "train_subject_ids": ["1", "2", "3", "4"],
+    "val_subject_ids": ["5", "6"],
     "max_samples": 6000,
-    "val_ratio": 0.2,
-    "test_ratio": 0.0,
     "batch_size": 32,
     "epochs": 5,
-    "device": "auto",
+    "device": "cuda",
     "amp_enabled": true,
     "flip_augmentation": true,
     "optimizer": {

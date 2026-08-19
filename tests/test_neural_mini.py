@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -11,7 +12,7 @@ import torch
 
 from topper_perception.experiments import contracts
 from topper_perception.experiments.runner import RUNNER_REGISTRY, run_experiment
-from topper_perception.neural.mini import run_popu_neural_mini
+from topper_perception.neural.mini import collect_labeled_samples, run_popu_neural_mini
 
 ROWS, COLS = 64, 27
 CELLS = ROWS * COLS
@@ -49,22 +50,45 @@ def _write_record(
     return path
 
 
+def _write_manifest(tmp_path: Path, status_by_relpath: dict[str, str]) -> None:
+    manifest = tmp_path / "quality_manifest.csv"
+    with manifest.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["sample_id", "quality_status"])
+        writer.writeheader()
+        for rel, status in sorted(status_by_relpath.items()):
+            writer.writerow({"sample_id": f"popu-tactilus::{rel}", "quality_status": status})
+
+
+def _append_manifest(tmp_path: Path, status_by_relpath: dict[str, str]) -> None:
+    manifest = tmp_path / "quality_manifest.csv"
+    with manifest.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["sample_id", "quality_status"])
+        for rel, status in sorted(status_by_relpath.items()):
+            writer.writerow({"sample_id": f"popu-tactilus::{rel}", "quality_status": status})
+
+
 def _make_data(tmp_path: Path, n_subjects: int = 6) -> Path:
+    status_by_relpath: dict[str, str] = {}
     for s in range(1, n_subjects + 1):
         subj = str(s)
         for posture in ("empty", "supine", "prone", "left", "right"):
             _write_record(tmp_path, subj, f"{posture}.json", posture, n_snapshots=4, seed=s)
+            status_by_relpath[f"{subj}/{posture}.json"] = "ACCEPT"
         _write_record(tmp_path, subj, "others.json", None, n_snapshots=4, seed=s)
+        status_by_relpath[f"{subj}/others.json"] = "EXCLUDED"
+    _write_manifest(tmp_path, status_by_relpath)
     return tmp_path
 
 
 def _params(tmp_path: Path, **overrides) -> dict:
     params = {
         "subject_selection_rule": "Frozen before results: subjects [1..6] in numeric order.",
+        "cohort": "primary",
+        "quality_manifest": str(tmp_path / "quality_manifest.csv"),
         "subject_ids": ["1", "2", "3", "4", "5", "6"],
+        "train_subject_ids": ["1", "2", "3", "4"],
+        "val_subject_ids": ["5", "6"],
         "max_samples": 6000,
-        "val_ratio": 0.2,
-        "test_ratio": 0.0,
         "batch_size": 4,
         "epochs": 5,
         "device": "cpu",
@@ -204,7 +228,67 @@ def test_mini_subject_isolation(tmp_path: Path) -> None:
     assert train.isdisjoint(test)
     assert val.isdisjoint(test)
     assert test == set()
+    assert train == {"1", "2", "3", "4"}
+    assert val == {"5", "6"}
     assert len(train) + len(val) == 6
+
+
+def test_mini_cohort_excludes_warn_and_excluded(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    _write_record(tmp_path, "1", "empty_warn.json", "empty", n_snapshots=4, seed=100)
+    _write_record(tmp_path, "1", "prone_excluded.json", "prone", n_snapshots=4, seed=101)
+    _append_manifest(
+        tmp_path,
+        {"1/empty_warn.json": "WARN", "1/prone_excluded.json": "EXCLUDED"},
+    )
+
+    primary, primary_stats = collect_labeled_samples(_params(tmp_path), tmp_path)
+    combined, combined_stats = collect_labeled_samples(
+        _params(tmp_path, cohort="combined"), tmp_path
+    )
+
+    assert primary_stats["cohort"] == "primary"
+    primary_ids = {s.record_id for s in primary}
+    assert "1/empty_warn.json" not in primary_ids
+    assert "1/prone_excluded.json" not in primary_ids
+
+    combined_ids = {s.record_id for s in combined}
+    assert "1/empty_warn.json" in combined_ids
+    assert "1/prone_excluded.json" not in combined_ids
+
+    # The only difference between the two cohorts is the single WARN record.
+    assert (
+        primary_stats["n_records_excluded_by_cohort"]
+        == combined_stats["n_records_excluded_by_cohort"] + 1
+    )
+
+
+def test_mini_explicit_split_validation(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    exp = tmp_path / "exp"
+
+    with pytest.raises(ValueError, match="at least 2 validation"):
+        run_popu_neural_mini(
+            _params(tmp_path, val_subject_ids=["5"]), seed=1, experiment_dir=exp
+        )
+
+    with pytest.raises(ValueError, match="disjoint"):
+        run_popu_neural_mini(
+            _params(
+                tmp_path,
+                train_subject_ids=["1", "2", "3", "5"],
+                val_subject_ids=["5", "6"],
+            ),
+            seed=1,
+            experiment_dir=exp,
+        )
+
+
+def test_mini_rejects_missing_quality_manifest(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    (tmp_path / "quality_manifest.csv").unlink()
+    with pytest.raises(FileNotFoundError, match="quality manifest"):
+        run_popu_neural_mini(_params(tmp_path), seed=1, experiment_dir=tmp_path / "exp")
 
 
 def test_mini_through_governed_runner(tmp_path: Path) -> None:

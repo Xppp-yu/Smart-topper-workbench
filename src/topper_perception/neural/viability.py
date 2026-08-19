@@ -70,7 +70,7 @@ _REASON = {
     "checkpoint_ok": "latest/best checkpoint files missing",
     "resume_ok": "checkpoint resume failed or parameters did not change",
     "reload_ok": "independent reload prediction consistency failed",
-    "resource_ok": "training time or GPU memory exceeded resource limits",
+    "resource_ok": "training time or GPU memory exceeded limits, or CUDA peak memory missing on a CUDA run",
 }
 
 
@@ -137,8 +137,14 @@ def assess_viability(
 
     peak_cuda = summary.get("peak_cuda_mb")
     max_cuda = resource_limits.get("max_cuda_mb")
-    if peak_cuda is None or max_cuda is None:
-        cuda_ok = True  # CPU run, or no memory limit configured
+    is_cuda = str(summary.get("device", "")).startswith("cuda")
+    if peak_cuda is None:
+        # No peak memory captured: on a CUDA run this is a protocol failure; on
+        # a CPU run (or a summary without a device marker) there is nothing to
+        # check against the GPU limit.
+        cuda_ok = not is_cuda
+    elif max_cuda is None:
+        cuda_ok = True  # memory reported but no limit configured
     elif _is_finite(peak_cuda) and _is_finite(max_cuda):
         cuda_ok = float(peak_cuda) <= float(max_cuda)
     else:
@@ -191,6 +197,14 @@ def overall_verdict(per_model_verdicts: list[str]) -> str:
     """
     if not per_model_verdicts:
         raise ValueError("At least one per-model verdict is required.")
+    valid = {
+        ViabilityVerdict.PROCEED.value,
+        ViabilityVerdict.EXCLUDE.value,
+        ViabilityVerdict.NEEDS_FIX.value,
+    }
+    unknown = sorted({str(v) for v in per_model_verdicts if v not in valid})
+    if unknown:
+        raise ValueError(f"Unknown per-model verdict(s): {unknown}.")
     if any(v == ViabilityVerdict.NEEDS_FIX.value for v in per_model_verdicts):
         return ViabilityVerdict.NEEDS_FIX.value
     if all(v == ViabilityVerdict.EXCLUDE.value for v in per_model_verdicts):

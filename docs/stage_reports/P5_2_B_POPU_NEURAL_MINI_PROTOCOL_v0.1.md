@@ -2,11 +2,13 @@
 
 ## 1. 结论
 
-**状态：MINI_READY_TO_RUN（不是 COMPLETE）。**
+**状态：REVIEW_NEEDS_FIX（不是 MINI_READY_TO_RUN，也不是 COMPLETE）。**
 
-本任务完成了 P5.2-B Mini 筛选所需的代码、版本化配置、测试与说明，使项目达到 `MINI_READY_TO_RUN`：实现冻结、测试通过、配置就绪、治理接线完成。**本任务没有运行任何真实 Mini 或 Full 实验**——AutoDL 处于关闭状态，本任务禁止连接或启动服务器，也未读取完整 PoPu 数据训练。P5.2-A CPU/CUDA Smoke 保持 COMPLETE；P5.1 `calibrated_linear_svm` 传统候选与 P5.2-A CPU Smoke、CUDA R01/R02 历史产物均未修改或覆盖。
+首轮 Mini 协议与实现已提交，Reviewer 只读复核后返回 `REVIEW_NEEDS_FIX`，本提交是在该结论之上新增的**修复提交**（不重写历史）。修复项：① 主 cohort 明确为 ACCEPT-only（`primary`），并真正读取冻结的 P2 质量 manifest 过滤 WARN/EXCLUDED；② 冻结配置 `device` 由 `auto` 改为 `cuda`，CUDA 不可用时直接失败、不静默回退 CPU；③ 切分改为显式 `train_subject_ids`/`val_subject_ids`（≥2 验证受试者），不再由 ratio 派生；④ 早停只允许 `monitor=val_loss`，拒绝 NaN/Inf metric 与 `min_delta`；⑤ 可行性门：CUDA 缺 `peak_cuda_mb` 记为 `needs_fix`、`overall_verdict` 拒绝未知 verdict 字符串；⑥ 文档在 Reviewer 重新接受前标记 `REVIEW_NEEDS_FIX`。
 
-下一步是 **Reviewer 只读复核 + 配置冻结 + Controller 授权**之后，才由 Experiment Runner 在 AutoDL 上执行 Mini Run。
+**本任务没有运行任何真实 Mini 或 Full 实验**——AutoDL 处于关闭状态，本任务禁止连接或启动服务器，也未读取完整 PoPu 数据训练。P5.2-A CPU/CUDA Smoke 保持 COMPLETE；P5.1 `calibrated_linear_svm` 传统候选与 P5.2-A CPU Smoke、CUDA R01/R02 历史产物均未修改或覆盖。
+
+下一步是 **Reviewer 只读复核本修复提交 + 配置冻结 + Controller 授权**之后，才由 Experiment Runner 在 AutoDL 上执行 Mini Run。
 
 ## 2. 冻结的 Mini 协议
 
@@ -14,10 +16,12 @@
 |---|---|---|
 | scope | `mini` | 由治理 runner 强制要求干净 Git worktree 后才可 QUEUED |
 | 开发受试者子集 | `["1","2","3","4","5","6"]` | 固定、数字序、**在看任何模型结果之前**冻结；不针对模型输出挑子集 |
-| 切分 | 受试者隔离 `val_ratio=0.2, test_ratio=0.0` | 6 受试者 → 5 训练 / 1 验证；同一受试者的记录不跨 split；无 test split |
+| cohort | `primary`（ACCEPT-only） | 冻结 P2 质量 manifest（`popu_tactilus_quality_results_v0.1.csv`）为唯一 cohort 来源；WARN/EXCLUDED/REJECT 在建样本前被丢弃，绝不误入 primary |
+| 切分 | 受试者隔离、**显式** `train_subject_ids=["1","2","3","4"]`、`val_subject_ids=["5","6"]`（≥2 验证） | 不在运行期由 ratio 派生；同一受试者的记录不跨 split；无 test split |
+| device | `cuda` | CUDA 不可用时**直接失败**（`resolve_device` 抛错），不静默回退 CPU；CPU 测试显式 `device=cpu` |
 | seed | `42` | 固定；同 config+seed 复现 |
 | epochs | `5`，`early_stopping.min_epochs=3` | 实际 3–5 epochs |
-| early stopping | `monitor=val_loss, mode=min, patience=2, min_delta=0.0, min_epochs=3` | **只读验证指标**，永不读 test |
+| early stopping | `monitor=val_loss`（**只允许 val_loss**）、`mode=min, patience=2, min_delta=0.0, min_epochs=3` | **只读验证指标**，永不读 test；`monitor≠val_loss`、NaN/Inf metric、非有限/负 `min_delta` 一律拒绝 |
 | best checkpoint | `argmin(val_loss)`，改善判定 `< best - min_delta`，平局取最早 epoch | 固定规则写入 resolved config 与 metrics |
 | 候选模型 | `matrix_mlp` / `tiny_cnn` / `small_resnet` | 三模型共享同一数据、split、preprocessing、augmentation、eval |
 | 预处理 | 仅训练折 fit 的 `MatrixNormalizer`；左右翻转增强（仅训练折，左↔右标签交换） | 防泄漏 |
@@ -40,10 +44,10 @@
 预定义、在结果之前冻结；只判定 **可继续 / 排除 / 需修复**，不给出最终排名，也不偏袒任何来自 P5.2-A 单 epoch 准确率的模型。
 
 - **exclude（候选本身不可行）**：`finite`（损失/指标非有限）或 `learning_signal_ok`（`best_val_balanced_accuracy ≤ 1/5 + 0.05 = 0.25`）。
-- **needs_fix（协议/基础设施问题，修复后重跑）**：`no_leakage`、`same_split`、`checkpoint_ok`、`resume_ok`、`reload_ok`、`resource_ok` 任一失败。
+- **needs_fix（协议/基础设施问题，修复后重跑）**：`no_leakage`、`same_split`、`checkpoint_ok`、`resume_ok`、`reload_ok`、`resource_ok` 任一失败；其中 `resource_ok` 在 `device=cuda` 且缺 `peak_cuda_mb` 时判为失败。
 - **proceed**：全部通过。
 
-汇总：`needs_fix` 优先；全 `exclude` 才 `exclude`；否则 `proceed`。学习信号阈值仅由 chance（1/5）加 margin 推导，对三模型一致，与 P5.2-A 的 smoke 准确率无关。
+汇总：`needs_fix` 优先；全 `exclude` 才 `exclude`；否则 `proceed`。`overall_verdict` 只接受 `proceed/exclude/needs_fix` 三种字符串，遇到未知 verdict 直接抛 `ValueError`（不静默放行）。学习信号阈值仅由 chance（1/5）加 margin 推导，对三模型一致，与 P5.2-A 的 smoke 准确率无关。
 
 ## 5. 配置与治理
 
@@ -58,12 +62,14 @@
 | 文件 | 覆盖 |
 |---|---|
 | `tests/test_neural_metrics.py` | accuracy / macro-F1 / balanced accuracy / 逐类别 P/R/F1/support / 混淆矩阵 / 零支撑类 / 非法输入 |
-| `tests/test_viability.py` | gate `proceed` / `exclude` / `needs_fix`（含泄漏、checkpoint、resume、reload、同 split、资源超限）、非法输入、`overall_verdict` |
-| `tests/test_neural_mini.py` | 受试者隔离、三模型共享 split、epoch history、早停边界、best checkpoint 规则、resume/reload、CPU 下 CUDA 峰值内存字段、gate 集成、经治理 runner 的 mini 运行、EXP-ID 覆盖拒绝、缺数据报错 |
+| `tests/test_viability.py` | gate `proceed` / `exclude` / `needs_fix`（含泄漏、checkpoint、resume、reload、同 split、资源超限）、CUDA 缺峰值内存 `needs_fix`、非法输入、`overall_verdict` 含未知 verdict 拒绝 |
+| `tests/test_neural_mini.py` | 受试者隔离（显式 split）、三模型共享 split、cohort 排除 WARN/EXCLUDED、epoch history、早停边界、best checkpoint 规则、resume/reload、CPU 下 CUDA 峰值内存字段、gate 集成、经治理 runner 的 mini 运行、EXP-ID 覆盖拒绝、缺数据/缺 manifest 报错 |
+| `tests/test_neural_early_stopping.py` | `monitor=val_loss` 唯一性、NaN/Inf metric 拒绝、非有限/负 `min_delta` 拒绝、patience/min_epochs/改善判定 |
+| `tests/test_neural_training.py` | `resolve_device("cuda")` 在 CUDA 不可用时抛错（无静默回退） |
 
 测试只用 mock JSON 记录 + `tmp_path`，不读完整 PoPu、不跑真实 Mini、不触发远程 GPU。
 
-结果：`python -m pytest -q` → **310 passed**（271 既有 + 39 新增），`git diff --check` 通过。
+结果：`python -m pytest -q` → **330 passed**（含本轮 6 项修复的新增回归测试），`git diff --check` 通过。
 
 ## 7. 未运行的真实命令
 
@@ -75,7 +81,7 @@ python scripts/run_experiment.py --config configs/experiments/popu_neural_mini_v
 
 ## 8. 已知限制
 
-- 本阶段仅冻结协议与实现，未产出任何真实 Mini 指标；`MINI_READY_TO_RUN` 不等于 Mini 通过或候选排名。
+- 本阶段为 `REVIEW_NEEDS_FIX` 修复提交，未产出任何真实 Mini 指标；`REVIEW_NEEDS_FIX` 不等于 Mini 通过或候选排名。
 - 三模型 Mini 的实际 `proceed/exclude/needs_fix` 结果要等真实运行后才有。
 - 固定开发子集 `[1..6]` 是**筛选**集，不代表全量受试者分布；Full 公平比较仍按 P5.1 的受试者隔离原则在全部受试者上评估。
 - 学习信号阈值 0.25 是最低方向性门槛，不构成任何模型优劣结论。

@@ -65,6 +65,13 @@ def test_resolve_device_unknown_rejected() -> None:
         resolve_device("tpu")
 
 
+def test_resolve_device_cuda_fails_without_cuda() -> None:
+    if torch.cuda.is_available():
+        pytest.skip("CUDA is available; cannot exercise the no-CUDA failure path.")
+    with pytest.raises(RuntimeError, match="cuda"):
+        resolve_device("cuda")
+
+
 def test_train_epoch_reduces_loss() -> None:
     ds = _separable_dataset()
     set_seed(0)

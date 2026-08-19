@@ -9,12 +9,22 @@ adds the Mini-specific pieces: a multi-epoch loop with early stopping, a fixed
 best-checkpoint rule, per-epoch/per-class metrics, timing/device/AMP/memory
 capture, and a pre-registered viability gate.
 
-It never writes to the shared raw data directory, never reads the test split
-(``test_ratio=0`` in the Mini config), and never trains a Full model.
+The cohort is enforced against the frozen P2 quality manifest
+(``parameters.quality_manifest``): only records whose ``quality_status`` is in
+``parameters.cohort`` (``primary`` = ACCEPT only) are built into samples, so
+WARN/EXCLUDED/REJECT records cannot leak into a primary-cohort Mini. The
+train/val split is *explicit*: ``parameters.train_subject_ids`` /
+``parameters.val_subject_ids`` are frozen in config (at least 2 validation
+subjects) and are never derived from a ratio.
+
+It never writes to the shared raw data directory, never reads a test split
+(the Mini config freezes an explicit train/val subject partition with no test
+subjects), and never trains a Full model.
 """
 
 from __future__ import annotations
 
+import csv
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -26,7 +36,7 @@ import torch
 
 from topper_perception.experiments.artifacts import atomic_write_json
 from topper_perception.healthcheck import load_path_config
-from topper_perception.io.popu_inventory import iter_tactilus_record_paths
+from topper_perception.io.popu_inventory import iter_tactilus_record_paths, resolve_tactilus_root
 from topper_perception.neural.checkpoint import (
     build_payload,
     load_checkpoint,
@@ -37,9 +47,9 @@ from topper_perception.neural.checkpoint import (
 from topper_perception.neural.data import (
     FROZEN_LABELS,
     MatrixNormalizer,
+    SubjectSplit,
     build_labeled_samples,
     horizontal_flip,
-    subject_split,
     to_model_input,
     validate_subject_split,
 )
@@ -76,20 +86,79 @@ def _resolve_data_root(parameters: Mapping[str, Any]) -> Path:
     return paths["popu_data"]
 
 
+_COHORT_ACCEPTED: dict[str, frozenset[str]] = {
+    "primary": frozenset({"ACCEPT"}),
+    "combined": frozenset({"ACCEPT", "WARN"}),
+}
+
+
+def _record_sample_id(record_path: Path, tactilus_root: Path) -> str:
+    """Return the record-level sample id used by the P1/P2/P4a manifests."""
+    return f"popu-tactilus::{record_path.relative_to(tactilus_root).as_posix()}"
+
+
+def _load_quality_manifest(manifest_path: Path) -> dict[str, str]:
+    """Read the frozen P2 quality manifest (CSV) into ``{sample_id: quality_status}``.
+
+    The manifest is the *only* source of truth for cohort membership: a record
+    whose ``sample_id`` is absent is treated as a stale-manifest error, never
+    silently promoted into the cohort.
+    """
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"P2 quality manifest not found: {manifest_path}")
+    with manifest_path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        fields = reader.fieldnames or []
+        if "sample_id" not in fields or "quality_status" not in fields:
+            raise ValueError(
+                "P2 quality manifest must contain 'sample_id' and 'quality_status' columns."
+            )
+        statuses: dict[str, str] = {}
+        for row in reader:
+            sample_id = str(row.get("sample_id", "")).strip()
+            status = str(row.get("quality_status", "")).strip()
+            if sample_id:
+                statuses[sample_id] = status
+    return statuses
+
+
+def _resolve_manifest_path(parameters: Mapping[str, Any]) -> Path:
+    raw = parameters.get("quality_manifest")
+    if not raw:
+        raise ValueError("parameters.quality_manifest is required to apply the frozen P2 cohort.")
+    path = Path(str(raw)).expanduser()
+    return path if path.is_absolute() else _project_root() / path
+
+
 def collect_labeled_samples(
     parameters: Mapping[str, Any], data_root: Path
-) -> tuple[list[Any], int]:
-    """Collect a balanced, deterministic labeled sample subset for Mini screening.
+) -> tuple[list[Any], dict[str, Any]]:
+    """Collect a balanced, deterministic, cohort-filtered sample subset for Mini.
 
     Mirrors the frozen P5.2-A smoke sampling (round-robin across subject/label
-    groups) so scarce groups such as ``empty`` are exhausted naturally without
-    global path truncation. The subset of subjects is fixed *before* any model
+    groups) but first applies the frozen P2 quality manifest: only records whose
+    ``quality_status`` belongs to the configured cohort (``primary`` = ACCEPT
+    only, or ``combined`` = ACCEPT+WARN) are considered. WARN/EXCLUDED/REJECT
+    records are dropped *before* any sample is built, so they can never leak
+    into the primary cohort. The subject subset is fixed *before* any model
     result and is the only place subject selection happens.
     """
     subject_ids = list(dict.fromkeys(str(s) for s in parameters.get("subject_ids", ["1", "2"])))
     max_samples = int(parameters.get("max_samples", 1000))
     if max_samples <= 0:
         raise ValueError("parameters.max_samples must be a positive integer.")
+
+    cohort = str(parameters.get("cohort", "primary"))
+    if cohort not in _COHORT_ACCEPTED:
+        raise ValueError(
+            f"parameters.cohort must be one of {sorted(_COHORT_ACCEPTED)}; got {cohort!r}."
+        )
+    accepted = _COHORT_ACCEPTED[cohort]
+
+    manifest_path = _resolve_manifest_path(parameters)
+    statuses = _load_quality_manifest(manifest_path)
+
+    tactilus_root = resolve_tactilus_root(data_root)
     record_paths = [
         path
         for path in iter_tactilus_record_paths(data_root)
@@ -99,9 +168,31 @@ def collect_labeled_samples(
         raise ValueError(
             f"No Tactilus records found for subjects {subject_ids} under {data_root}."
         )
-    available = build_labeled_samples(record_paths, tactilus_root=data_root)
+
+    cohort_kept: list[Path] = []
+    n_excluded_by_cohort = 0
+    missing_from_manifest: list[str] = []
+    for path in record_paths:
+        sample_id = _record_sample_id(path, tactilus_root)
+        status = statuses.get(sample_id)
+        if status is None:
+            missing_from_manifest.append(sample_id)
+        elif status in accepted:
+            cohort_kept.append(path)
+        else:
+            n_excluded_by_cohort += 1
+    if missing_from_manifest:
+        raise ValueError(
+            "Records missing from the P2 quality manifest (stale manifest?); "
+            f"first: {missing_from_manifest[:5]}."
+        )
+
+    available = build_labeled_samples(cohort_kept, tactilus_root=data_root)
     if not available:
-        raise ValueError("No labeled samples found for the selected primary-cohort subjects.")
+        raise ValueError(
+            f"No labeled samples remain for cohort={cohort!r}; every selected-subject "
+            "record was excluded by the P2 quality manifest."
+        )
 
     groups: dict[tuple[str, str], list[Any]] = defaultdict(list)
     for sample in available:
@@ -112,8 +203,8 @@ def collect_labeled_samples(
     missing = [group for group in required_groups if not groups[group]]
     if missing:
         raise ValueError(
-            "Mini requires every selected subject to contain all frozen labels; "
-            f"missing groups: {missing}."
+            "Mini requires every selected subject to contain all frozen labels in the "
+            f"{cohort!r} cohort; missing groups: {missing}."
         )
     if max_samples < len(required_groups):
         raise ValueError(
@@ -135,7 +226,15 @@ def collect_labeled_samples(
         if not added:
             break
         offset += 1
-    return selected, len(available)
+
+    cohort_stats = {
+        "cohort": cohort,
+        "quality_manifest": str(manifest_path),
+        "n_records_considered": len(record_paths),
+        "n_records_excluded_by_cohort": n_excluded_by_cohort,
+        "n_labeled_available": len(available),
+    }
+    return selected, cohort_stats
 
 
 def _class_counts(labels: np.ndarray) -> dict[str, int]:
@@ -163,22 +262,56 @@ class MiniData:
     n_labeled_available: int
     n_selected_samples: int
     no_leakage: bool
+    cohort: str
+    quality_manifest: str
+    n_records_excluded_by_cohort: int
 
 
 def _prepare_data(parameters: Mapping[str, Any], seed: int, data_root: Path) -> MiniData:
     params = dict(parameters)
-    val_ratio = float(params.get("val_ratio", 0.2))
-    test_ratio = float(params.get("test_ratio", 0.0))
     batch_size = int(params.get("batch_size", 32))
     flip_augmentation = bool(params.get("flip_augmentation", True))
 
     set_seed(seed)
-    samples, n_labeled_available = collect_labeled_samples(params, data_root)
+    samples, cohort_stats = collect_labeled_samples(params, data_root)
     n_selected_samples = len(samples)
 
+    train_subject_ids = [str(s) for s in params.get("train_subject_ids", [])]
+    val_subject_ids = [str(s) for s in params.get("val_subject_ids", [])]
+    subject_set = {str(s) for s in params.get("subject_ids", [])}
+    train_set = set(train_subject_ids)
+    val_set = set(val_subject_ids)
+    if not train_subject_ids or not val_subject_ids:
+        raise ValueError(
+            "Mini config must explicitly freeze train_subject_ids and val_subject_ids."
+        )
+    if len(val_subject_ids) < 2:
+        raise ValueError("Mini config must freeze at least 2 validation subjects.")
+    if train_set & val_set:
+        raise ValueError("train_subject_ids and val_subject_ids must be disjoint.")
+    if subject_set:
+        if not (train_set <= subject_set and val_set <= subject_set):
+            raise ValueError("train_subject_ids and val_subject_ids must be drawn from subject_ids.")
+        if (train_set | val_set) != subject_set:
+            raise ValueError("train_subject_ids ∪ val_subject_ids must equal the frozen subject_ids.")
+
     subject_seq = [s.subject_id for s in samples]
-    split = subject_split(
-        subject_seq, val_ratio=val_ratio, test_ratio=test_ratio, seed=seed, shuffle=True
+    subject_array = np.asarray(subject_seq, dtype=object)
+    train_indices = np.flatnonzero(
+        np.isin(subject_array, np.asarray(train_subject_ids, dtype=object))
+    )
+    val_indices = np.flatnonzero(
+        np.isin(subject_array, np.asarray(val_subject_ids, dtype=object))
+    )
+    if train_indices.size == 0 or val_indices.size == 0:
+        raise ValueError("Both train and validation splits must be non-empty.")
+    split = SubjectSplit(
+        train_indices=train_indices,
+        val_indices=val_indices,
+        test_indices=np.asarray([], dtype=np.int64),
+        train_subjects=tuple(train_subject_ids),
+        val_subjects=tuple(val_subject_ids),
+        test_subjects=(),
     )
     validate_subject_split(split, subject_seq)
     no_leakage = True
@@ -232,9 +365,9 @@ def _prepare_data(parameters: Mapping[str, Any], seed: int, data_root: Path) -> 
     val_loader = build_dataloader(val_dataset, batch_size=batch_size, shuffle=False)
 
     split_signature = (
-        f"train={','.join(split.train_subjects)}"
-        f"|val={','.join(split.val_subjects)}"
-        f"|test={','.join(split.test_subjects)}"
+        f"train={','.join(train_subject_ids)}"
+        f"|val={','.join(val_subject_ids)}"
+        f"|test="
         f"|seed={seed}"
     )
 
@@ -243,18 +376,21 @@ def _prepare_data(parameters: Mapping[str, Any], seed: int, data_root: Path) -> 
         val_loader=val_loader,
         normalizer=normalizer,
         split_signature=split_signature,
-        train_subjects=tuple(split.train_subjects),
-        val_subjects=tuple(split.val_subjects),
-        test_subjects=tuple(split.test_subjects),
+        train_subjects=tuple(train_subject_ids),
+        val_subjects=tuple(val_subject_ids),
+        test_subjects=(),
         n_train=int(len(x_train)),
         n_val=int(len(x_val)),
         augmented=augmented,
         train_class_counts_before_augmentation=train_before,
         train_class_counts_after_augmentation=_class_counts(y_train),
         val_class_counts=_class_counts(y_val),
-        n_labeled_available=n_labeled_available,
+        n_labeled_available=cohort_stats["n_labeled_available"],
         n_selected_samples=n_selected_samples,
         no_leakage=no_leakage,
+        cohort=cohort_stats["cohort"],
+        quality_manifest=cohort_stats["quality_manifest"],
+        n_records_excluded_by_cohort=cohort_stats["n_records_excluded_by_cohort"],
     )
 
 
@@ -647,6 +783,13 @@ def run_popu_neural_mini(
             "frozen_labels": list(FROZEN_LABELS),
             "seed": seed,
             "device": str(device),
+            "cohort": data.cohort,
+            "quality_manifest": data.quality_manifest,
+            "n_records_excluded_by_cohort": data.n_records_excluded_by_cohort,
+            "train_subjects": list(data.train_subjects),
+            "val_subjects": list(data.val_subjects),
+            "test_subjects": list(data.test_subjects),
+            "split_signature": data.split_signature,
             "early_stopping": early_stopping,
             "best_checkpoint_rule": best_checkpoint_rule(early_stopping),
             "reproducible_seed": reproducible,
@@ -662,6 +805,9 @@ def run_popu_neural_mini(
         "cuda_available": bool(torch.cuda.is_available()),
         "data_root": str(data_root),
         "subject_selection_rule": str(params.get("subject_selection_rule", "")),
+        "cohort": data.cohort,
+        "quality_manifest": data.quality_manifest,
+        "n_records_excluded_by_cohort": data.n_records_excluded_by_cohort,
         "subjects": [str(s) for s in params.get("subject_ids", [])],
         "n_labeled_available": data.n_labeled_available,
         "n_selected_samples": data.n_selected_samples,

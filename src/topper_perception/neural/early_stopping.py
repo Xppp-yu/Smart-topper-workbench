@@ -6,7 +6,8 @@ metric over validation epochs and reports whether each epoch is a new "best"
 
 Rules are fixed up front from the resolved config:
 
-- ``monitor`` / ``mode`` select the tracked metric and direction (``min``/``max``);
+- ``monitor`` is fixed to ``val_loss`` (the Mini contract rejects any other
+  monitor up front); ``mode`` selects the direction (``min``/``max``);
 - an improvement is ``metric < best - min_delta`` (``min``) or
   ``metric > best + min_delta`` (``max``);
 - the first epoch is always the initial best;
@@ -21,6 +22,7 @@ the source of truth.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -48,13 +50,18 @@ class EarlyStopper:
     ) -> None:
         if mode not in ("min", "max"):
             raise ValueError(f"mode must be 'min' or 'max'; got {mode!r}.")
+        if str(monitor) != "val_loss":
+            raise ValueError(
+                f"Mini contract supports only monitor='val_loss'; got {monitor!r}. "
+                "Selecting a different monitor is not implemented, so reject it up front."
+            )
         if not isinstance(patience, int) or isinstance(patience, bool) or patience < 0:
             raise ValueError("patience must be a non-negative integer.")
         if not isinstance(min_epochs, int) or isinstance(min_epochs, bool) or min_epochs < 1:
             raise ValueError("min_epochs must be a positive integer.")
         min_delta = float(min_delta)
-        if not min_delta >= 0 or min_delta != min_delta:  # rejects NaN and negatives
-            raise ValueError("min_delta must be a non-negative finite number.")
+        if not math.isfinite(min_delta) or min_delta < 0:
+            raise ValueError("min_delta must be a finite non-negative number.")
 
         self.monitor = str(monitor)
         self.mode = mode
@@ -70,6 +77,8 @@ class EarlyStopper:
         if epoch < 1:
             raise ValueError("epoch must be >= 1.")
         metric = float(metric)
+        if not math.isfinite(metric):
+            raise ValueError("monitor metric must be finite (NaN/Inf rejected).")
 
         if self.best_metric is None:
             is_best = True
