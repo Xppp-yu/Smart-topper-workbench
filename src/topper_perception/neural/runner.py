@@ -17,6 +17,7 @@ It never writes to the shared raw data directory and never trains a full model.
 from __future__ import annotations
 
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -32,6 +33,7 @@ from topper_perception.io.popu_inventory import (
 from topper_perception.neural.checkpoint import (
     build_payload,
     load_checkpoint,
+    restore_rng_state,
     save_checkpoint,
     validate_checkpoint,
 )
@@ -119,8 +121,10 @@ def _prediction_consistent(model_a, model_b, val_loader, device: torch.device) -
     return same_pred and same_prob
 
 
-def _collect_labeled_samples(parameters: Mapping[str, Any], data_root: Path) -> list[Any]:
-    subject_ids = [str(s) for s in parameters.get("subject_ids", ["1", "2"])]
+def _collect_labeled_samples(
+    parameters: Mapping[str, Any], data_root: Path
+) -> tuple[list[Any], int]:
+    subject_ids = list(dict.fromkeys(str(s) for s in parameters.get("subject_ids", ["1", "2"])))
     max_samples = int(parameters.get("max_samples", 1000))
     if max_samples <= 0:
         raise ValueError("parameters.max_samples must be a positive integer.")
@@ -133,10 +137,56 @@ def _collect_labeled_samples(parameters: Mapping[str, Any], data_root: Path) -> 
         raise ValueError(
             f"No Tactilus records found for subjects {subject_ids} under {data_root}."
         )
-    samples = build_labeled_samples(record_paths, tactilus_root=data_root)
-    if not samples:
+    available = build_labeled_samples(record_paths, tactilus_root=data_root)
+    if not available:
         raise ValueError("No labeled samples found for the selected primary-cohort subjects.")
-    return samples[:max_samples]
+
+    groups: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    for sample in available:
+        groups[(sample.subject_id, sample.posture)].append(sample)
+    required_groups = [
+        (subject_id, posture)
+        for subject_id in subject_ids
+        for posture in FROZEN_LABELS
+    ]
+    missing = [group for group in required_groups if not groups[group]]
+    if missing:
+        raise ValueError(
+            "Smoke requires every selected subject to contain all frozen labels; "
+            f"missing groups: {missing}."
+        )
+    if max_samples < len(required_groups):
+        raise ValueError(
+            f"parameters.max_samples must be at least {len(required_groups)} to "
+            "include every subject/label group."
+        )
+
+    # Deterministic round-robin prevents global path truncation from retaining
+    # only the first subjects or postures. Scarce groups (notably `empty`) are
+    # exhausted naturally while the remaining budget stays balanced.
+    selected: list[Any] = []
+    offset = 0
+    while len(selected) < max_samples:
+        added = False
+        for group in required_groups:
+            bucket = groups[group]
+            if offset < len(bucket):
+                selected.append(bucket[offset])
+                added = True
+                if len(selected) == max_samples:
+                    break
+        if not added:
+            break
+        offset += 1
+    return selected, len(available)
+
+
+def _class_counts(labels: np.ndarray) -> dict[str, int]:
+    counts = Counter(int(label) for label in labels)
+    return {
+        posture: int(counts.get(index, 0))
+        for index, posture in enumerate(FROZEN_LABELS)
+    }
 
 
 def _train_once(
@@ -203,10 +253,19 @@ def _checkpoint_resume_reload(
     resume_optimizer = make_optimizer(resume_model, lr=lr, weight_decay=weight_decay)
     resume_optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     resumed_epoch = int(checkpoint["epoch"])
+    parameters_before_resume = {
+        key: value.detach().cpu().clone()
+        for key, value in resume_model.state_dict().items()
+    }
+    restore_rng_state(checkpoint["rng_state"])
     resume_info = train_epoch(
         resume_model, train_loader, resume_optimizer, criterion, device, amp_enabled=amp_enabled
     )
     _require_finite(resume_info["loss"], f"{name} resumed loss")
+    parameters_changed = any(
+        not torch.equal(parameters_before_resume[key], value.detach().cpu())
+        for key, value in resume_model.state_dict().items()
+    )
 
     reload_model = build_model(model_config).to(device)
     reload_model.load_state_dict(
@@ -224,8 +283,14 @@ def _checkpoint_resume_reload(
     return {
         "checkpoint_latest": str(latest_path),
         "checkpoint_best": str(best_path),
-        "resume_ok": resumed_epoch == epochs and resume_info["samples"] > 0,
-        "resumed_epoch": resumed_epoch,
+        "resume_ok": (
+            resumed_epoch == epochs
+            and resume_info["samples"] > 0
+            and parameters_changed
+        ),
+        "resume_from_epoch": resumed_epoch,
+        "resume_to_epoch": resumed_epoch + 1,
+        "resume_parameters_changed": parameters_changed,
         "reload_prediction_consistent": reload_consistent,
     }
 
@@ -327,8 +392,8 @@ def run_popu_neural_smoke(
         raise ValueError("parameters.model_configs must be a non-empty list.")
 
     set_seed(seed)
-    samples = _collect_labeled_samples(params, data_root)
-    n_labeled_total = len(samples)
+    samples, n_labeled_available = _collect_labeled_samples(params, data_root)
+    n_selected_samples = len(samples)
 
     subject_seq = [s.subject_id for s in samples]
     split = subject_split(
@@ -436,13 +501,17 @@ def run_popu_neural_smoke(
         "cuda_available": bool(torch.cuda.is_available()),
         "data_root": str(data_root),
         "subjects": [str(s) for s in params.get("subject_ids", ["1", "2"])],
-        "n_labeled_total": n_labeled_total,
+        "n_labeled_available": n_labeled_available,
+        "n_selected_samples": n_selected_samples,
         "train_subjects": list(split.train_subjects),
         "val_subjects": list(split.val_subjects),
         "test_subjects": list(split.test_subjects),
         "train_samples": int(len(x_train)),
         "val_samples": int(len(x_val)),
         "augmented_train_samples": augmented,
+        "train_class_counts_before_augmentation": _class_counts(y[split.train_indices]),
+        "train_class_counts_after_augmentation": _class_counts(y_train),
+        "val_class_counts": _class_counts(y_val),
         "epochs": epochs,
         "amp_enabled": amp_enabled,
         "frozen_labels": list(FROZEN_LABELS),

@@ -10,6 +10,7 @@ objects.
 from __future__ import annotations
 
 import random
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -41,6 +42,11 @@ def capture_rng_state() -> dict[str, Any]:
     python_state = random.getstate()
     return {
         "torch": torch.get_rng_state().cpu().tolist(),
+        "torch_cuda": (
+            [state.cpu().tolist() for state in torch.cuda.get_rng_state_all()]
+            if torch.cuda.is_available()
+            else []
+        ),
         "numpy": {
             "legacy": str(numpy_state[0]),
             "state": numpy_state[1].tolist(),
@@ -59,6 +65,11 @@ def capture_rng_state() -> dict[str, Any]:
 def restore_rng_state(state: Mapping[str, Any]) -> None:
     """Restore Python/NumPy/torch RNG states captured by :func:`capture_rng_state`."""
     torch.set_rng_state(torch.tensor(state["torch"], dtype=torch.uint8))
+    cuda_states = state.get("torch_cuda", [])
+    if cuda_states and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(
+            [torch.tensor(item, dtype=torch.uint8) for item in cuda_states]
+        )
 
     numpy_state = state["numpy"]
     np.random.set_state(
@@ -119,10 +130,15 @@ def build_payload(
 
 
 def save_checkpoint(path: Path | str, payload: Mapping[str, Any]) -> None:
-    """Write ``payload`` with ``torch.save``; parents are created as needed."""
+    """Atomically write ``payload`` with ``torch.save``."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(dict(payload), path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        torch.save(dict(payload), temporary)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def load_checkpoint(

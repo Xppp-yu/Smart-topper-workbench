@@ -106,6 +106,7 @@ def test_rng_state_roundtrip() -> None:
     torch.manual_seed(123)
     np.random.seed(123)
     state = capture_rng_state()
+    assert "torch_cuda" in state
     expected_torch = torch.rand(5)
     expected_np = np.random.rand(5)
 
@@ -116,6 +117,22 @@ def test_rng_state_roundtrip() -> None:
 
     assert torch.equal(expected_torch, actual_torch)
     assert np.array_equal(expected_np, actual_np)
+
+
+def test_save_checkpoint_leaves_no_temporary_file(tmp_path) -> None:
+    model = _Dummy()
+    payload = build_payload(
+        model=model,
+        optimizer=_optimizer(model),
+        epoch=0,
+        model_config={"name": "matrix_mlp", "params": {}},
+        normalization={"mean": 0.0, "std": 1.0},
+        seed=1,
+    )
+    path = tmp_path / "atomic.pt"
+    save_checkpoint(path, payload)
+    assert path.is_file()
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 def test_load_into_fresh_model_matches(tmp_path) -> None:

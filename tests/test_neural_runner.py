@@ -13,7 +13,7 @@ from topper_perception.experiments.runner import (
     RUNNER_REGISTRY,
     run_experiment,
 )
-from topper_perception.neural.runner import run_popu_neural_smoke
+from topper_perception.neural.runner import _collect_labeled_samples, run_popu_neural_smoke
 
 ROWS, COLS = 64, 27
 CELLS = ROWS * COLS
@@ -110,6 +110,11 @@ def test_smoke_runs_and_writes_artifacts(tmp_path: Path) -> None:
     assert model["reload_prediction_consistent"] is True
     assert result["reproducible_seed"] is True
     assert result["cuda_available"] is False
+    assert set(result["train_class_counts_before_augmentation"]) == {
+        "empty", "supine", "prone", "left", "right"
+    }
+    assert all(value > 0 for value in result["train_class_counts_before_augmentation"].values())
+    assert all(value > 0 for value in result["val_class_counts"].values())
 
     assert (exp / "checkpoints" / "matrix_mlp_latest.pt").is_file()
     assert (exp / "checkpoints" / "matrix_mlp_best.pt").is_file()
@@ -178,6 +183,23 @@ def test_smoke_through_governed_runner(tmp_path: Path) -> None:
 def test_smoke_requires_labeled_data(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         run_popu_neural_smoke(_params(tmp_path), seed=1, experiment_dir=tmp_path / "exp")
+
+
+def test_smoke_sampling_round_robins_subject_and_label_groups(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    params = _params(tmp_path, max_samples=20)
+    samples, available = _collect_labeled_samples(params, tmp_path)
+    counts = {
+        (subject, posture): sum(
+            sample.subject_id == subject and sample.posture == posture
+            for sample in samples
+        )
+        for subject in ("1", "2")
+        for posture in ("empty", "supine", "prone", "left", "right")
+    }
+    assert available == 40
+    assert len(samples) == 20
+    assert set(counts.values()) == {2}
 
 
 def test_smoke_rejects_unknown_model_config(tmp_path: Path) -> None:

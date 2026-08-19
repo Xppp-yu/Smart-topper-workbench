@@ -1,6 +1,6 @@
 {
   "schema_version": "experiment-v0.1",
-  "exp_id": "EXP-P5.2-A2-CPU-SMOKE-20260819-R01",
+  "exp_id": "EXP-P5.2-A2-CPU-SMOKE-20260819-R02",
   "task_id": "TASK-P5.2-A2-TRAINING-CPU-SMOKE-v0.1",
   "scope": "smoke",
   "runner_type": "popu_neural",
