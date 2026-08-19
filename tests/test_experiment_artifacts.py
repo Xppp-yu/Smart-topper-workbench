@@ -45,6 +45,40 @@ def test_gpu_is_null_when_no_nvidia_smi(monkeypatch) -> None:
     assert artifacts._detect_gpu_info() is None
 
 
+def test_gpu_probe_reports_driver_version(monkeypatch) -> None:
+    class Result:
+        returncode = 0
+        stdout = "NVIDIA GeForce RTX 4090, 24564, 595.58.03\n"
+
+    monkeypatch.setattr(artifacts.shutil, "which", lambda name: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(artifacts.subprocess, "run", lambda *args, **kwargs: Result())
+
+    assert artifacts._detect_gpu_info() == {
+        "name": "NVIDIA GeForce RTX 4090",
+        "memory_mb": 24564,
+        "driver_version": "595.58.03",
+    }
+
+
+def test_capture_system_info_includes_detected_cuda_metadata(monkeypatch) -> None:
+    gpu = {"name": "GPU", "memory_mb": 1, "driver_version": "driver"}
+    cuda = {
+        "driver_version": "driver",
+        "torch_version": "torch",
+        "torch_cuda_version": "runtime",
+        "cudnn_version": 1,
+        "available": True,
+        "device_count": 1,
+    }
+    monkeypatch.setattr(artifacts, "_detect_gpu_info", lambda: gpu)
+    monkeypatch.setattr(artifacts, "_detect_cuda_info", lambda detected: cuda)
+
+    info = artifacts.capture_system_info()
+
+    assert info["gpu"] == gpu
+    assert info["cuda"] == cuda
+
+
 def test_capture_git_info_reports_repo_fields() -> None:
     info = artifacts.capture_git_info(Path(__file__).resolve().parents[1])
     assert isinstance(info["dirty"], bool)

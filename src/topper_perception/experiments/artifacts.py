@@ -87,7 +87,7 @@ def _detect_gpu_info() -> dict[str, Any] | None:
         result = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=name,memory.total",
+                "--query-gpu=name,memory.total,driver_version",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -99,15 +99,47 @@ def _detect_gpu_info() -> dict[str, Any] | None:
     if result.returncode != 0 or not result.stdout.strip():
         return None
     line = result.stdout.strip().splitlines()[0]
-    name, _, memory = line.partition(",")
+    fields = [field.strip() for field in line.split(",")]
+    if len(fields) < 2:
+        return None
+    name, memory = fields[:2]
     return {
-        "name": name.strip(),
-        "memory_mb": int(memory.strip()) if memory.strip().isdigit() else None,
+        "name": name,
+        "memory_mb": int(memory) if memory.isdigit() else None,
+        "driver_version": fields[2] if len(fields) >= 3 else None,
+    }
+
+
+def _detect_cuda_info(gpu_info: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Best-effort PyTorch/CUDA runtime metadata without requiring PyTorch."""
+    try:
+        import torch
+    except (ImportError, OSError):
+        if gpu_info is None:
+            return None
+        return {
+            "driver_version": gpu_info.get("driver_version"),
+            "torch_version": None,
+            "torch_cuda_version": None,
+            "cudnn_version": None,
+            "available": None,
+            "device_count": None,
+        }
+
+    available = bool(torch.cuda.is_available())
+    return {
+        "driver_version": gpu_info.get("driver_version") if gpu_info else None,
+        "torch_version": str(torch.__version__),
+        "torch_cuda_version": torch.version.cuda,
+        "cudnn_version": torch.backends.cudnn.version(),
+        "available": available,
+        "device_count": int(torch.cuda.device_count()) if available else 0,
     }
 
 
 def capture_system_info() -> dict[str, Any]:
     """Report Python/OS/CPU and GPU/CUDA; GPU/CUDA are ``None`` when absent."""
+    gpu_info = _detect_gpu_info()
     return {
         "python_version": platform.python_version(),
         "python_executable": sys.executable,
@@ -116,7 +148,6 @@ def capture_system_info() -> dict[str, Any]:
             "arch": platform.machine(),
             "logical_cores": os.cpu_count() or 0,
         },
-        "gpu": _detect_gpu_info(),
-        # torch is not a dependency of this batch, so CUDA runtime is absent.
-        "cuda": None,
+        "gpu": gpu_info,
+        "cuda": _detect_cuda_info(gpu_info),
     }
