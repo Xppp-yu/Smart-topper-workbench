@@ -38,7 +38,7 @@ from topper_perception.experiments.contracts import (
 
 GitInfoProvider = Callable[[Path], dict[str, Any]]
 SystemInfoProvider = Callable[[], dict[str, Any]]
-RunnerFn = Callable[[Mapping[str, Any], int], dict[str, Any]]
+RunnerFn = Callable[[Mapping[str, Any], int, Path], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -77,11 +77,14 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def run_dummy_smoke(parameters: Mapping[str, Any], seed: int) -> dict[str, Any]:
+def run_dummy_smoke(
+    parameters: Mapping[str, Any], seed: int, experiment_dir: Path
+) -> dict[str, Any]:
     """Deterministic dummy runner: same config+seed -> same metrics.
 
     Supports a deliberate failure via ``parameters.fail = true`` for testing the
-    failure path. Does not read PoPu/SLP/PressurePose.
+    failure path. Does not read PoPu/SLP/PressurePose. ``experiment_dir`` is
+    unused by the dummy runner but is part of the uniform runner signature.
     """
     params = dict(parameters)
     if bool(params.get("fail", False)):
@@ -105,9 +108,24 @@ def run_dummy_smoke(parameters: Mapping[str, Any], seed: int) -> dict[str, Any]:
     }
 
 
+def run_popu_neural(
+    parameters: Mapping[str, Any], seed: int, experiment_dir: Path
+) -> dict[str, Any]:
+    """Lazily import and delegate to the torch-only PoPu neural smoke runner.
+
+    The import is deferred to keep ``torch`` out of the experiment runner's
+    import surface (the traditional-ML path and the governance runner never load
+    PyTorch unless a ``popu_neural`` run actually executes).
+    """
+    from topper_perception.neural.runner import run_popu_neural_smoke
+
+    return run_popu_neural_smoke(parameters, seed, experiment_dir)
+
+
 #: Registry mapping ``runner_type`` to its execution function.
 RUNNER_REGISTRY: dict[str, RunnerFn] = {
     "dummy": run_dummy_smoke,
+    "popu_neural": run_popu_neural,
 }
 
 
@@ -261,7 +279,7 @@ def run_experiment(
         current_state = _advance(current_state, State.RUNNING)
 
         runner_fn = RUNNER_REGISTRY[cfg.runner_type]
-        metrics = runner_fn(cfg.parameters, cfg.seed)
+        metrics = runner_fn(cfg.parameters, cfg.seed, experiment_dir)
 
         atomic_write_json(experiment_dir / "metrics.json", metrics)
         _write_run_log(run_log, f"metrics: {json.dumps(metrics, ensure_ascii=False)}\n")

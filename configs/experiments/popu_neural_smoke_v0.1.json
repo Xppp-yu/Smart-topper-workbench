@@ -1,0 +1,29 @@
+{
+  "schema_version": "experiment-v0.1",
+  "exp_id": "EXP-P5.2-A2-CPU-SMOKE-20260819-R01",
+  "task_id": "TASK-P5.2-A2-TRAINING-CPU-SMOKE-v0.1",
+  "scope": "smoke",
+  "runner_type": "popu_neural",
+  "seed": 42,
+  "output_root": "outputs/experiments",
+  "parameters": {
+    "subject_ids": ["1", "2"],
+    "max_samples": 1000,
+    "val_ratio": 0.2,
+    "test_ratio": 0.0,
+    "batch_size": 32,
+    "epochs": 1,
+    "device": "cpu",
+    "amp_enabled": false,
+    "flip_augmentation": true,
+    "optimizer": {
+      "lr": 1e-3,
+      "weight_decay": 1e-4
+    },
+    "model_configs": [
+      { "name": "matrix_mlp", "params": {} },
+      { "name": "tiny_cnn", "params": {} },
+      { "name": "small_resnet", "params": {} }
+    ]
+  }
+}

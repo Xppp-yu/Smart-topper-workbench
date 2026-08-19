@@ -21,7 +21,7 @@ P5.1 横向复核已完成：在 P4a 特征表上以 repeated subject-grouped CV
 | P4b/R4b | 区域标签关联与监督特征集 | BLOCKED_BY_MISSING_PAIRING_AND_P4A | P3.2 已证明当前人体标注无法唯一配对 | 有文档可追溯的逐记录、逐帧配对规则；否则不生成区域监督训练集 |
 | P5/R5 | 姿态 Baseline 与受试者隔离评价 | COMPLETE — FIRST_ROUND_BASELINE | [P5 阶段报告](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md)、逐样本预测、混淆矩阵、逐受试者表；首轮领先候选=`logreg`（历史证据），primary test macro-F1 0.9466；`52 passed` | 已被 P5.1 满足（候选在 repeated grouped CV 口径下复核并冻结） |
 | P5.1/R5.1 | 横向比较框架修正与候选复核 | COMPLETE — TRADITIONAL_CANDIDATE_FROZEN | [P5.1 阶段报告](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md)、OOF 1,051,260 行、record 105,126 行、逐受试者/逐类别/消融表、混淆矩阵与图；winner=`calibrated_linear_svm`（record macro-F1 0.9452），冻结 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；`115 passed` | 传统模型候选已冻结，不覆盖 CNN；进入 P5.2 神经网络公平比较，总体候选冻结后才放行 P6 |
-| P5.2-A/R5.2-A | CNN 训练底座与 Smoke | NOT_STARTED | 尚无产物 | 受试者切分隔离、fold 内归一化、标签映射、翻转标签交换、checkpoint/resume、CPU/CUDA Smoke、模型重载全部通过；不跑 Full CV |
+| P5.2-A/R5.2-A | CNN 训练底座与 Smoke | IN_PROGRESS — CPU_SMOKE_PASS, CUDA_SMOKE_PENDING | `EXP-P5.2-A2-CPU-SMOKE-20260819-R01`：训练接口（Dataset/DataLoader/训练·评估·预测/checkpoint-resume-reload）已落地，CPU Smoke 通过（2 受试者、1,000 快照、1 epoch、MatrixMLP/TinyCNN/SmallResNet 各完成训练步，checkpoint 保存·续训·独立重载一致·同种子复现均通过） | CUDA Smoke 待远程 GPU 执行；随后进入 P5.2-B Mini 筛选；不跑 Full CV |
 | P5.2-B/R5.2-B | Mini 筛选 | NOT_STARTED | 尚无产物 | 开发受试者固定子集、3-5 epochs、固定种子与早停；排除明显不可行候选，不形成最终排名 |
 | P5.2-C/R5.2-C | Full 公平比较 | NOT_STARTED | 尚无产物 | 与 P5.1 相同受试者隔离原则、记录聚合与主指标；Reviewer 接受后才冻结 PoPu 总体候选并进入 P6 |
 | P6/R6 | `UNKNOWN/REJECT` 与错误分析 | HOLD — WAIT_FOR_P5_2 | P5.1 传统候选 `popu_research_candidate_p5_1_v0.1`（svm，record macro-F1 0.9452）+ record/OOF 预测表（含置信度）已就绪；P5.2 总体候选选择前不冻结 UNKNOWN/REJECT 阈值 | 总体候选经 P5.2 公平比较并冻结后进入；阈值仅由验证受试者选择；高置信错误需个案分析 |

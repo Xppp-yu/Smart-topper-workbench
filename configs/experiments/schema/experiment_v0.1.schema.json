@@ -37,8 +37,8 @@
     },
     "runner_type": {
       "type": "string",
-      "enum": ["dummy"],
-      "description": "Registered runner function. Batch B implements only the deterministic 'dummy' runner."
+      "enum": ["dummy", "popu_neural"],
+      "description": "Registered runner function. 'dummy' is the deterministic no-data runner; 'popu_neural' lazily imports torch and runs the P5.2-A2 neural training smoke."
     },
     "seed": {
       "type": "integer",

@@ -21,7 +21,7 @@ SCHEMA_VERSION = "experiment-v0.1"
 SCOPES = ("smoke", "mini", "full")
 
 #: Implemented runner types. New runners register here; unknown types fail.
-RUNNER_TYPES = ("dummy",)
+RUNNER_TYPES = ("dummy", "popu_neural")
 
 #: Fields every experiment config must provide.
 REQUIRED_FIELDS = (
