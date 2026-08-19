@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from topper_perception.experiments import contracts
+from topper_perception.experiments.artifacts import sha256_hex
 from topper_perception.experiments.runner import RUNNER_REGISTRY, run_experiment
 from topper_perception.neural.mini import collect_labeled_samples, run_popu_neural_mini
 
@@ -67,6 +68,13 @@ def _append_manifest(tmp_path: Path, status_by_relpath: dict[str, str]) -> None:
             writer.writerow({"sample_id": f"popu-tactilus::{rel}", "quality_status": status})
 
 
+def _manifest_sha(tmp_path: Path) -> str:
+    manifest = tmp_path / "quality_manifest.csv"
+    if not manifest.is_file():
+        return "0" * 64
+    return sha256_hex(manifest)
+
+
 def _make_data(tmp_path: Path, n_subjects: int = 6) -> Path:
     status_by_relpath: dict[str, str] = {}
     for s in range(1, n_subjects + 1):
@@ -85,6 +93,7 @@ def _params(tmp_path: Path, **overrides) -> dict:
         "subject_selection_rule": "Frozen before results: subjects [1..6] in numeric order.",
         "cohort": "primary",
         "quality_manifest": str(tmp_path / "quality_manifest.csv"),
+        "quality_manifest_sha256": _manifest_sha(tmp_path),
         "subject_ids": ["1", "2", "3", "4", "5", "6"],
         "train_subject_ids": ["1", "2", "3", "4"],
         "val_subject_ids": ["5", "6"],
@@ -289,6 +298,77 @@ def test_mini_rejects_missing_quality_manifest(tmp_path: Path) -> None:
     (tmp_path / "quality_manifest.csv").unlink()
     with pytest.raises(FileNotFoundError, match="quality manifest"):
         run_popu_neural_mini(_params(tmp_path), seed=1, experiment_dir=tmp_path / "exp")
+
+
+def test_mini_quality_manifest_sha_recorded_in_metrics_and_train_log(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    exp = tmp_path / "exp"
+    result = run_popu_neural_mini(_params(tmp_path), seed=42, experiment_dir=exp)
+
+    expected_sha = _manifest_sha(tmp_path)
+    expected_size = (tmp_path / "quality_manifest.csv").stat().st_size
+    assert result["quality_manifest_sha256"] == expected_sha
+    assert result["quality_manifest_size_bytes"] == expected_size
+
+    train_log = json.loads((exp / "train_log.json").read_text("utf-8"))
+    assert train_log["quality_manifest_sha256"] == expected_sha
+    assert train_log["quality_manifest_size_bytes"] == expected_size
+
+
+def test_mini_quality_manifest_wrong_sha_rejected(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    wrong = "f" * 64
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        run_popu_neural_mini(
+            _params(tmp_path, quality_manifest_sha256=wrong),
+            seed=1,
+            experiment_dir=tmp_path / "exp",
+        )
+
+
+def test_mini_quality_manifest_missing_sha_rejected(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    params = _params(tmp_path)
+    del params["quality_manifest_sha256"]
+    with pytest.raises(ValueError, match="quality_manifest_sha256 is required"):
+        run_popu_neural_mini(params, seed=1, experiment_dir=tmp_path / "exp")
+
+
+def test_mini_governed_manifest_records_data_manifest_sha(tmp_path: Path) -> None:
+    _make_data(tmp_path)
+    manifest_path = tmp_path / "quality_manifest.csv"
+    expected_sha = _manifest_sha(tmp_path)
+    config = {
+        "schema_version": "experiment-v0.1",
+        "exp_id": "EXP-P5.2-B-MINI-SHATEST-20260819-R01",
+        "task_id": "TASK-P5.2-B-MINI-SCREEN-v0.1",
+        "scope": "mini",
+        "runner_type": "popu_neural_mini",
+        "seed": 42,
+        "output_root": "outputs/experiments",
+        "data_manifests": [{"path": str(manifest_path), "sha256": expected_sha}],
+        "parameters": _params(tmp_path),
+    }
+    result = run_experiment(
+        config,
+        output_root=tmp_path / "out",
+        git_info_provider=_clean_git,
+        system_info_provider=_no_gpu,
+    )
+    exp_dir = result.experiment_dir
+
+    assert result.state == "SUCCEEDED"
+    manifest = json.loads((exp_dir / "manifest.json").read_text("utf-8"))
+    metrics = json.loads((exp_dir / "metrics.json").read_text("utf-8"))
+
+    recorded = manifest["data_manifests"]
+    assert len(recorded) == 1
+    assert recorded[0]["sha256"] == expected_sha
+    assert recorded[0]["size_bytes"] == manifest_path.stat().st_size
+    assert recorded[0]["verified"] is True
+    # metrics.json carries the exact same verified SHA/size.
+    assert metrics["quality_manifest_sha256"] == expected_sha
+    assert metrics["quality_manifest_size_bytes"] == manifest_path.stat().st_size
 
 
 def test_mini_through_governed_runner(tmp_path: Path) -> None:

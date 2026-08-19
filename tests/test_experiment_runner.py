@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from topper_perception.experiments.contracts import DirtyWorktreeError, ExpIdError
+from topper_perception.experiments.artifacts import sha256_hex
+from topper_perception.experiments.contracts import DataManifestError, DirtyWorktreeError, ExpIdError
 from topper_perception.experiments.runner import run_experiment
 
 EXP_ID = "EXP-RUNNER-DUMMY-SMOKE-20260819-R01"
@@ -132,6 +133,46 @@ def test_smoke_allows_dirty_and_records(tmp_path: Path) -> None:
     result = run_experiment(_config(), output_root=tmp_path, git_info_provider=_dirty_git)
     manifest = _read_json(result.experiment_dir / "manifest.json")
     assert manifest["git"]["dirty"] is True
+
+
+def test_data_manifest_verified_and_recorded(tmp_path: Path) -> None:
+    data_file = tmp_path / "data.csv"
+    data_file.write_text("a,b\n1,2\n", encoding="utf-8")
+    expected_sha = sha256_hex(data_file)
+
+    result = run_experiment(
+        _config(data_manifests=[{"path": str(data_file), "sha256": expected_sha}]),
+        output_root=tmp_path,
+    )
+    manifest = _read_json(result.experiment_dir / "manifest.json")
+
+    recorded = manifest["data_manifests"]
+    assert len(recorded) == 1
+    assert recorded[0]["path"] == str(data_file)
+    assert recorded[0]["sha256"] == expected_sha
+    assert recorded[0]["size_bytes"] == data_file.stat().st_size
+    assert recorded[0]["verified"] is True
+
+
+def test_data_manifest_wrong_sha_rejected(tmp_path: Path) -> None:
+    data_file = tmp_path / "data.csv"
+    data_file.write_text("a,b\n1,2\n", encoding="utf-8")
+    with pytest.raises(DataManifestError, match="SHA-256 mismatch"):
+        run_experiment(
+            _config(data_manifests=[{"path": str(data_file), "sha256": "f" * 64}]),
+            output_root=tmp_path,
+        )
+    assert not (tmp_path / EXP_ID).exists()
+
+
+def test_data_manifest_missing_file_rejected(tmp_path: Path) -> None:
+    missing = tmp_path / "does_not_exist.csv"
+    with pytest.raises(DataManifestError, match="not found"):
+        run_experiment(
+            _config(data_manifests=[{"path": str(missing), "sha256": "a" * 64}]),
+            output_root=tmp_path,
+        )
+    assert not (tmp_path / EXP_ID).exists()
 
 
 def test_no_gpu_environment_works(tmp_path: Path) -> None:

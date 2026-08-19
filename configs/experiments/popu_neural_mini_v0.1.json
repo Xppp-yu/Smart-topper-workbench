@@ -6,10 +6,17 @@
   "runner_type": "popu_neural_mini",
   "seed": 42,
   "output_root": "outputs/experiments",
+  "data_manifests": [
+    {
+      "path": "outputs/metrics/popu_tactilus_quality_results_v0.1.csv",
+      "sha256": "9d3398a587b183f7e27ea68ada2eda1e5e82ebadb2ac9caf7a74b5763d3e954c"
+    }
+  ],
   "parameters": {
     "subject_selection_rule": "Frozen before any model result: primary-cohort subjects [1..6] in numeric order; no cherry-picking against model output.",
     "cohort": "primary",
     "quality_manifest": "outputs/metrics/popu_tactilus_quality_results_v0.1.csv",
+    "quality_manifest_sha256": "9d3398a587b183f7e27ea68ada2eda1e5e82ebadb2ac9caf7a74b5763d3e954c",
     "subject_ids": ["1", "2", "3", "4", "5", "6"],
     "train_subject_ids": ["1", "2", "3", "4"],
     "val_subject_ids": ["5", "6"],

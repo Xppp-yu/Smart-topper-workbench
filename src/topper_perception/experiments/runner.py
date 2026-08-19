@@ -17,16 +17,18 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from topper_perception.experiments.artifacts import (
     atomic_write_json,
     capture_git_info,
     capture_system_info,
     compute_config_hash,
+    sha256_hex,
 )
 from topper_perception.experiments.contracts import (
     ConfigValidationError,
+    DataManifestError,
     DirtyWorktreeError,
     ExpIdError,
     ExperimentConfig,
@@ -145,6 +147,40 @@ RUNNER_REGISTRY: dict[str, RunnerFn] = {
 }
 
 
+def _verify_data_manifests(
+    manifests: Sequence[Mapping[str, str]], project_root: Path
+) -> list[dict[str, Any]]:
+    """Verify each declared data manifest exists and matches its pinned SHA-256.
+
+    Returns the resolved, verified records (``path`` / ``sha256`` / ``size_bytes``
+    / ``verified``) for ``manifest.json``. Raises :class:`DataManifestError` on a
+    missing file or a digest mismatch. This is fully generic: it knows nothing
+    about PoPu or P2, only that some external data files must be pinned by
+    content hash before a governed run may start.
+    """
+    verified: list[dict[str, Any]] = []
+    for item in manifests:
+        path = _project_path(Path(item["path"]))
+        expected = str(item["sha256"]).lower()
+        if not path.is_file():
+            raise DataManifestError(f"data manifest not found: {path}")
+        actual = sha256_hex(path)
+        if actual != expected:
+            raise DataManifestError(
+                f"data manifest SHA-256 mismatch for {path}: "
+                f"expected {expected}, got {actual}."
+            )
+        verified.append(
+            {
+                "path": str(path),
+                "sha256": actual,
+                "size_bytes": path.stat().st_size,
+                "verified": True,
+            }
+        )
+    return verified
+
+
 def _git_gate_passes(git_info: Mapping[str, Any]) -> bool:
     """Return True only when the worktree is provably clean (fail-closed).
 
@@ -246,6 +282,8 @@ def run_experiment(
 
     system_info = (system_info_provider or capture_system_info)()
 
+    data_manifests = _verify_data_manifests(cfg.data_manifests, project_root)
+
     config_hash = compute_config_hash(cfg.raw)
     resolved = _resolved_config(
         cfg, root, experiment_dir, git_info, execution_command, config_hash
@@ -275,6 +313,7 @@ def run_experiment(
         "runner_type": cfg.runner_type,
         "git": dict(git_info),
         "config_hash": config_hash,
+        "data_manifests": data_manifests,
         "python_version": system_info.get("python_version"),
         "os": system_info.get("os"),
         "cpu": system_info.get("cpu"),

@@ -49,6 +49,27 @@
       "minLength": 1,
       "description": "Base directory under which outputs/experiments/<EXP-ID>/ is created."
     },
+    "data_manifests": {
+      "type": "array",
+      "description": "Optional external data files pinned by content hash. The runner verifies each file's SHA-256 before QUEUED and records the verified path/hash/size into manifest.json.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path to the data manifest (absolute or relative to the repo root)."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "description": "Expected lowercase-hex SHA-256 of the file contents."
+          }
+        }
+      }
+    },
     "parameters": {
       "type": "object",
       "description": "Runner-specific free-form parameters (e.g. n_samples, fail)."

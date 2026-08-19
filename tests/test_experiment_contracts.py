@@ -78,6 +78,41 @@ def test_unknown_field_raises() -> None:
         validate_experiment_config(_valid_config(surprise="boom"))
 
 
+def test_data_manifests_optional_absent() -> None:
+    cfg = validate_experiment_config(_valid_config())
+    assert cfg.data_manifests == ()
+
+
+def test_data_manifests_valid_normalizes_sha() -> None:
+    cfg = validate_experiment_config(
+        _valid_config(
+            data_manifests=[
+                {"path": "outputs/metrics/q.csv", "sha256": "9D" + "A" * 62},
+            ]
+        )
+    )
+    assert cfg.data_manifests == (
+        {"path": "outputs/metrics/q.csv", "sha256": ("9d" + "a" * 62)},
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "not-a-list",
+        [{"path": "x"}],  # missing sha256
+        [{"sha256": "a" * 64}],  # missing path
+        [{"path": "", "sha256": "a" * 64}],  # empty path
+        [{"path": "x", "sha256": "short"}],  # bad sha length
+        [{"path": "x", "sha256": "z" * 64}],  # non-hex sha
+        [{"path": 123, "sha256": "a" * 64}],  # non-string path
+    ],
+)
+def test_data_manifests_invalid_raises(value) -> None:
+    with pytest.raises(ConfigValidationError):
+        validate_experiment_config(_valid_config(data_manifests=value))
+
+
 @pytest.mark.parametrize(
     "field",
     ["schema_version", "exp_id", "task_id", "scope", "runner_type", "output_root"],

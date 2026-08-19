@@ -45,6 +45,20 @@ def compute_config_hash(config: Mapping[str, Any]) -> str:
     return f"sha256:{digest}"
 
 
+def sha256_hex(path: Path) -> str:
+    """Return the lowercase hex SHA-256 digest of ``path``, streamed in chunks.
+
+    Used to pin external data manifests (e.g. the P2 quality manifest) by
+    content hash rather than by path/filename alone, so a governed run can
+    prove it is reading the exact frozen data file.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _git(project_root: Path, *args: str) -> str | None:
     """Run a read-only ``git`` command; return stripped stdout, or None on failure."""
     try:

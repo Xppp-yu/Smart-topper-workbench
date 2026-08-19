@@ -35,9 +35,16 @@ REQUIRED_FIELDS = (
     "parameters",
 )
 
+#: Optional top-level fields. ``data_manifests`` pins external data files by
+#: content hash so a governed run can prove it reads the exact frozen data.
+OPTIONAL_FIELDS = ("data_manifests",)
+
 #: EXP-ID legality: ``EXP-`` followed by letters/digits/dot/underscore/dash.
 #: Forbids whitespace and path separators so an EXP-ID is always a safe dir name.
 EXP_ID_RE = re.compile(r"^EXP-[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+#: A SHA-256 digest is exactly 64 hex characters (case-insensitive).
+SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 class ExperimentError(Exception):
@@ -60,6 +67,10 @@ class DirtyWorktreeError(ExperimentError):
     """A mini/full run was requested with a dirty Git worktree."""
 
 
+class DataManifestError(ExperimentError):
+    """A declared data manifest is missing or its SHA-256 does not match."""
+
+
 @dataclass(frozen=True)
 class ExperimentConfig:
     """A validated, frozen experiment config."""
@@ -72,6 +83,7 @@ class ExperimentConfig:
     seed: int
     output_root: str
     parameters: Mapping[str, Any]
+    data_manifests: tuple[Mapping[str, str], ...]
     raw: Mapping[str, Any]
 
 
@@ -103,6 +115,35 @@ def _require_nonempty_str(config: Mapping[str, Any], field: str) -> str:
     return value
 
 
+def _validate_data_manifests(value: Any) -> tuple[Mapping[str, str], ...]:
+    """Validate and normalize the optional ``data_manifests`` list.
+
+    Each entry pins one external data file by ``path`` + ``sha256``. The digest
+    is normalized to lowercase hex for comparison. Returns an empty tuple when
+    the field is absent (a config without external data pins nothing).
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigValidationError("data_manifests must be an array.")
+    manifests: list[Mapping[str, str]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise ConfigValidationError(f"data_manifests[{index}] must be an object.")
+        path = item.get("path")
+        sha256 = item.get("sha256")
+        if not isinstance(path, str) or not path:
+            raise ConfigValidationError(
+                f"data_manifests[{index}].path must be a non-empty string."
+            )
+        if not isinstance(sha256, str) or SHA256_RE.fullmatch(sha256) is None:
+            raise ConfigValidationError(
+                f"data_manifests[{index}].sha256 must be a 64-character hex string."
+            )
+        manifests.append({"path": path, "sha256": sha256.lower()})
+    return tuple(manifests)
+
+
 def validate_experiment_config(config: Mapping[str, Any]) -> ExperimentConfig:
     """Validate a raw config mapping and return a frozen :class:`ExperimentConfig`."""
     if not isinstance(config, Mapping):
@@ -112,7 +153,8 @@ def validate_experiment_config(config: Mapping[str, Any]) -> ExperimentConfig:
     if missing:
         raise ConfigValidationError(f"Config missing required fields: {missing}")
 
-    unknown = [key for key in config if key not in REQUIRED_FIELDS]
+    allowed = set(REQUIRED_FIELDS) | set(OPTIONAL_FIELDS)
+    unknown = [key for key in config if key not in allowed]
     if unknown:
         raise ConfigValidationError(f"Config contains unknown fields: {unknown}")
 
@@ -156,6 +198,7 @@ def validate_experiment_config(config: Mapping[str, Any]) -> ExperimentConfig:
         seed=seed,
         output_root=output_root,
         parameters=dict(parameters),
+        data_manifests=_validate_data_manifests(config.get("data_manifests")),
         raw=dict(config),
     )
 

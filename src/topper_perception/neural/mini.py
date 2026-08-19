@@ -13,9 +13,11 @@ The cohort is enforced against the frozen P2 quality manifest
 (``parameters.quality_manifest``): only records whose ``quality_status`` is in
 ``parameters.cohort`` (``primary`` = ACCEPT only) are built into samples, so
 WARN/EXCLUDED/REJECT records cannot leak into a primary-cohort Mini. The
-train/val split is *explicit*: ``parameters.train_subject_ids`` /
-``parameters.val_subject_ids`` are frozen in config (at least 2 validation
-subjects) and are never derived from a ratio.
+manifest's SHA-256 is verified against ``parameters.quality_manifest_sha256``
+*before* it is read, so a missing or tampered manifest fails the run instead of
+silently passing a path/filename-only check. The train/val split is *explicit*:
+``parameters.train_subject_ids`` / ``parameters.val_subject_ids`` are frozen in
+config (at least 2 validation subjects) and are never derived from a ratio.
 
 It never writes to the shared raw data directory, never reads a test split
 (the Mini config freezes an explicit train/val subject partition with no test
@@ -34,7 +36,7 @@ from typing import Any, Mapping
 import numpy as np
 import torch
 
-from topper_perception.experiments.artifacts import atomic_write_json
+from topper_perception.experiments.artifacts import atomic_write_json, sha256_hex
 from topper_perception.healthcheck import load_path_config
 from topper_perception.io.popu_inventory import iter_tactilus_record_paths, resolve_tactilus_root
 from topper_perception.neural.checkpoint import (
@@ -130,6 +132,33 @@ def _resolve_manifest_path(parameters: Mapping[str, Any]) -> Path:
     return path if path.is_absolute() else _project_root() / path
 
 
+def _verify_quality_manifest(manifest_path: Path, parameters: Mapping[str, Any]) -> dict[str, Any]:
+    """Compute and verify the quality manifest SHA-256 *before* reading it.
+
+    Returns the verified integrity record (``path`` / ``sha256`` /
+    ``size_bytes``). Raises when the expected SHA is missing from config, the
+    file is absent, or the computed digest mismatches — a path/filename check
+    is never sufficient on its own.
+    """
+    expected = parameters.get("quality_manifest_sha256")
+    if not expected:
+        raise ValueError(
+            "parameters.quality_manifest_sha256 is required to verify the P2 "
+            "quality manifest before reading it."
+        )
+    if not isinstance(expected, str):
+        raise ValueError("parameters.quality_manifest_sha256 must be a string.")
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"P2 quality manifest not found: {manifest_path}")
+    actual = sha256_hex(manifest_path)
+    if actual != expected.strip().lower():
+        raise ValueError(
+            f"P2 quality manifest SHA-256 mismatch for {manifest_path}: "
+            f"expected {expected.strip().lower()}, got {actual}."
+        )
+    return {"path": str(manifest_path), "sha256": actual, "size_bytes": manifest_path.stat().st_size}
+
+
 def collect_labeled_samples(
     parameters: Mapping[str, Any], data_root: Path
 ) -> tuple[list[Any], dict[str, Any]]:
@@ -156,6 +185,7 @@ def collect_labeled_samples(
     accepted = _COHORT_ACCEPTED[cohort]
 
     manifest_path = _resolve_manifest_path(parameters)
+    manifest_integrity = _verify_quality_manifest(manifest_path, parameters)
     statuses = _load_quality_manifest(manifest_path)
 
     tactilus_root = resolve_tactilus_root(data_root)
@@ -230,6 +260,8 @@ def collect_labeled_samples(
     cohort_stats = {
         "cohort": cohort,
         "quality_manifest": str(manifest_path),
+        "quality_manifest_sha256": manifest_integrity["sha256"],
+        "quality_manifest_size_bytes": manifest_integrity["size_bytes"],
         "n_records_considered": len(record_paths),
         "n_records_excluded_by_cohort": n_excluded_by_cohort,
         "n_labeled_available": len(available),
@@ -264,6 +296,8 @@ class MiniData:
     no_leakage: bool
     cohort: str
     quality_manifest: str
+    quality_manifest_sha256: str
+    quality_manifest_size_bytes: int
     n_records_excluded_by_cohort: int
 
 
@@ -390,6 +424,8 @@ def _prepare_data(parameters: Mapping[str, Any], seed: int, data_root: Path) -> 
         no_leakage=no_leakage,
         cohort=cohort_stats["cohort"],
         quality_manifest=cohort_stats["quality_manifest"],
+        quality_manifest_sha256=cohort_stats["quality_manifest_sha256"],
+        quality_manifest_size_bytes=cohort_stats["quality_manifest_size_bytes"],
         n_records_excluded_by_cohort=cohort_stats["n_records_excluded_by_cohort"],
     )
 
@@ -785,6 +821,8 @@ def run_popu_neural_mini(
             "device": str(device),
             "cohort": data.cohort,
             "quality_manifest": data.quality_manifest,
+            "quality_manifest_sha256": data.quality_manifest_sha256,
+            "quality_manifest_size_bytes": data.quality_manifest_size_bytes,
             "n_records_excluded_by_cohort": data.n_records_excluded_by_cohort,
             "train_subjects": list(data.train_subjects),
             "val_subjects": list(data.val_subjects),
@@ -807,6 +845,8 @@ def run_popu_neural_mini(
         "subject_selection_rule": str(params.get("subject_selection_rule", "")),
         "cohort": data.cohort,
         "quality_manifest": data.quality_manifest,
+        "quality_manifest_sha256": data.quality_manifest_sha256,
+        "quality_manifest_size_bytes": data.quality_manifest_size_bytes,
         "n_records_excluded_by_cohort": data.n_records_excluded_by_cohort,
         "subjects": [str(s) for s in params.get("subject_ids", [])],
         "n_labeled_available": data.n_labeled_available,

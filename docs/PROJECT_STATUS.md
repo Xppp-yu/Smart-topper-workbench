@@ -5,7 +5,7 @@
 
 ## 当前一句话状态
 
-P5.2-A CNN 训练底座与 CPU/CUDA Smoke 已完成：三种神经网络骨架在受试者隔离、fold 内 normalization、标签感知翻转、checkpoint/resume/reload 和固定种子复现口径下通过 CPU 与 RTX 4090 CUDA 通路验收。P5.2-B Mini 筛选的协议、代码、版本化配置与测试已实现并经 Reviewer 复核，当前为 `REVIEW_NEEDS_FIX`（已按 6 项要求完成修复提交：ACCEPT-only cohort 读取 P2 manifest、`device=cuda` 硬失败、显式 train/val 受试者切分、早停仅 `val_loss`、可行性门 CUDA 缺峰值内存与未知 verdict 校验、文档标记；本任务**未运行**真实 Mini/Full）。当前 Smoke 数值不用于模型排名。P5.1 `calibrated_linear_svm` 继续保留为**传统模型候选**，P6 `UNKNOWN/REJECT` 在 P5.2-C 完成总体候选选择前保持等待。结果仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
+P5.2-A CNN 训练底座与 CPU/CUDA Smoke 已完成：三种神经网络骨架在受试者隔离、fold 内 normalization、标签感知翻转、checkpoint/resume/reload 和固定种子复现口径下通过 CPU 与 RTX 4090 CUDA 通路验收。P5.2-B Mini 筛选的协议、代码、版本化配置与测试已实现并经 Reviewer 复核，当前为 `REVIEW_NEEDS_FIX`（已按 6 项要求完成首轮修复提交，并追加数据 Manifest SHA-256 哈希校验：ACCEPT-only cohort 读取 P2 manifest、`device=cuda` 硬失败、显式 train/val 受试者切分、早停仅 `val_loss`、可行性门 CUDA 缺峰值内存与未知 verdict 校验、文档标记、质量 manifest 读取前校验 SHA-256 并写入 manifest.json；本任务**未运行**真实 Mini/Full）。当前 Smoke 数值不用于模型排名。P5.1 `calibrated_linear_svm` 继续保留为**传统模型候选**，P6 `UNKNOWN/REJECT` 在 P5.2-C 完成总体候选选择前保持等待。结果仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
 
 ## 阶段看板
 
@@ -22,7 +22,7 @@ P5.2-A CNN 训练底座与 CPU/CUDA Smoke 已完成：三种神经网络骨架�
 | P5/R5 | 姿态 Baseline 与受试者隔离评价 | COMPLETE — FIRST_ROUND_BASELINE | [P5 阶段报告](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md)、逐样本预测、混淆矩阵、逐受试者表；首轮领先候选=`logreg`（历史证据），primary test macro-F1 0.9466；`52 passed` | 已被 P5.1 满足（候选在 repeated grouped CV 口径下复核并冻结） |
 | P5.1/R5.1 | 横向比较框架修正与候选复核 | COMPLETE — TRADITIONAL_CANDIDATE_FROZEN | [P5.1 阶段报告](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md)、OOF 1,051,260 行、record 105,126 行、逐受试者/逐类别/消融表、混淆矩阵与图；winner=`calibrated_linear_svm`（record macro-F1 0.9452），冻结 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；`115 passed` | 传统模型候选已冻结，不覆盖 CNN；进入 P5.2 神经网络公平比较，总体候选冻结后才放行 P6 |
 | P5.2-A/R5.2-A | CNN 训练底座与 Smoke | COMPLETE — CPU_CUDA_SMOKE_PASS | [P5.2-A 阶段报告](stage_reports/P5_2_A_POPU_NEURAL_CPU_CUDA_SMOKE_v0.1.md)；CPU `EXP-P5.2-A2-CPU-SMOKE-20260819-R02` 与 CUDA `EXP-P5.2-A2-CUDA-SMOKE-20260819-R02` 均通过。CUDA R02：干净 Git SHA `5803f5c`、RTX 4090、PyTorch `2.8.0+cu128`、1,000 样本、1 epoch；三模型训练、checkpoint/resume、参数变化、独立重载一致、固定 seed 复现均通过；`271 passed` | P5.2-B 必须另行冻结 Mini 配置并授权；当前 Smoke 指标不排名；不跑 Full CV |
-| P5.2-B/R5.2-B | Mini 筛选 | REVIEW_NEEDS_FIX | [P5.2-B Mini 协议报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_PROTOCOL_v0.1.md)；冻结配置 `popu_neural_mini_v0.1.json`、`runner_type=popu_neural_mini`、metrics/early_stopping/viability 模块与 Mini runner；已按 Reviewer 6 项要求完成修复提交，`330 passed`；未运行 Mini/Full | Reviewer 复核修复提交 + 配置冻结 + Controller 授权后，才由 Experiment Runner 在 AutoDL 执行 Mini；不形成最终排名 |
+| P5.2-B/R5.2-B | Mini 筛选 | REVIEW_NEEDS_FIX | [P5.2-B Mini 协议报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_PROTOCOL_v0.1.md)；冻结配置 `popu_neural_mini_v0.1.json`、`runner_type=popu_neural_mini`、metrics/early_stopping/viability 模块与 Mini runner；已按 Reviewer 6 项要求完成首轮修复，并追加数据 Manifest SHA-256 哈希校验（读取前校验、写入 manifest.json），`346 passed`；未运行 Mini/Full | Reviewer 复核修复提交 + 配置冻结 + Controller 授权后，才由 Experiment Runner 在 AutoDL 执行 Mini；不形成最终排名 |
 | P5.2-C/R5.2-C | Full 公平比较 | NOT_STARTED | 尚无产物 | 与 P5.1 相同受试者隔离原则、记录聚合与主指标；Reviewer 接受后才冻结 PoPu 总体候选并进入 P6 |
 | P6/R6 | `UNKNOWN/REJECT` 与错误分析 | HOLD — WAIT_FOR_P5_2 | P5.1 传统候选 `popu_research_candidate_p5_1_v0.1`（svm，record macro-F1 0.9452）+ record/OOF 预测表（含置信度）已就绪；P5.2 总体候选选择前不冻结 UNKNOWN/REJECT 阈值 | 总体候选经 P5.2 公平比较并冻结后进入；阈值仅由验证受试者选择；高置信错误需个案分析 |
 | P7/R7 | 降密度、坏点、区域研究 | BLOCKED_BY_P6 | 尚未开始 | 不将软件消融误称为硬件验证 |
