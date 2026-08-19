@@ -89,4 +89,4 @@
 
 ## 7. 当前交接点
 
-截至 2026-08-19：P0–P5.1 已完成。P5.1 的 `calibrated_linear_svm` 已冻结为**传统模型候选**（record macro-F1 0.9452），不是已经覆盖 CNN 的总体最优模型；P5.2 PoPu 神经网络公平比较（P5.2-A CNN 底座与 Smoke / P5.2-B Mini 筛选 / P5.2-C Full 公平比较）为下一阶段，通过 Reviewer 复核并冻结总体候选后才放行 P6。P6 `UNKNOWN/REJECT` 在总体候选选择完成前保持等待。P4b 人体区域监督因 PoPu 标注无法唯一配对而继续 HOLD。
+截至 2026-08-19：P0–P5.2-A 已完成。P5.2-A 的 CPU 与 RTX 4090 CUDA Smoke 均已通过，训练、checkpoint/resume/reload 和固定 seed 最小复现链路成立；Smoke 指标不用于模型排名。P5.1 的 `calibrated_linear_svm` 继续保留为**传统模型候选**（record macro-F1 0.9452），不是已经覆盖 CNN 的总体最优模型。下一交接点为需 Controller 另行冻结配置并授权的 P5.2-B Mini 筛选；本轮未运行 Mini/Full。P5.2-C 完成总体候选选择并经 Reviewer 接受后才放行 P6 `UNKNOWN/REJECT`。P4b 人体区域监督因 PoPu 标注无法唯一配对而继续 HOLD。

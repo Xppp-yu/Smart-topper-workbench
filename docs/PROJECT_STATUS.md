@@ -5,7 +5,7 @@
 
 ## 当前一句话状态
 
-P5.1 横向复核已完成：在 P4a 特征表上以 repeated subject-grouped CV（5 折 × 3 repeats，group=subject_id）完成 7 候选比较、特征消融并冻结 `calibrated_linear_svm` 为 **传统模型候选**（PoPu research candidate；record macro-F1 0.9452；logreg 0.9424 在 margin 0.005 内统计平局，由 tie-break 1 记录 balanced-acc 胜出）。该候选是已冻结的传统模型，不是已覆盖 CNN 的总体最优模型。P5 v0.1 的 held-out 首轮证据保留为历史（primary test macro-F1 0.9466），不被改写。下一阶段为 P5.2 PoPu 神经网络公平比较（P5.2-A/B/C）；P6 `UNKNOWN/REJECT` 与错误分析在 P5.2 完成总体候选选择前保持等待。结果仅为 PoPu 公开数据研究候选，区域监督继续 HOLD。
+P5.2-A CNN 训练底座与 CPU/CUDA Smoke 已完成：三种神经网络骨架在受试者隔离、fold 内 normalization、标签感知翻转、checkpoint/resume/reload 和固定种子复现口径下通过 CPU 与 RTX 4090 CUDA 通路验收。下一阶段是需另行授权的 P5.2-B Mini 筛选；当前 Smoke 数值不用于模型排名，也未运行 Mini/Full。P5.1 `calibrated_linear_svm` 继续保留为**传统模型候选**，P6 `UNKNOWN/REJECT` 在 P5.2-C 完成总体候选选择前保持等待。结果仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
 
 ## 阶段看板
 
@@ -21,7 +21,7 @@ P5.1 横向复核已完成：在 P4a 特征表上以 repeated subject-grouped CV
 | P4b/R4b | 区域标签关联与监督特征集 | BLOCKED_BY_MISSING_PAIRING_AND_P4A | P3.2 已证明当前人体标注无法唯一配对 | 有文档可追溯的逐记录、逐帧配对规则；否则不生成区域监督训练集 |
 | P5/R5 | 姿态 Baseline 与受试者隔离评价 | COMPLETE — FIRST_ROUND_BASELINE | [P5 阶段报告](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md)、逐样本预测、混淆矩阵、逐受试者表；首轮领先候选=`logreg`（历史证据），primary test macro-F1 0.9466；`52 passed` | 已被 P5.1 满足（候选在 repeated grouped CV 口径下复核并冻结） |
 | P5.1/R5.1 | 横向比较框架修正与候选复核 | COMPLETE — TRADITIONAL_CANDIDATE_FROZEN | [P5.1 阶段报告](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md)、OOF 1,051,260 行、record 105,126 行、逐受试者/逐类别/消融表、混淆矩阵与图；winner=`calibrated_linear_svm`（record macro-F1 0.9452），冻结 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；`115 passed` | 传统模型候选已冻结，不覆盖 CNN；进入 P5.2 神经网络公平比较，总体候选冻结后才放行 P6 |
-| P5.2-A/R5.2-A | CNN 训练底座与 Smoke | IN_PROGRESS — CPU_SMOKE_PASS, CUDA_SMOKE_PENDING | Reviewer 接受的 `EXP-P5.2-A2-CPU-SMOKE-20260819-R02`：训练接口（Dataset/DataLoader/训练·评估·预测/checkpoint-resume-reload）已落地；CPU Smoke 在干净 Git SHA `a65438b` 上通过（2 受试者、1,000 条五类均覆盖快照、1 epoch、MatrixMLP/TinyCNN/SmallResNet 各完成训练步，原子 checkpoint 保存、RNG 恢复续训、参数变化、独立重载一致和同种子复现均通过）。R01 因全局截断造成类别偏斜，仅保留为被 Reviewer 否决的历史 Smoke | CUDA Smoke 待远程 GPU 执行；随后进入 P5.2-B Mini 筛选；不跑 Full CV |
+| P5.2-A/R5.2-A | CNN 训练底座与 Smoke | COMPLETE — CPU_CUDA_SMOKE_PASS | [P5.2-A 阶段报告](stage_reports/P5_2_A_POPU_NEURAL_CPU_CUDA_SMOKE_v0.1.md)；CPU `EXP-P5.2-A2-CPU-SMOKE-20260819-R02` 与 CUDA `EXP-P5.2-A2-CUDA-SMOKE-20260819-R02` 均通过。CUDA R02：干净 Git SHA `5803f5c`、RTX 4090、PyTorch `2.8.0+cu128`、1,000 样本、1 epoch；三模型训练、checkpoint/resume、参数变化、独立重载一致、固定 seed 复现均通过；`271 passed` | P5.2-B 必须另行冻结 Mini 配置并授权；当前 Smoke 指标不排名；不跑 Full CV |
 | P5.2-B/R5.2-B | Mini 筛选 | NOT_STARTED | 尚无产物 | 开发受试者固定子集、3-5 epochs、固定种子与早停；排除明显不可行候选，不形成最终排名 |
 | P5.2-C/R5.2-C | Full 公平比较 | NOT_STARTED | 尚无产物 | 与 P5.1 相同受试者隔离原则、记录聚合与主指标；Reviewer 接受后才冻结 PoPu 总体候选并进入 P6 |
 | P6/R6 | `UNKNOWN/REJECT` 与错误分析 | HOLD — WAIT_FOR_P5_2 | P5.1 传统候选 `popu_research_candidate_p5_1_v0.1`（svm，record macro-F1 0.9452）+ record/OOF 预测表（含置信度）已就绪；P5.2 总体候选选择前不冻结 UNKNOWN/REJECT 阈值 | 总体候选经 P5.2 公平比较并冻结后进入；阈值仅由验证受试者选择；高置信错误需个案分析 |
