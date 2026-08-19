@@ -14,6 +14,13 @@ dependencies = [
     "seaborn>=0.13,<1",
 ]
 
+[project.optional-dependencies]
+# Neural-network path (P5.2). Kept optional so the traditional-ML path
+# (scikit-learn, P5.1) does not pull in the large PyTorch dependency.
+neural = [
+    "torch>=2.4,<3",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8,<10",
