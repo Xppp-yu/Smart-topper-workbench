@@ -99,7 +99,7 @@ flowchart TD
 | A1 数据盘点与质量 | 原始 JSON / COCO | 结构、shape、重复、异常、标签缺失、坐标与文件配对审计 | inventory / quality / alignment CSV、画廊 | 数据范围和排除口径可追溯 |
 | A2 信号结构 | P2 合格候选 | 比较 Mask，检查接触轮廓、中心、边界和时间稳定性 | mask comparison、叠加图、冻结规则 | 规则经指标和人工图检复核 |
 | A3 无标签特征 | 冻结的 A2 输入 | 原始强度、分区统计、几何、形状、质量、时序特征；标签列单独保存 | feature schema、特征表 | 一行一个可追溯样本；无标签泄漏 |
-| A4 固定姿态 Baseline | A3 特征 + 姿态标签 | 规则 / Logistic / RF / 可选小型 CNN，受试者隔离比较 | predictions、混淆矩阵、逐受试者指标 | 只在 validation 选模型；P5.1 起用 repeated subject-grouped CV 排名候选，不再声称存在未查看的 PoPu test（P5 v0.1 曾对每个候选各测一次，留作历史首轮证据） |
+| A4 固定姿态 Baseline | A3 特征 + 姿态标签 | 规则 / Logistic / RF / 可选小型 CNN，受试者隔离比较 | predictions、混淆矩阵、逐受试者指标 | 只在 validation 选模型；P5.1 起用 repeated subject-grouped CV 排名候选，不再声称存在未查看的 PoPu test（P5 v0.1 曾对每个候选各测一次，留作历史首轮证据）；P5.2 再新增神经网络候选与 P5.1 传统候选公平比较并冻结总体候选 |
 | A5 区域候选 | A3 + 已审计配对的区域标签 | 结构模板、图结构、语义分割并行比较 | 区域中心误差、Dice/IoU、UNKNOWN | 配对规则确立；不把代理标签称真实解剖真值 |
 | A6 鲁棒性 | A4/A5 冻结候选 | 软件降密度、噪声、坏点、姿态/受试者失败分析 | robustness 表和错误图 | 明确软件消融不等于硬件验证 |
 
@@ -139,9 +139,9 @@ A1 Inventory / Quality  已完成（P1、P2）
 A2 Mask / Geometry      P3.1 已完成，largest_component 已冻结供研究使用
 A1 区域标签对齐         P3.2 已完成；人体标注一对三歧义，区域监督 HOLD
 A3 无标签特征           P4a 已完成（51,000 行 × 71 特征，首轮真实运行）
-A4 姿态 Baseline        P5 首轮基线已完成（logreg=历史首轮领先候选，未冻结）；P5.1 横向复核已完成（winner=calibrated_linear_svm，record macro-F1 0.9452），候选已冻结
+A4 姿态 Baseline        P5 首轮基线已完成（logreg=历史首轮领先候选，未冻结）；P5.1 横向复核已完成（winner=calibrated_linear_svm，record macro-F1 0.9452），传统模型候选已冻结；P5.2 神经网络公平比较为下一步
 A5 区域候选             等待标签配对结论
-A6 鲁棒性/密度          P5.1 之后进入（P6/P7）
+A6 鲁棒性/密度          P5.2 总体候选冻结后进入（P6/P7）
 B0-B5 自研硬件真值线    尚未启动，但现在应先冻结其协议
 ```
 
@@ -150,7 +150,7 @@ B0-B5 自研硬件真值线    尚未启动，但现在应先冻结其协议
 1. P3.1 已冻结 `largest_component` 作为**研究用**接触 Mask 规则；
 2. P3.2 已确认 COCO 可作结构参考，但当前不能作人体逐记录监督真值；
 3. P4a 已生成不依赖区域真值的特征表（51,000 行 × 71 特征）；
-4. P5 首轮受试者隔离基线已跑通（`logreg` 为历史首轮领先候选）；P5.1 横向比较复核已完成并冻结 `calibrated_linear_svm`（record macro-F1 0.9452）为 PoPu research candidate；
+4. P5 首轮受试者隔离基线已跑通（`logreg` 为历史首轮领先候选）；P5.1 横向比较复核已完成并冻结 `calibrated_linear_svm`（record macro-F1 0.9452）为传统模型候选；P5.2 神经网络公平比较为下一步，总体候选冻结后才放行 P6；
 5. 同时起草 B0/B1：自研传感器坐标、采样、同步真值和标注协议；
 6. 有了 P5.1 复核的候选结果后，再定义硬件验证的最低验收门槛，而不是反过来按模型成绩补故事。
 
@@ -158,13 +158,14 @@ B0-B5 自研硬件真值线    尚未启动，但现在应先冻结其协议
 
 ```text
 P5 首轮 Baseline（已完成，候选未冻结）
-    ↓ P5.1 横向比较（已完成）：repeated subject-grouped CV 排名 + 配置驱动注册/分组 evaluator/记录聚合；winner=calibrated_linear_svm（record macro-F1 0.9452），候选已冻结为 popu_research_candidate_p5_1_v0.1
-    ↓ P6 UNKNOWN/REJECT 与高置信错误分析（放行，待实现）
+    ↓ P5.1 横向比较（已完成）：repeated subject-grouped CV 排名 + 配置驱动注册/分组 evaluator/记录聚合；winner=calibrated_linear_svm（record macro-F1 0.9452），传统模型候选已冻结为 popu_research_candidate_p5_1_v0.1
+    ↓ P5.2 神经网络公平比较（P5.2-A CNN 底座与 Smoke → P5.2-B Mini 筛选 → P5.2-C Full 公平比较），Reviewer 接受后冻结 PoPu 总体候选
+    ↓ P6 UNKNOWN/REJECT 与高置信错误分析（总体候选冻结后放行）
     ↓ P7 软件鲁棒性：降密度、坏点、噪声消融
     ↓ PoPu 参考验证包（输入—真值—方法—结果—限制闭合）
 ```
 
-区域监督继续 HOLD，不等待区域真值即可推进 P6/P7。
+区域监督继续 HOLD，不等待区域真值即可推进 P5.2/P6/P7。
 
 ## 7. 最后的交付包长什么样
 
@@ -241,10 +242,10 @@ UNKNOWN和高置信错误统计。
 
 
 ## 下一步最合理的推进顺序
-P4a 无标签特征表与 P5 首轮受试者隔离基线已完成（logreg=当前首轮领先候选，未冻结）。
-PoPu 后续推进顺序：P5.1 横向比较（repeated subject-grouped CV + 配置驱动框架 + 候选复核）→ P6 UNKNOWN/REJECT → P7 软件鲁棒性（降密度、坏点、噪声）→ PoPu 参考验证包。
-P5.1 完成前不正式冻结模型或 UNKNOWN 阈值。
-区域监督继续 HOLD，不等待区域真值即可继续 P5.1/P6/P7。
+P4a 无标签特征表与 P5 首轮受试者隔离基线已完成（logreg=当前首轮领先候选，未冻结）；P5.1 横向比较已完成并冻结 `calibrated_linear_svm` 为传统模型候选（record macro-F1 0.9452）。
+PoPu 后续推进顺序：P5.2 神经网络公平比较（P5.2-A CNN 底座与 Smoke → P5.2-B Mini 筛选 → P5.2-C Full 公平比较）→ 冻结总体候选 → P6 UNKNOWN/REJECT → P7 软件鲁棒性（降密度、坏点、噪声）→ PoPu 参考验证包。
+P5.2 总体候选冻结前不正式冻结模型或 UNKNOWN 阈值。
+区域监督继续 HOLD，不等待区域真值即可继续 P5.2/P6/P7。
 同时冻结“肩—腰—骨盆”的真值与评价合同。
 SLP2022、PressurePose 已下载到本地数据副本（`PRESENT_NOT_INTEGRATED`），TIP 尚未纳入本工作台副本；三者都尚未建立各自的下载记录、Manifest 和 Adapter；它们是后续接力真值候选，不能与 PoPu 逐行拼接。
 先做低成本 Baseline（已做 R1/R2/R3 与首轮 P5），再考虑 R4/R5 图像模型。

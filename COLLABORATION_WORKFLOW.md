@@ -2,47 +2,72 @@
 
 ## 1. 目的
 
-本项目采用“Codex 负责研究与验收闭环，Claude Code 负责较大实现”的协作方式。目标是提高开发速度，同时避免代码一次性生成后缺少方向、证据、复用边界和阶段记录。
+本项目采用“Codex 负责研究与验收闭环，Claude Code 负责较大实现，Experiment Runner 负责后台计算”的协作方式。目标是提高开发速度，同时避免代码一次性生成后缺少方向、证据、复用边界和阶段记录，也避免 Agent 陪跑全量实验后自行给出研究结论。
 
-## 2. 角色分工
+## 2. 角色分工（四层）
 
-### Codex：方向、审计与交付负责人
+当前流程从“一个 Agent 负责设计、开发、全量计算、自审和总结”调整为四层职责。完整依据见 [docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md](docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md)。
 
+### Controller（Codex）：定义与验收
+
+- 定义研究问题、变量、评价协议、Gate 和单张任务单（`TASK-ID`）；
 - 判断当前数据、证据、缺口和阶段位置；
-- 确定下一步研究路线、优先级和停止条件；
-- 给 Claude Code 编写明确任务书，包括输入、输出、禁止范围和验收标准；
+- 给 Coding Agent 编写明确任务书，包括输入、输出、禁止范围和验收标准；
 - 审阅提交范围、代码结构、配置、测试和生成产物；
-- 独立复跑测试及必要的真实数据命令；
-- 只做小范围、定位明确的修复，不替代大规模开发；
 - 更新阶段报告与项目状态，验收后完成 Git 提交；
 - 明确区分 `COMPLETE`、`READY_TO_RUN`、`HOLD` 和 `BLOCKED`。
 
-### Claude Code：较大代码与研究实现负责人
+### Coding Agent（Claude Code）：实现与冒烟
 
-- 按 Codex 给出的任务书编写新模块、脚本、配置和测试；
+- 读代码、实现、调试、单元测试和小数据 Smoke Test；
+- 按任务书编写新模块、脚本、配置和测试；
 - 承担较大功能修改、重构以及新研究路线的代码实现；
 - 保持模块可复用，避免把逻辑全部写成一次性脚本；
 - 报告修改文件、测试结果、尚未运行的命令和已知限制；
-- 不越过任务边界，不自行把代码就绪写成研究结论完成；
-- 尽量将一次任务保持为独立、可审阅的代码提交。
+- **通过 Smoke Test 后即停止，不陪跑 Mini/Full 实验，不自行给出最终研究结论。**
 
-## 3. 标准协作流程
+### Experiment Runner（本地计算机或租用服务器）：后台计算
+
+- 基于冻结 Git SHA 与 resolved config 后台执行 Mini/Full Run；
+- 保存日志、指标、预测、图和 checkpoint；
+- 训练过程与 Agent 会话解耦，不让 Claude Code 等待；
+- 记录 `manifest.json`、`status.json` 与 `DONE.json` / `FAILED.json` 产物。
+
+### Reviewer（Codex）：只读复核
+
+- 只读复核配置、数据版本、split、指标、关键图和失败样本；
+- 给出 `ACCEPT / ITERATE / STOP / INVALID`；
+- 下一轮修改必须由 Reviewer 形成新的 `EXP-ID` 和任务单。
+
+> Codex 同时担任 Controller 和 Reviewer，属于流程内独立复核，不等同于论文级盲审；关键产品或发布结论仍应增加人工/第二审阅者。
+
+## 3. TASK-ID 与 EXP-ID
+
+### TASK-ID：开发任务
+
+示例：`TASK-P5.2-A-CNN-SCAFFOLD-v0.1`。任务单必须包含：目标与非目标、允许修改目录、输入合同、数据子集、配置、需新增/修改模块、Unit/错误/Smoke Test、禁止执行的 Mini/Full 命令、交付文件、Git commit 和已知限制。
+
+### EXP-ID：不可变计算实验
+
+建议格式 `EXP-P5.2-<MODEL>-<SCOPE>-<YYYYMMDD>-RNN`。同一 `EXP-ID` 的 Git SHA、resolved config、数据 Manifest 和 split Manifest 一旦进入 `QUEUED` 不再修改；参数变化必须创建新 `EXP-ID`。
+
+## 4. 标准协作流程
 
 1. 用户提出目标或研究问题。
-2. Codex 检查当前仓库、数据证据和项目看板，确定任务位置。
-3. Codex 向 Claude Code 提供任务书：
+2. Codex（Controller）检查当前仓库、数据证据和项目看板，确定任务位置并签发 `TASK-ID` 任务书：
    - 目标与非目标；
    - 输入数据与配置；
    - 要修改或新增的模块；
    - 最低测试与输出；
    - 禁止推进的后续阶段；
    - 验收条件。
-4. Claude Code 完成较大代码实现并提交交付清单。
-5. Codex 审查 diff、复跑测试、执行必要的真实数据验收并检查图表/CSV/JSON。
-6. 如果只有定位明确的小问题，由 Codex 定点修复并补回归测试；较大问题重新交回 Claude Code。
+3. Claude Code（Coding Agent）完成较大代码实现、单元测试与小数据 Smoke，并提交交付清单。
+4. Experiment Runner 基于冻结 SHA 与配置后台执行 Mini/Full Run。
+5. Codex（Reviewer）审查 diff、复跑测试、复核配置/指标/图/失败样本，给出 `ACCEPT / ITERATE / STOP / INVALID`。
+6. 如果只有定位明确的小问题，由 Codex 定点修复并补回归测试；较大问题重新签发任务单交回 Claude Code。
 7. Codex 写阶段报告、更新 `docs/PROJECT_STATUS.md`，确认边界后完成 Git 提交。
 
-## 4. 每次交付必须包含
+## 5. 每次交付必须包含
 
 - 修改和新增文件清单；
 - Git 提交 ID 或明确说明尚未提交；
@@ -52,9 +77,9 @@
 - 已知限制和不能得出的结论；
 - 工作区是否干净。
 
-只有代码、空目录、配置模板或单元测试时，阶段最多标为 `READY_TO_RUN`。只有真实数据运行、产物检查和阶段报告都完成后，才可标为 `COMPLETE`。得到“无法使用”或“缺少真值”也可以完成审计任务，但相应训练路线必须保持 `HOLD/BLOCKED`。
+只有代码、空目录、配置模板或单元测试时，阶段最多标为 `READY_TO_RUN`。只有真实数据运行、产物检查和阶段报告都完成后，才可标为 `COMPLETE`。得到“无法使用”或“缺少真值”也可以完成审计任务，但相应训练路线必须保持 `HOLD/BLOCKED`。Smoke/Mini 通过不等于 Full 结论。
 
-## 5. 数据与版本边界
+## 6. 数据与版本边界
 
 - 外部原始数据、`outputs/` 生成物和 `configs/paths.local.json` 不进入 Git；
 - 代码、通用配置、测试和阶段报告进入 Git；
@@ -62,6 +87,6 @@
 - 公开数据结果只支持研究链路和算法候选，不外推为自研硬件或产品验证；
 - 每个大阶段尽量使用独立提交，保证可回退、可比较和可交接。
 
-## 6. 当前交接点
+## 7. 当前交接点
 
-截至 2026-08-18：P0–P3 已完成（P3 收口提交为 `3e899cf`），P4a 无标签特征表与 P5 首轮受试者隔离基线已完成（P5 首轮基线提交）。下一阶段为 **P5.1**：横向比较框架修正、模块化增强与候选复核；P5.1 通过前不正式冻结模型或 UNKNOWN 阈值。P4b 人体区域监督因 PoPu 标注无法唯一配对而继续 HOLD。
+截至 2026-08-19：P0–P5.1 已完成。P5.1 的 `calibrated_linear_svm` 已冻结为**传统模型候选**（record macro-F1 0.9452），不是已经覆盖 CNN 的总体最优模型；P5.2 PoPu 神经网络公平比较（P5.2-A CNN 底座与 Smoke / P5.2-B Mini 筛选 / P5.2-C Full 公平比较）为下一阶段，通过 Reviewer 复核并冻结总体候选后才放行 P6。P6 `UNKNOWN/REJECT` 在总体候选选择完成前保持等待。P4b 人体区域监督因 PoPu 标注无法唯一配对而继续 HOLD。

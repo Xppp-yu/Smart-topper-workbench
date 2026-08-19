@@ -28,16 +28,19 @@ PoPu 是**公开压力矩阵数据集**，用于在真实压力信号上建立�
 | P3.2 | COCO 区域标注—压力记录对齐审计（区域监督 HOLD） | COMPLETE | [P3.2](stage_reports/P3_2_POPU_SEGMENTATION_ALIGNMENT_AUDIT_v0.1.md) |
 | P4a | 无标签逐 snapshot 特征表（51,000 行 × 71 特征） | COMPLETE | [P4a](stage_reports/P4a_POPU_LABEL_FREE_FEATURES_v0.1.md) |
 | P5 | 受试者隔离姿态 Baseline（首轮，候选未冻结） | COMPLETE — FIRST_ROUND_BASELINE | [P5](stage_reports/P5_POPU_SUBJECT_ISOLATED_POSTURE_BASELINE_v0.1.md) |
-| P5.1 | 横向比较与候选复核（repeated subject-grouped CV + 特征消融 + 冻结候选） | COMPLETE — CANDIDATE_FROZEN | [P5.1](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md) |
+| P5.1 | 横向比较与候选复核（repeated subject-grouped CV + 特征消融 + 冻结传统模型候选） | COMPLETE — TRADITIONAL_CANDIDATE_FROZEN | [P5.1](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md) |
 
 ## 4. 推进顺序与每阶段的输入 / 输出 / 通过 / 停止
 
 ```text
 P5 首轮 Baseline（已完成）
-    → P5.1 横向比较与候选复核（已完成，候选已冻结）
-    → P6 UNKNOWN/REJECT 与错误分析（放行，待实现）
+    → P5.1 横向比较与候选复核（已完成，传统模型候选已冻结）
+    → P5.2 PoPu 神经网络公平比较（P5.2-A CNN 底座与 Smoke → P5.2-B Mini 筛选 → P5.2-C Full 公平比较）
+    → 冻结 PoPu 总体候选
+    → P6 UNKNOWN/REJECT 与错误分析（总体候选冻结后放行）
     → P7 软件鲁棒性（降密度、坏点、噪声）
     → PoPu 参考验证包
+    → SLP/PressurePose Adapter 与各自任务线
 ```
 
 ### P5.1 横向比较与候选复核
@@ -45,11 +48,37 @@ P5 首轮 Baseline（已完成）
 - 输入：P4a v0.1 特征表（50,060 snapshots / 60 subjects / 5,006 records）+ 冻结的比较协议。
 - 输出：配置驱动模型注册 + 通用分组 evaluator（逐 snapshot 概率列）+ 记录聚合（每 JSON 10 snapshot 概率平均）；repeated subject-grouped CV（5 折 × 3 repeats，group=subject_id）7 候选横向比较、top-2 × 5 特征消融、候选冻结。
 - 通过条件：候选排序可解释（`calibrated_linear_svm` record macro-F1 0.9452 为最优，logreg 0.9424 在 margin 0.005 内统计平局、由 tie-break 1 胜出）；逐 snapshot/记录/受试者稳定性都报告；候选具备完整追溯（config / split / 指标 / 预测明细）。
-- 停止条件：**候选冻结**为 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；冻结前不设置 UNKNOWN/REJECT 阈值、不进入 WSL 工程化。
+- 停止条件：**传统模型候选冻结**为 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；该候选是传统模型、不覆盖 CNN，PoPu 总体候选需经 P5.2 神经网络公平比较后确定；总体候选冻结前不设置 UNKNOWN/REJECT 阈值、不进入 WSL 工程化。
+
+### P5.2 PoPu 神经网络公平比较
+
+在 P5.1 传统候选之上新增神经网络候选的公平比较，不改写 P5.1 数值和历史报告。
+
+#### P5.2-A：CNN 训练底座与 Smoke
+
+- 输入：P4a v0.1 特征表 + 原始压力矩阵；候选包括 P5.1 `calibrated_linear_svm`（冻结对照）、原始压力矩阵 MLP、TinyCNN、Small ResNet，必要时 CNN + 71 工程特征。
+- 输出：MLP/TinyCNN/Small ResNet 训练与评估接口、受试者隔离与 fold 内归一化、标签映射与左右翻转标签交换、checkpoint/resume、1 epoch 小样本 Smoke。
+- 通过条件：受试者切分隔离、train-fold normalization、标签映射、左右翻转标签交换、checkpoint/resume、CPU 与 CUDA Smoke、模型重载预测全部通过。
+- 停止条件：此阶段不跑 Full CV；通过后由 Controller 另行签发 P5.2-B 的 EXP 配置。
+
+#### P5.2-B：Mini 筛选
+
+- 输入：P5.2-A 通过的候选 + 开发受试者固定子集。
+- 输出：3-5 epochs、固定种子与早停规则的 Mini Run 产物。
+- 通过条件：排除明显不可行的架构/输入方案；不形成最终排名。
+- 停止条件：只有通过资源、稳定性和方向性 Gate 的候选进入 Full。
+
+#### P5.2-C：Full 公平比较
+
+- 输入：P5.2-B 通过的候选 + 与 P5.1 相同的受试者隔离原则、记录聚合与主指标。
+- 输出：record macro-F1 + repeated splits 波动、最差受试者、逐类别、校准、参数量、推理时间和训练成本。
+- 通过条件：若神经网络相对 SVM 提升 < 0.005 且稳定性/难例无实质改善，优先保留更简单的 SVM；只有 Reviewer 接受后才冻结 PoPu 总体候选。
+- 停止条件：冻结 PoPu 总体候选并进入 P6。
 
 ### P6 UNKNOWN/REJECT 与错误分析
 
-- 输入：P5.1 冻结候选 + 逐样本预测（含置信度）。
+- 前置：P5.2 完成总体候选选择并冻结后放行；P5.1 传统候选不足以单独作为最终阈值基准。
+- 输入：冻结的总体候选 + 逐样本预测（含置信度）。
 - 输出：confidence 阈值表、UNKNOWN/REJECT 口径、高置信错误个案。
 - 通过条件：阈值仅由验证（开发集 OOF）受试者选择；空床与卧姿、高低置信错误的取舍被明确记录。
 - 停止条件：进入 P7 前完成阈值与错误分析文档。

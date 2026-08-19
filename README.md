@@ -22,7 +22,7 @@ E:\TeamProjects\datasets\smart-topper
 
 ## 当前状态
 
-`WINDOWS-RESEARCH-WORKBENCH / POPU-P5.1-CANDIDATE-FROZEN`
+`WINDOWS-RESEARCH-WORKBENCH / POPU-P5.1-TRADITIONAL-CANDIDATE-FROZEN`
 
 已经完成（均有真实产物与阶段报告）：
 
@@ -33,11 +33,11 @@ E:\TeamProjects\datasets\smart-topper
 - P3.1 Mask 候选策略比较（冻结 `largest_component`）与 P3.2 COCO 区域标注对齐审计（区域监督 HOLD）均已真实运行并记录结论；
 - P4a 无标签逐 snapshot 特征表（51,000 行 × 71 特征）已首轮真实运行；
 - P5 受试者隔离五分类 Baseline（dummy/logreg/rf/knn）已首轮真实运行；`logreg` 为历史首轮领先候选（primary test macro-F1 0.9466），未冻结；
-- P5.1 repeated subject-grouped CV 横向比较已真实运行并冻结 `calibrated_linear_svm` 为 **PoPu research candidate**（7 候选 × top-2 特征消融 × 全量 OOF/record/逐受试者产物；record macro-F1 0.9452，logreg 0.9424 在 margin 内统计平局、由 tie-break 1 胜出；16,097 B，独立重载 smoke OK）。
+- P5.1 repeated subject-grouped CV 横向比较已真实运行并冻结 `calibrated_linear_svm` 为 **传统模型候选**（PoPu research candidate；7 候选 × top-2 特征消融 × 全量 OOF/record/逐受试者产物；record macro-F1 0.9452，logreg 0.9424 在 margin 内统计平局、由 tie-break 1 胜出；16,097 B，独立重载 smoke OK）。该候选是已冻结的传统模型，不是已覆盖 CNN 的总体最优模型。
 
 P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存中保留当前文件与最终的紧凑清单，不会把 5,160 个记录或所有压力矩阵整体载入内存。
 
-尚未完成：P6 UNKNOWN/REJECT 与错误分析、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告。P5.1 已冻结研究候选，但该候选仍须在 P6 设阈值、P7 做软件鲁棒性消融后才能构成 PoPu 参考验证包；P5.1 冻结前不设置 UNKNOWN/REJECT 阈值。
+尚未完成：P5.2 PoPu 神经网络公平比较（P5.2-A CNN 底座与 Smoke / P5.2-B Mini 筛选 / P5.2-C Full 公平比较）、P6 UNKNOWN/REJECT 与错误分析、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告。P5.1 已冻结传统模型候选；下一阶段 P5.2 用神经网络候选与之公平比较，只有 Reviewer 接受并冻结 PoPu 总体候选后才放行 P6 设置 UNKNOWN/REJECT 阈值；P5.2 总体候选冻结前不设置 UNKNOWN/REJECT 阈值。
 
 ## 新的固定定位
 
@@ -60,6 +60,8 @@ P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存�
 详细规则见：
 
 - [项目总状态与阶段入口](docs/PROJECT_STATUS.md)
+- [Codex × Claude Code 协作约定（四层角色 / TASK-ID / EXP-ID）](COLLABORATION_WORKFLOW.md)
+- [实验治理与远程 GPU 执行方案](docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md)
 - [验证 Workflow 总蓝图：有什么、缺什么、怎么验证、能得到什么](docs/VALIDATION_WORKFLOW_MASTER.md)
 - [阶段记录与报告约定](docs/STAGE_REPORTING_CONVENTION.md)
 - [Windows整体方向与研究阶段](docs/WINDOWS_RESEARCH_WORKBENCH_DIRECTION.md)
