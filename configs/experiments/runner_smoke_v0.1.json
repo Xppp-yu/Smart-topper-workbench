@@ -1,0 +1,13 @@
+{
+  "schema_version": "experiment-v0.1",
+  "exp_id": "EXP-RUNNER-DUMMY-SMOKE-20260819-R01",
+  "task_id": "TASK-EXP-RUNNER-B-v0.1",
+  "scope": "smoke",
+  "runner_type": "dummy",
+  "seed": 42,
+  "output_root": "outputs/experiments",
+  "parameters": {
+    "n_samples": 256,
+    "fail": false
+  }
+}

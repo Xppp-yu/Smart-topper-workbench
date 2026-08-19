@@ -26,4 +26,6 @@ outputs/reports/*
 !outputs/reports/.gitkeep
 outputs/models/*
 !outputs/models/.gitkeep
+outputs/experiments/*
+!outputs/experiments/.gitkeep
 
