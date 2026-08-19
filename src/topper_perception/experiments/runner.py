@@ -111,6 +111,21 @@ RUNNER_REGISTRY: dict[str, RunnerFn] = {
 }
 
 
+def _git_gate_passes(git_info: Mapping[str, Any]) -> bool:
+    """Return True only when the worktree is provably clean (fail-closed).
+
+    A mini/full run may be QUEUED only when the repo is present, the Git SHA is a
+    non-empty string, and the worktree is strictly *not* dirty. Anything else —
+    repo missing, sha unknown, dirty unknown — is treated as dirty and refused.
+    """
+    return (
+        git_info.get("repo") is True
+        and isinstance(git_info.get("sha"), str)
+        and bool(git_info.get("sha"))
+        and git_info.get("dirty") is False
+    )
+
+
 def _resolved_config(
     cfg: ExperimentConfig,
     output_root: Path,
@@ -188,10 +203,11 @@ def run_experiment(
     git_provider = git_info_provider or capture_git_info
     git_info = git_provider(project_root)
 
-    if cfg.scope in ("mini", "full") and git_info.get("dirty"):
+    if cfg.scope in ("mini", "full") and not _git_gate_passes(git_info):
         raise DirtyWorktreeError(
-            f"scope={cfg.scope!r} requires a clean Git worktree, but the "
-            f"worktree is dirty (sha={git_info.get('sha')!r})."
+            f"scope={cfg.scope!r} requires a provably clean Git worktree, got "
+            f"repo={git_info.get('repo')!r}, sha={git_info.get('sha')!r}, "
+            f"dirty={git_info.get('dirty')!r}."
         )
 
     system_info = (system_info_provider or capture_system_info)()

@@ -68,11 +68,14 @@ def capture_git_info(project_root: Path) -> dict[str, Any]:
     sha = _git(project_root, "rev-parse", "HEAD")
     branch = _git(project_root, "rev-parse", "--abbrev-ref", "HEAD")
     status = _git(project_root, "status", "--porcelain")
+    # Fail closed: if ``git status`` could not run, the dirty state is unknown
+    # (None) rather than assumed clean, so the mini/full gate refuses the run.
+    dirty = None if status is None else bool(status.strip())
     return {
         "repo": True,
         "sha": sha,
         "branch": branch,
-        "dirty": status is not None and bool(status.strip()),
+        "dirty": dirty,
     }
 
 

@@ -95,6 +95,39 @@ def test_dirty_git_refuses_mini_full(tmp_path: Path) -> None:
     assert not (tmp_path / mini_exp).exists()
 
 
+@pytest.mark.parametrize(
+    "git_info",
+    [
+        {"repo": False, "sha": None, "branch": None, "dirty": None},
+        {"repo": True, "sha": None, "branch": None, "dirty": False},
+        {"repo": True, "sha": "", "branch": None, "dirty": False},
+        {"repo": True, "sha": "d" * 40, "branch": None, "dirty": None},
+        {"repo": None, "sha": "d" * 40, "branch": None, "dirty": False},
+        {"repo": True, "sha": 12345, "branch": None, "dirty": False},
+    ],
+)
+def test_mini_full_gate_fails_closed(tmp_path: Path, git_info) -> None:
+    mini_exp = "EXP-RUNNER-DUMMY-MINI-20260819-R01"
+    config = _config(scope="mini", exp_id=mini_exp)
+    with pytest.raises(DirtyWorktreeError):
+        run_experiment(config, output_root=tmp_path, git_info_provider=lambda _: git_info)
+    assert not (tmp_path / mini_exp).exists()
+
+
+def test_mini_full_gate_passes_when_clean(tmp_path: Path) -> None:
+    def clean_git(_: Path):
+        return {"repo": True, "sha": "d" * 40, "branch": "main", "dirty": False}
+
+    mini_exp = "EXP-RUNNER-DUMMY-MINI-20260819-R01"
+    result = run_experiment(
+        _config(scope="mini", exp_id=mini_exp),
+        output_root=tmp_path,
+        git_info_provider=clean_git,
+    )
+    assert result.state == "SUCCEEDED"
+    assert (tmp_path / mini_exp / "DONE.json").is_file()
+
+
 def test_smoke_allows_dirty_and_records(tmp_path: Path) -> None:
     result = run_experiment(_config(), output_root=tmp_path, git_info_provider=_dirty_git)
     manifest = _read_json(result.experiment_dir / "manifest.json")

@@ -73,6 +73,35 @@ def test_parameters_must_be_object() -> None:
         validate_experiment_config(_valid_config(parameters=[1, 2, 3]))
 
 
+def test_unknown_field_raises() -> None:
+    with pytest.raises(ConfigValidationError):
+        validate_experiment_config(_valid_config(surprise="boom"))
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["schema_version", "exp_id", "task_id", "scope", "runner_type", "output_root"],
+)
+@pytest.mark.parametrize("value", [42, None, True, ["x"]])
+def test_string_fields_reject_non_string(field: str, value) -> None:
+    with pytest.raises(ConfigValidationError):
+        validate_experiment_config(_valid_config(**{field: value}))
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["schema_version", "exp_id", "task_id", "scope", "runner_type", "output_root"],
+)
+def test_string_fields_reject_empty(field: str) -> None:
+    with pytest.raises(ConfigValidationError):
+        validate_experiment_config(_valid_config(**{field: ""}))
+
+
+def test_scope_is_case_sensitive() -> None:
+    with pytest.raises(ConfigValidationError):
+        validate_experiment_config(_valid_config(scope="SMOKE"))
+
+
 @pytest.mark.parametrize(
     "exp_id",
     [

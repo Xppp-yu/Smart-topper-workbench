@@ -86,6 +86,23 @@ def validate_exp_id(exp_id: str) -> None:
         )
 
 
+def _require_nonempty_str(config: Mapping[str, Any], field: str) -> str:
+    """Return ``config[field]`` only when it is a non-empty string.
+
+    Strictly mirrors the JSON Schema ``type: string`` + ``minLength: 1`` — no
+    ``str()`` coercion, so a wrong type (e.g. an int) is rejected, not silently
+    converted.
+    """
+    value = config[field]
+    if not isinstance(value, str):
+        raise ConfigValidationError(
+            f"{field} must be a string; got {type(value).__name__}."
+        )
+    if value == "":
+        raise ConfigValidationError(f"{field} must be a non-empty string.")
+    return value
+
+
 def validate_experiment_config(config: Mapping[str, Any]) -> ExperimentConfig:
     """Validate a raw config mapping and return a frozen :class:`ExperimentConfig`."""
     if not isinstance(config, Mapping):
@@ -95,24 +112,26 @@ def validate_experiment_config(config: Mapping[str, Any]) -> ExperimentConfig:
     if missing:
         raise ConfigValidationError(f"Config missing required fields: {missing}")
 
-    schema_version = str(config["schema_version"])
+    unknown = [key for key in config if key not in REQUIRED_FIELDS]
+    if unknown:
+        raise ConfigValidationError(f"Config contains unknown fields: {unknown}")
+
+    schema_version = _require_nonempty_str(config, "schema_version")
     if schema_version != SCHEMA_VERSION:
         raise ConfigValidationError(
             f"Unsupported schema_version {schema_version!r}; expected {SCHEMA_VERSION!r}."
         )
 
-    exp_id = str(config["exp_id"])
+    exp_id = _require_nonempty_str(config, "exp_id")
     validate_exp_id(exp_id)
 
-    task_id = str(config["task_id"]).strip()
-    if not task_id:
-        raise ConfigValidationError("task_id must be a non-empty string.")
+    task_id = _require_nonempty_str(config, "task_id")
 
-    scope = str(config["scope"]).lower()
+    scope = _require_nonempty_str(config, "scope")
     if scope not in SCOPES:
         raise ConfigValidationError(f"scope must be one of {SCOPES}; got {scope!r}.")
 
-    runner_type = str(config["runner_type"]).lower()
+    runner_type = _require_nonempty_str(config, "runner_type")
     if runner_type not in RUNNER_TYPES:
         raise ConfigValidationError(
             f"Unknown runner_type {runner_type!r}; known: {sorted(RUNNER_TYPES)}."
@@ -122,9 +141,7 @@ def validate_experiment_config(config: Mapping[str, Any]) -> ExperimentConfig:
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ConfigValidationError("seed must be an integer.")
 
-    output_root = str(config["output_root"]).strip()
-    if not output_root:
-        raise ConfigValidationError("output_root must be a non-empty string.")
+    output_root = _require_nonempty_str(config, "output_root")
 
     parameters = config["parameters"]
     if not isinstance(parameters, Mapping):
