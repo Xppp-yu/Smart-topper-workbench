@@ -137,6 +137,20 @@ def test_subject_split_no_overlap() -> None:
         )
 
 
+def test_subject_split_honors_zero_holdout_and_rejects_empty_train() -> None:
+    no_holdout = subject_split(
+        ["s1", "s2"], val_ratio=0.0, test_ratio=0.0, shuffle=False
+    )
+    assert no_holdout.train_subjects == ("s1", "s2")
+    assert no_holdout.val_subjects == ()
+    assert no_holdout.test_subjects == ()
+
+    with pytest.raises(ValueError, match="no training subjects"):
+        subject_split(
+            ["s1", "s2"], val_ratio=0.4, test_ratio=0.4, shuffle=False
+        )
+
+
 def test_normalizer_fits_train_only() -> None:
     rng = np.random.default_rng(0)
     train = rng.normal(10.0, 3.0, size=(100, ROWS, COLS)).astype(np.float32)
@@ -158,6 +172,16 @@ def test_normalizer_fits_train_only() -> None:
     assert np.allclose(out_val, (val - normalizer.mean_) / normalizer.std_)
 
 
+def test_normalizer_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="positive finite"):
+        MatrixNormalizer(epsilon=0.0)
+    with pytest.raises(ValueError, match="must not be empty"):
+        MatrixNormalizer().fit(np.array([], dtype=np.float32))
+    normalizer = MatrixNormalizer().fit(np.ones((1, ROWS, COLS), dtype=np.float32))
+    with pytest.raises(ValueError, match="must be finite"):
+        normalizer.transform(np.full((1, ROWS, COLS), np.nan, dtype=np.float32))
+
+
 def test_horizontal_flip_swaps_left_and_right() -> None:
     rng = np.random.default_rng(1)
     x = rng.normal(size=(4, 1, ROWS, COLS)).astype(np.float32)
@@ -169,6 +193,16 @@ def test_horizontal_flip_swaps_left_and_right() -> None:
     assert np.array_equal(flipped[..., 0], x[..., -1])
     assert np.array_equal(flipped[..., -1], x[..., 0])
     assert flipped_labels.tolist() == [4, 3, 0, 2]
+    assert flipped.flags.c_contiguous
+
+
+def test_horizontal_flip_rejects_wrong_geometry_and_label_count() -> None:
+    with pytest.raises(ValueError, match="Expected matrix geometry"):
+        horizontal_flip(np.zeros((2, 1, 32, COLS), dtype=np.float32))
+    with pytest.raises(ValueError, match="one label per matrix"):
+        horizontal_flip(
+            np.zeros((2, 1, ROWS, COLS), dtype=np.float32), np.array([3])
+        )
 
 
 def test_flip_labels_leaves_non_side_postures_unchanged() -> None:

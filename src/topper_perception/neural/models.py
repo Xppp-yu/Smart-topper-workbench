@@ -184,7 +184,10 @@ def build_model(config: Mapping[str, Any]) -> nn.Module:
     """
     validate_model_config(config)
     model_cls = MODEL_REGISTRY[config["name"]]
-    params = dict(config.get("params", {}))
+    raw_params = config.get("params", {})
+    if not isinstance(raw_params, Mapping):
+        raise ValueError("Model params must be a mapping.")
+    params = dict(raw_params)
     try:
         return model_cls(**params)
     except (TypeError, ValueError) as exc:

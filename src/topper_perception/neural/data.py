@@ -150,8 +150,10 @@ def subject_split(
     unique = sorted({str(s) for s in subject_ids})
     if val_ratio < 0 or test_ratio < 0 or val_ratio + test_ratio >= 1:
         raise ValueError("val_ratio and test_ratio must be >= 0 and sum < 1.")
-    if len(unique) < 2:
-        raise ValueError("At least two subjects are required for a subject split.")
+    if not unique:
+        raise ValueError("At least one subject is required for a subject split.")
+    if (val_ratio > 0 or test_ratio > 0) and len(unique) < 2:
+        raise ValueError("At least two subjects are required when creating a holdout split.")
 
     order = list(unique)
     if shuffle:
@@ -159,8 +161,13 @@ def subject_split(
             raise ValueError("A seed is required when shuffle=True.")
         order = [str(s) for s in np.random.RandomState(seed).permutation(order)]
 
-    n_test = int(round(len(order) * test_ratio)) if test_ratio > 0 else 0
-    n_val = max(1, int(round(len(order) * val_ratio)))
+    n_test = max(1, int(round(len(order) * test_ratio))) if test_ratio > 0 else 0
+    n_val = max(1, int(round(len(order) * val_ratio))) if val_ratio > 0 else 0
+    if n_test + n_val >= len(order):
+        raise ValueError(
+            "Holdout ratios leave no training subjects; reduce val_ratio/test_ratio "
+            "or provide more subjects."
+        )
     test_subjects = tuple(order[:n_test])
     val_subjects = tuple(order[n_test : n_test + n_val])
     train_subjects = tuple(order[n_test + n_val :])
@@ -203,12 +210,16 @@ class MatrixNormalizer:
 
     def __init__(self, *, epsilon: float = 1e-8) -> None:
         self.epsilon = float(epsilon)
+        if not np.isfinite(self.epsilon) or self.epsilon <= 0:
+            raise ValueError("epsilon must be a positive finite number.")
         self.mean_: float | None = None
         self.std_: float | None = None
 
     def fit(self, x: NDArray[np.floating]) -> "MatrixNormalizer":
         """Compute scalar mean/std from ``x`` (train) and freeze them."""
         array = np.asarray(x, dtype=np.float32)
+        if array.size == 0:
+            raise ValueError("Normalization input must not be empty.")
         if not np.isfinite(array).all():
             raise ValueError("Normalization input must be finite.")
         self.mean_ = float(np.mean(array))
@@ -221,6 +232,8 @@ class MatrixNormalizer:
         if self.mean_ is None or self.std_ is None:
             raise RuntimeError("MatrixNormalizer must be fit before transform.")
         array = np.asarray(x, dtype=np.float32)
+        if not np.isfinite(array).all():
+            raise ValueError("Normalization input must be finite.")
         return ((array - self.mean_) / self.std_).astype(np.float32)
 
     def fit_transform(self, x: NDArray[np.floating]) -> NDArray[np.float32]:
@@ -252,7 +265,16 @@ def horizontal_flip(
     x = np.asarray(matrices, dtype=np.float32)
     if x.ndim not in (3, 4):
         raise ValueError("Matrices must be [N, H, W] or [N, 1, H, W].")
-    flipped = np.flip(x, axis=-1)
+    expected_tail = (MATRIX_ROWS, MATRIX_COLUMNS)
+    if tuple(x.shape[-2:]) != expected_tail or (x.ndim == 4 and x.shape[1] != 1):
+        raise ValueError(
+            f"Expected matrix geometry [N, {MATRIX_ROWS}, {MATRIX_COLUMNS}] or "
+            f"[N, 1, {MATRIX_ROWS}, {MATRIX_COLUMNS}], got {x.shape}."
+        )
+    if labels is not None and np.asarray(labels).shape != (x.shape[0],):
+        raise ValueError("labels must contain exactly one label per matrix.")
+    # np.flip returns a negative-stride view, which torch.from_numpy rejects.
+    flipped = np.flip(x, axis=-1).copy()
     flipped_labels = flip_labels(labels) if labels is not None else None
     return flipped, flipped_labels
 
@@ -272,8 +294,12 @@ def to_model_input(
             raise ValueError(
                 f"Expected a {MATRIX_ROWS}x{MATRIX_COLUMNS} matrix, got {matrix.shape}."
             )
+        if sample.posture not in LABEL_TO_INDEX:
+            raise ValueError(f"Unknown posture label {sample.posture!r}.")
         matrices.append(matrix[np.newaxis, :, :])
         labels.append(LABEL_TO_INDEX[sample.posture])
+    if not matrices:
+        raise ValueError("At least one labeled sample is required.")
     x = np.stack(matrices).astype(np.float32)
     y = np.asarray(labels, dtype=np.int64)
     return x, y

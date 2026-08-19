@@ -70,6 +70,8 @@ def test_illegal_params_raise() -> None:
         build_model({"name": "tiny_cnn", "params": {"channels": []}})
     with pytest.raises(ValueError):
         build_model({"name": "small_resnet", "params": {"num_blocks": 0}})
+    with pytest.raises(ValueError, match="params must be a mapping"):
+        build_model({"name": "tiny_cnn", "params": None})
 
 
 @pytest.mark.parametrize("model_cls", MODEL_CLASSES)
