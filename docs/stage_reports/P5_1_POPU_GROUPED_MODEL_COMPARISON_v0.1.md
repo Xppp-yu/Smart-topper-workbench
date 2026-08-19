@@ -4,6 +4,8 @@
 
 **状态：COMPLETE — CANDIDATE_FROZEN（在 P4a 特征表上以 repeated subject-grouped CV 完成 7 候选横向比较、特征消融，并冻结 `calibrated_linear_svm` 为 PoPu research candidate）。**
 
+> **2026-08-19 治理更新：** 本报告保留 P5.1 运行当时的结果、状态和“P6 放行”判断作为历史证据。后续路线已新增 P5.2 神经网络公平比较，因此本报告中的 P6 放行结论已被当前治理口径取代。P5.1 现定位为“传统模型候选已冻结”，P6 须等待 P5.2 完成总体候选选择。当前状态以 [`docs/PROJECT_STATUS.md`](../PROJECT_STATUS.md) 为准。
+
 本阶段回答「P5 v0.1 的首轮领先候选 `logreg` 在更严格的受试者隔离口径（重复分组交叉验证）下是否成立；7 个候选按既定选择阶梯谁胜出；哪些特征组贡献最大；能否把胜者冻结成可独立加载的研究候选」。评价协议、选择规则、特征消融、候选冻结全部先冻结到版本化配置 [popu_model_comparison_p5_1_v0.1.json](../../configs/experiments/popu_model_comparison_p5_1_v0.1.json)，再在真实全量数据上执行。
 
 结论措辞仅为「**PoPu 研究候选（research candidate）**」：公开数据上的研究阶段结果，不是产品模型、不是外部验证模型、不构成自研硬件或闭环效果的任何声明。

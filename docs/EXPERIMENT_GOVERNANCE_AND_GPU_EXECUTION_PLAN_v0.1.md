@@ -219,7 +219,7 @@ Mixed Precision 是 Runner 的配置项，不是默认结论：支持时优先 B
 | 本地/网络存储 | 500GB 起步，需要保留多模态缓存和多个 checkpoint 时 1TB |
 | 适用 | SLP RGB/IR/depth/pressure 融合、PressurePose 3D、较大 batch、较大超参搜索 |
 
-如果只允许保存一套“基本覆盖全部后续研究”的服务器模板，选 **L40S 48GB + 16 vCPU + 96GB RAM + 500GB 持久网络卷**。如果追求多数实验的速度/价格比，默认开 **RTX 4090 24GB**，仅在显存或多模态任务触发升级条件时切换 48GB 模板。
+当前决定先使用 AutoDL。首次实例选 **RTX 4090 24GB + 至少 8 vCPU（优先 12-16）+ 至少 32GB RAM（优先 64GB）**；PoPu 阶段先用平台默认免费数据盘。仅在显存或多模态任务触发升级条件时，再从 AutoDL 当时的算力市场选择 32GB/48GB/80GB 档，不提前长期占用高价实例。
 
 ### 9.2 何时升级 24GB -> 48GB
 
@@ -234,26 +234,25 @@ Mixed Precision 是 Runner 的配置项，不是默认结论：支持时优先 B
 
 ## 10. 当前价格快照与预算
 
-以下只用于 2026-08-19 的预算估算，部署前必须在控制台重新确认。RunPod 当前页面列出的 Pod 参考价包括：RTX 4090 24GB `$0.69/h`、RTX A6000 48GB `$0.53/h`、L40S 48GB `$0.99/h`、A100 PCIe 80GB `$1.39/h`。不同地区、库存和 Secure/Community 类型可能不同。
+以下只用于 2026-08-19 的 AutoDL 预算估算，创建实例前必须在算力市场重新确认。AutoDL 官网当前展示的参考价包括：RTX 3090 24GB `¥1.32/h`、RTX 4090 24GB `¥1.88/h`、RTX 5090 32GB `¥2.78/h`、A800 80GB `¥4.98/h`、H20 96GB `¥7.58/h`。不同地区、主机、库存和会员折扣可能不同。
 
-按 `1 USD ≈ 6.79 CNY` 粗略折算：
+| GPU | 参考价/小时 | 100 GPU 小时约成本 | 当前用途 |
+|---|---:|---:|---|
+| RTX 3090 24GB | ¥1.32 | ¥132 | 低价兼容/非紧急实验 |
+| RTX 4090 24GB | ¥1.88 | ¥188 | 当前 PoPu CNN 默认选择 |
+| RTX 5090 32GB | ¥2.78 | ¥278 | 24GB OOM 或吞吐实测值得升级时 |
+| A800 80GB | ¥4.98 | ¥498 | 48GB 以下仍无法容纳的重任务 |
+| H20 96GB | ¥7.58 | ¥758 | 当前阶段不默认使用 |
 
-| GPU | 约人民币/小时 | 100 GPU 小时约成本 |
-|---|---:|---:|
-| RTX A6000 48GB | ¥3.60 | ¥360 |
-| RTX 4090 24GB | ¥4.69 | ¥469 |
-| L40S 48GB | ¥6.72 | ¥672 |
-| A100 PCIe 80GB | ¥9.44 | ¥944 |
+这不是性能或可用性保证。首次不为“可能将来需要”购买 80GB/96GB 卡；先用 4090 测量显存、每 epoch 时间和数据加载利用率，再按 Gate 升级。
 
-这不是性能排序。A6000 显存大但架构更老；4090 通常更适合追求单卡训练吞吐；L40S 提供 48GB 和更完整的重任务余量。
-
-RunPod 网络卷低于 1TB 的标价为 `$0.07/GB/月`，500GB 约 `$35/月`，即约 ¥238/月。**关掉 GPU 不代表持久存储停止计费**；停止的 Pod volume 甚至可能按更高费率计费。建议使用独立 network volume，关键结果同步回本地后删除不再需要的云端缓存。
+AutoDL 主机通常提供免费 50GB 数据盘；付费扩容数据盘即使实例关机也继续按日计费，官网文档给出的会员参考价约为 `¥0.0066/GB/日`，实际以主机页面为准。PoPu 阶段不扩容；SLP/PressurePose 分片确定后再扩到满足数据、缓存和 checkpoint 的容量。重要产物必须同步回本地，不能把实例本地盘当永久备份。
 
 首轮预算建议：
 
-- 账户首充/硬上限：¥300-500；
+- 账户首次充值/硬上限：¥100；
 - 先做 5-10 小时 PoPu P5.2 远程试跑，测出每折/每 epoch 实际时间和显存；
-- 根据测量结果计算 Full CV 预算，再决定 4090 还是 48GB；
+- 根据测量结果计算 Full CV 预算，再决定继续 4090 还是升级显存档；
 - 单个实验必须配置预计最长时长、checkpoint、失败退出和完成后关机/终止提醒。
 
 ## 11. 云端数据与执行方式
@@ -262,13 +261,13 @@ RunPod 网络卷低于 1TB 的标价为 `$0.07/GB/月`，500GB 约 `$35/月`，�
 本地只读 raw datasets
     -> 版本化 Manifest + 校验哈希
     -> 可追溯训练分片/缓存
-    -> 一次上传到持久卷
+    -> 一次上传到 AutoDL 数据盘
     -> 拉取指定 Git SHA / 容器镜像
     -> run_experiment.py --config <EXP-ID>.yaml
     -> 后台训练 + checkpoint + status
     -> 同步 metrics/plots/predictions/checkpoints 回本地
     -> Codex 只读 Review
-    -> 关闭 GPU，按保留策略清理云端缓存
+    -> 关闭实例，按保留策略清理付费数据盘和云端缓存
 ```
 
 要求：
@@ -343,10 +342,11 @@ Batch C 通过后，由 Controller 另行签发 P5.2-B 的 EXP 配置；Runner �
 
 ## 14. 参考来源
 
-- RunPod GPU 价格（部署前重新核对）：https://www.runpod.io/pricing
-- RunPod Pod 与存储计费：https://docs.runpod.io/pods/pricing
-- RunPod 存储类型：https://docs.runpod.io/pods/storage/types
+- AutoDL 当前 GPU 参考价格（部署前重新核对）：https://www.autodl.com/
+- AutoDL 实例与付费数据盘计费：https://www.autodl.com/docs/price/
+- AutoDL 本地数据盘：https://www.autodl.com/docs/local_disk/
+- AutoDL 无卡模式与自动关机：https://www.autodl.com/docs/save_money/
+- AutoDL 基础镜像版本：https://www.autodl.com/docs/base_config/
 - NVIDIA RTX 4090 规格（24GB）：https://www.nvidia.com/en-eu/geforce/graphics-cards/40-series/rtx-4090/
 - NVIDIA RTX A6000 规格（48GB ECC）：https://www.nvidia.com/en-gb/products/workstations/rtx-a6000/
 - NVIDIA L40S 规格（48GB）：https://www.nvidia.com/es-la/data-center/l40s/
-- 中国银行外汇牌价（人民币估算参考）：https://www.boc.cn/cn/common/whpj.html
