@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from topper_perception.experiments import contracts
 from topper_perception.experiments.runner import (
@@ -109,7 +110,8 @@ def test_smoke_runs_and_writes_artifacts(tmp_path: Path) -> None:
     assert model["resume_ok"] is True
     assert model["reload_prediction_consistent"] is True
     assert result["reproducible_seed"] is True
-    assert result["cuda_available"] is False
+    assert result["device"] == "cpu"
+    assert result["cuda_available"] is torch.cuda.is_available()
     assert set(result["train_class_counts_before_augmentation"]) == {
         "empty", "supine", "prone", "left", "right"
     }
