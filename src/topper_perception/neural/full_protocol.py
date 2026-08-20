@@ -182,6 +182,51 @@ CALIBRATION_ECE_WEIGHTING = (
 )
 CALIBRATION_ROW_SUM_TOLERANCE = 1e-6
 
+# ---------------------------------------------------------------------------
+# Additional frozen config fields (cross-checked in validate_full_config)
+# ---------------------------------------------------------------------------
+
+#: Top-level global seed (independent of the outer fold seeds).
+SEED = 42
+
+#: Frozen outer fair-evaluation protocol kind and shuffle flag.
+OUTER_KIND = "repeated_subject_grouped_cv"
+OUTER_SHUFFLE = True
+
+#: Frozen split-manifest switch and the exact (ordered) field list.
+SPLIT_MANIFEST_PRODUCE = True
+SPLIT_MANIFEST_FIELDS: tuple[str, ...] = (
+    "repeat",
+    "outer_seed",
+    "local_fold",
+    "outer_train_subjects",
+    "outer_test_subjects",
+    "inner_train_subjects",
+    "inner_validation_subjects",
+    "inner_seed",
+    "inner_validation_fold",
+    "stage_a_train_seed",
+    "stage_b_refit_seed",
+)
+
+#: Frozen Stage A / Stage B markers and their frozen scope prose.
+INNER_STAGE = "A"
+INNER_SEED_DERIVATION = (
+    "inner_seed(repeat, local_fold) = 1000000 + OUTER_SEEDS[repeat]*100 + local_fold"
+    "（纯算术，无 Python hash()、无进程随机）"
+)
+INNER_VALIDATION_FOLD_RULE = "local_fold % inner_n_splits"
+
+OUTER_REFIT_STAGE = "B"
+OUTER_REFIT_TRAIN_SUBJECTS = "all outer-train subjects"
+OUTER_REFIT_NORMALIZATION_SCOPE = "仅在全部 outer-train 受试者上重新 fit"
+OUTER_REFIT_FLIP_AUGMENTATION_SCOPE = "仅 outer training"
+
+#: Frozen final-selection tie-break ladder and NN-vs-SVM thresholds.
+TIE_BREAK: tuple[str, ...] = ("record_balanced_acc_mean", "worst_subject_macro_f1_mean")
+NEURAL_WINS_IF_ABOVE_SVM_BY_MORE_THAN = SELECTION_MARGIN
+REQUIRES_NOT_TRAILING_SVM_BY_MORE_THAN = SELECTION_MARGIN
+
 
 @dataclass(frozen=True, slots=True)
 class FullCandidateResult:
@@ -202,6 +247,19 @@ def _require_equal(actual: Any, expected: Any, label: str) -> None:
     if actual != expected:
         raise ValueError(
             f"Full protocol violation: {label} is {actual!r}, expected {expected!r}."
+        )
+
+
+def _require_bool(value: Any, expected: bool, label: str) -> None:
+    """Fail closed unless ``value`` is the literal bool ``expected``.
+
+    Uses ``is`` (not ``bool()``) so ``"false"``, ``"true"``, ``1`` and any other
+    truthy-but-wrong type fail closed instead of silently passing.
+    """
+    if value is not expected:
+        raise ValueError(
+            f"Full protocol violation: {label} is {value!r}, expected "
+            f"{expected!r} (strict bool)."
         )
 
 
@@ -265,6 +323,8 @@ def validate_calibration_probabilities(
     1 within ``CALIBRATION_ROW_SUM_TOLERANCE``. Also checks ``len(probs) ==
     len(labels)`` and that every label is an integer class index inside its row.
     """
+    if len(probs) == 0:
+        raise ValueError("Full protocol violation: calibration probability rows are empty.")
     if len(probs) != len(labels):
         raise ValueError(
             f"Full protocol violation: {len(probs)} prob rows vs {len(labels)} labels."
@@ -343,8 +403,13 @@ def record_ece(
     ``confidence = max(p)``, ``correct = (argmax(p) == label)``. Bins are
     left-closed right-open over ``[0, 1]``; the final bin also includes 1.0.
     ECE is the sample-proportion-weighted mean of ``abs(accuracy - confidence)``
-    per bin.
+    per bin. ``n_bins`` is frozen to ``CALIBRATION_ECE_BINS``.
     """
+    if n_bins != CALIBRATION_ECE_BINS:
+        raise ValueError(
+            f"Full protocol violation: ECE n_bins is {n_bins}, expected "
+            f"{CALIBRATION_ECE_BINS}."
+        )
     validate_calibration_probabilities(probs, labels)
     counts = [0] * n_bins
     correct_sums = [0.0] * n_bins
@@ -410,10 +475,14 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
 
     _require_equal(config.get("scope"), "full", "scope")
     _require_equal(config.get("runner_type"), "popu_neural_full", "runner_type")
+    _require_equal(config.get("seed"), SEED, "seed")
 
     manifests = config.get("data_manifests")
     if not isinstance(manifests, list) or len(manifests) != 1:
         raise ValueError("Full config must pin exactly one data_manifests entry.")
+    _require_equal(
+        manifests[0].get("path"), QUALITY_MANIFEST_PATH, "data_manifests[0].path"
+    )
     pinned_sha = str(manifests[0].get("sha256", "")).lower()
     _require_equal(pinned_sha, QUALITY_MANIFEST_SHA256, "data_manifests[0].sha256")
 
@@ -421,7 +490,11 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
     if not isinstance(params, Mapping):
         raise ValueError("Full config parameters must be a mapping.")
 
+    _require_equal(params.get("dataset"), DATASET, "parameters.dataset")
     _require_equal(params.get("cohort"), COHORT, "parameters.cohort")
+    _require_equal(
+        params.get("quality_manifest"), QUALITY_MANIFEST_PATH, "parameters.quality_manifest"
+    )
     _require_equal(
         str(params.get("quality_manifest_sha256", "")).lower(),
         QUALITY_MANIFEST_SHA256,
@@ -448,22 +521,51 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
         "candidates.frozen_svm_reference",
     )
 
-    # The SVM is a frozen reference: it must NOT appear among the (trained) model_configs.
-    model_configs = params.get("model_configs", [])
-    model_names = [entry["name"] for entry in model_configs]
-    _require_equal(model_names, list(NEURAL_CANDIDATES), "parameters.model_configs names")
+    # The SVM is a frozen reference: it must NOT appear among the (trained)
+    # model_configs, which must equal the three candidates exactly (name + empty params).
+    model_configs = params.get("model_configs")
+    if not isinstance(model_configs, list):
+        raise ValueError("Full config parameters.model_configs must be a list.")
+    _require_equal(
+        model_configs,
+        [{"name": name, "params": {}} for name in NEURAL_CANDIDATES],
+        "parameters.model_configs",
+    )
 
     outer = params.get("evaluation_protocol")
     if not isinstance(outer, Mapping):
         raise ValueError("Full config parameters.evaluation_protocol is required.")
+    _require_equal(outer.get("kind"), OUTER_KIND, "evaluation_protocol.kind")
     _require_equal(outer.get("group"), GROUP_KEY, "evaluation_protocol.group")
     _require_equal(int(outer.get("n_splits")), N_SPLITS, "evaluation_protocol.n_splits")
     _require_equal(int(outer.get("n_repeats")), N_REPEATS, "evaluation_protocol.n_repeats")
     _require_equal(list(outer.get("seeds", [])), list(OUTER_SEEDS), "evaluation_protocol.seeds")
+    _require_bool(outer.get("shuffle"), OUTER_SHUFFLE, "evaluation_protocol.shuffle")
+
+    split_manifest = params.get("split_manifest")
+    if not isinstance(split_manifest, Mapping):
+        raise ValueError("Full config parameters.split_manifest is required.")
+    _require_bool(
+        split_manifest.get("produce"), SPLIT_MANIFEST_PRODUCE, "split_manifest.produce"
+    )
+    _require_equal(
+        tuple(split_manifest.get("fields", [])), SPLIT_MANIFEST_FIELDS, "split_manifest.fields"
+    )
 
     inner = params.get("inner_epoch_selection")
     if not isinstance(inner, Mapping):
         raise ValueError("Full config parameters.inner_epoch_selection is required.")
+    _require_equal(inner.get("stage"), INNER_STAGE, "inner_epoch_selection.stage")
+    _require_equal(
+        inner.get("inner_seed_derivation"),
+        INNER_SEED_DERIVATION,
+        "inner_epoch_selection.inner_seed_derivation",
+    )
+    _require_equal(
+        inner.get("inner_validation_fold_rule"),
+        INNER_VALIDATION_FOLD_RULE,
+        "inner_epoch_selection.inner_validation_fold_rule",
+    )
     _require_equal(int(inner.get("inner_n_splits")), INNER_N_SPLITS, "inner_epoch_selection.inner_n_splits")
     _require_equal(int(inner.get("max_epochs")), MAX_EPOCHS, "inner_epoch_selection.max_epochs")
     _require_equal(int(inner.get("min_epochs")), MIN_EPOCHS, "inner_epoch_selection.min_epochs")
@@ -478,16 +580,52 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
         "inner_epoch_selection.optimizer.weight_decay",
     )
 
+    outer_refit = params.get("outer_refit")
+    if not isinstance(outer_refit, Mapping):
+        raise ValueError("Full config parameters.outer_refit is required.")
+    _require_equal(outer_refit.get("stage"), OUTER_REFIT_STAGE, "outer_refit.stage")
+    _require_bool(outer_refit.get("best_epoch_from_stage_a"), True, "outer_refit.best_epoch_from_stage_a")
+    _require_bool(outer_refit.get("reinit"), True, "outer_refit.reinit")
+    _require_bool(outer_refit.get("train_fixed_best_epoch"), True, "outer_refit.train_fixed_best_epoch")
+    _require_bool(
+        outer_refit.get("infer_once_on_outer_test"), True, "outer_refit.infer_once_on_outer_test"
+    )
+    _require_equal(
+        outer_refit.get("train_subjects"),
+        OUTER_REFIT_TRAIN_SUBJECTS,
+        "outer_refit.train_subjects",
+    )
+    _require_equal(
+        outer_refit.get("normalization_scope"),
+        OUTER_REFIT_NORMALIZATION_SCOPE,
+        "outer_refit.normalization_scope",
+    )
+    _require_equal(
+        outer_refit.get("flip_augmentation_scope"),
+        OUTER_REFIT_FLIP_AUGMENTATION_SCOPE,
+        "outer_refit.flip_augmentation_scope",
+    )
+
     resources = params.get("resources_and_stop")
     if not isinstance(resources, Mapping):
         raise ValueError("Full config parameters.resources_and_stop is required.")
     _require_equal(resources.get("device"), DEVICE, "resources_and_stop.device")
-    _require_equal(bool(resources.get("amp_enabled")), AMP_ENABLED, "resources_and_stop.amp_enabled")
+    _require_bool(
+        resources.get("amp_enabled"), AMP_ENABLED, "resources_and_stop.amp_enabled"
+    )
     _require_equal(int(resources.get("max_cuda_mb")), MAX_CUDA_MB, "resources_and_stop.max_cuda_mb")
     _require_equal(
         int(resources.get("max_total_train_seconds")),
         MAX_TOTAL_TRAIN_SECONDS,
         "resources_and_stop.max_total_train_seconds",
+    )
+    _require_bool(
+        resources.get("resume_without_overwriting_completed_folds"),
+        True,
+        "resources_and_stop.resume_without_overwriting_completed_folds",
+    )
+    _require_bool(
+        resources.get("run_in_screen_tmux"), True, "resources_and_stop.run_in_screen_tmux"
     )
 
     selection = params.get("model_selection")
@@ -495,7 +633,26 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
         raise ValueError("Full config parameters.model_selection is required.")
     _require_equal(selection.get("criterion"), SELECTION_CRITERION, "model_selection.criterion")
     _require_equal(float(selection.get("margin")), SELECTION_MARGIN, "model_selection.margin")
-    improvement = selection.get("neural_vs_svm", {}).get("substantial_improvement", {})
+    _require_equal(tuple(selection.get("tie_break", [])), TIE_BREAK, "model_selection.tie_break")
+    neural_vs_svm = selection.get("neural_vs_svm", {})
+    if not isinstance(neural_vs_svm, Mapping):
+        raise ValueError("Full config parameters.model_selection.neural_vs_svm is required.")
+    _require_bool(
+        neural_vs_svm.get("default_prefer_svm_within_margin"),
+        True,
+        "model_selection.neural_vs_svm.default_prefer_svm_within_margin",
+    )
+    _require_equal(
+        float(neural_vs_svm.get("neural_wins_if_above_svm_by_more_than")),
+        NEURAL_WINS_IF_ABOVE_SVM_BY_MORE_THAN,
+        "model_selection.neural_vs_svm.neural_wins_if_above_svm_by_more_than",
+    )
+    _require_equal(
+        float(neural_vs_svm.get("requires_not_trailing_svm_by_more_than")),
+        REQUIRES_NOT_TRAILING_SVM_BY_MORE_THAN,
+        "model_selection.neural_vs_svm.requires_not_trailing_svm_by_more_than",
+    )
+    improvement = neural_vs_svm.get("substantial_improvement", {})
     _require_equal(
         float(improvement.get("worst_subject_macro_f1_absolute_gain")),
         SUBSTANTIAL_WORST_SUBJECT_F1,
@@ -516,6 +673,11 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
         COMPLEXITY_PRIORITY,
         "model_selection.complexity_priority",
     )
+    _require_bool(
+        selection.get("no_freeze_until_reviewer_accepts"),
+        True,
+        "model_selection.no_freeze_until_reviewer_accepts",
+    )
 
     # Frozen training parameters (identical across the three NN candidates).
     training = params.get("training_params")
@@ -525,13 +687,13 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
     _require_equal(int(training.get("num_workers")), NUM_WORKERS, "training_params.num_workers")
     _require_equal(training.get("loss"), LOSS, "training_params.loss")
     _require_equal(training.get("optimizer"), OPTIMIZER, "training_params.optimizer")
-    _require_equal(
-        bool(training.get("deterministic_cudnn")),
+    _require_bool(
+        training.get("deterministic_cudnn"),
         DETERMINISTIC_CUDNN,
         "training_params.deterministic_cudnn",
     )
-    _require_equal(
-        bool(training.get("cudnn_benchmark")),
+    _require_bool(
+        training.get("cudnn_benchmark"),
         CUDNN_BENCHMARK,
         "training_params.cudnn_benchmark",
     )
@@ -556,13 +718,13 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
         STAGE_B_REFIT_SEED_FORMULA,
         "training_seeds.stage_b_refit_seed",
     )
-    _require_equal(
-        bool(seeds.get("reset_seed_before_each_candidate")),
+    _require_bool(
+        seeds.get("reset_seed_before_each_candidate"),
         True,
         "training_seeds.reset_seed_before_each_candidate",
     )
-    _require_equal(
-        bool(seeds.get("all_candidates_share_same_derived_seed")),
+    _require_bool(
+        seeds.get("all_candidates_share_same_derived_seed"),
         True,
         "training_seeds.all_candidates_share_same_derived_seed",
     )
@@ -587,14 +749,26 @@ def validate_full_config(config: Mapping[str, Any]) -> None:
         CALIBRATION_BRIER_FORMULA,
         "calibration.record_brier",
     )
+    _require_equal(
+        calibration.get("ece_confidence"), CALIBRATION_ECE_CONFIDENCE, "calibration.ece_confidence"
+    )
+    _require_equal(
+        calibration.get("ece_correct"), CALIBRATION_ECE_CORRECT, "calibration.ece_correct"
+    )
     _require_equal(int(calibration.get("ece_bins")), CALIBRATION_ECE_BINS, "calibration.ece_bins")
+    _require_equal(
+        calibration.get("ece_binning"), CALIBRATION_ECE_BINNING, "calibration.ece_binning"
+    )
+    _require_equal(
+        calibration.get("ece_weighting"), CALIBRATION_ECE_WEIGHTING, "calibration.ece_weighting"
+    )
     _require_equal(
         float(calibration.get("row_sum_tolerance")),
         CALIBRATION_ROW_SUM_TOLERANCE,
         "calibration.row_sum_tolerance",
     )
-    _require_equal(
-        bool(calibration.get("diagnostic_only_not_ranking")),
+    _require_bool(
+        calibration.get("diagnostic_only_not_ranking"),
         True,
         "calibration.diagnostic_only_not_ranking",
     )
@@ -647,7 +821,8 @@ def select_full_winner(
     in range (NaN/Inf fails closed); (1) gate/evidence failures are excluded;
     (2) primary metric is ``record_macro_f1_mean``; (3) near-tie within ``margin``;
     (4) tie-break ladder ``record_balanced_acc_mean`` then
-    ``worst_subject_macro_f1_mean`` then the fixed ``complexity_priority``;
+    ``worst_subject_macro_f1_mean`` then ``record_macro_f1_mean`` then the fixed
+    ``complexity_priority`` (which fires only when all three metrics tie);
     (5) within a near-tie the SVM is preferred unless a neural candidate shows a
     pre-registered substantive improvement; (6)/(7) calibration/params/inference/
     training never alter ranking, and no freeze happens here. Returns the winning
@@ -709,6 +884,7 @@ def select_full_winner(
         key=lambda c: (
             c.record_balanced_acc_mean,
             c.worst_subject_macro_f1_mean,
+            c.record_macro_f1_mean,
             _complexity_priority_score(c.model),
         ),
     )

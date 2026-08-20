@@ -113,7 +113,7 @@ stage_b_refit_seed(repeat, fold) = 3_000_000 + outer_seed(repeat) * 100 + local_
 1. gate/evidence 失败者排除；
 2. 主准则 = `record_macro_f1_mean`；
 3. 差距 ≤ `margin=0.005` 视为近似并列（near-tie）；
-4. 并列裁决：先 `record_balanced_acc_mean`，再 `worst_subject_macro_f1_mean`，最后固定 `complexity_priority = calibrated_linear_svm → tiny_cnn → small_resnet → matrix_mlp`（**仅在主指标、balanced accuracy、worst-subject 指标全部相同时使用**）；
+4. 并列裁决：先 `record_balanced_acc_mean`，再 `worst_subject_macro_f1_mean`，再 `record_macro_f1_mean`，最后固定 `complexity_priority = calibrated_linear_svm → tiny_cnn → small_resnet → matrix_mlp`（**`complexity_priority` 仅在主指标、balanced accuracy、worst-subject 三者全部相同时才使用**）；
 5. NN vs SVM：NN 高于 SVM **超过** 0.005 方可按主准则胜出；否则（near-tie 内）默认偏好 SVM，除非 NN 呈现预注册的实质性改进——(a) worst-subject macro-F1 绝对提高 ≥0.02，(b) 最弱类别 record F1 绝对提高 ≥0.01，(c) record macro-F1 标准差绝对降低 ≥0.001——且不落后 SVM 超过 0.005；
 6. calibration / param count / inference / training 时长均报告但不改变排名；
 7. **Reviewer 接受前不冻结候选**。
@@ -149,12 +149,12 @@ stage_b_refit_seed(repeat, fold) = 3_000_000 + outer_seed(repeat) * 100 + local_
 
 | 文件 | 覆盖 |
 |---|---|
-| `tests/test_neural_full_protocol.py` | 冻结配置通过 schema + 冻结值校验；manifest SHA / 边界 / 候选 / seeds / lr / monitor / margin / device / model_configs / **optimizer.name / batch_size / num_workers / loss / optimizer / deterministic_cudnn / cudnn_benchmark / amp / frozen_label_order / stage_a·b_train_seed / reset_seed / frozen_svm_reference_artifacts / record_nll / ece_bins / complexity_priority** 漂移逐一 fail-closed；数据边界三态与跨一致性；选择规则（NN 超 margin、near-tie 默认偏好 SVM、worst-subject/weakest-class/std 三类实质改进、bal-acc 阶梯、gate 排除、SVM 唯一性、**NaN/Inf/越界立即失败、complexity_priority 并列裁决、交换候选顺序 winner 不变**）；校准公式（NLL clip、Brier、ECE、概率行 finite/范围/行和 fail-closed）；runner stub `NotImplementedError` |
+| `tests/test_neural_full_protocol.py` | 冻结配置通过 schema + 冻结值校验；manifest SHA / 路径 / 边界 / 候选 / seed / dataset / quality_manifest / kind / shuffle / split_manifest / stage A/B / outer_refit / model_selection / resources / model_configs / optimizer / training_params / training_seeds / frozen_svm_reference_artifacts / calibration / complexity_priority 漂移逐一 fail-closed（含严格 bool 类型校验）；数据边界三态与跨一致性；选择规则（NN 超 margin、near-tie 默认偏好 SVM、worst-subject/weakest-class/std 三类实质改进、bal-acc 阶梯、gate 排除、SVM 唯一性、**NaN/Inf/越界立即失败、complexity_priority 仅在主指标/bal-acc/worst 全相同时使用、主指标打破并列先于 complexity、交换候选顺序 winner 不变**）；校准公式（NLL clip、Brier、ECE、概率行 finite/范围/行和 fail-closed、**空输入与 n_bins≠15 fail-closed**）；runner stub `NotImplementedError` |
 | `tests/test_neural_full_splits.py` | 外层 seed 取值、inner seed 公式、**stage_a/stage_b 训练 seed 公式与确定性**、inner 校验折规则、确定性（无进程随机）；manifest 形状/SHA 确定性/逐 repeat 受试者分区/隔离不变量/记录种子（**含 stage_a·b 训练 seed**）；篡改破坏 SHA、outer 重叠、inner 逃逸、**篡改 seed/header/outer_seeds + 重算 SHA、重编号 fold + 重算 SHA 均 fail-closed** |
 
 测试只使用构造的 60 个受试者 ID + 冻结配置，不读完整 PoPu 矩阵、不训练、不触发 GPU。
 
-结果：`uv run pytest -q` → **431 passed**（含本轮新增 41 项），`git diff --check` 通过。
+结果：`uv run pytest -q` → **444 passed**（含本轮新增 13 项），`git diff --check` 通过。
 
 ## 11. 已知限制
 

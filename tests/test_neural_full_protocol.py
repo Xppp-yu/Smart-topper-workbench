@@ -173,6 +173,38 @@ def test_full_runner_registered_but_not_implemented() -> None:
             ),
             "complexity_priority",
         ),
+        (
+            lambda c: c.__setitem__("seed", 43),
+            "seed",
+        ),
+        (
+            lambda c: c["parameters"].__setitem__("dataset", "other_dataset"),
+            "dataset",
+        ),
+        (
+            lambda c: c["data_manifests"][0].__setitem__("path", "other.csv"),
+            r"data_manifests\[0\]\.path",
+        ),
+        (
+            lambda c: c["parameters"].__setitem__("quality_manifest", "other.csv"),
+            "quality_manifest",
+        ),
+        (
+            lambda c: c["parameters"]["evaluation_protocol"].__setitem__("shuffle", False),
+            "shuffle",
+        ),
+        (
+            lambda c: c["parameters"]["evaluation_protocol"].__setitem__("shuffle", "false"),
+            "shuffle",
+        ),
+        (
+            lambda c: c["parameters"]["outer_refit"].__setitem__("infer_once_on_outer_test", False),
+            "infer_once_on_outer_test",
+        ),
+        (
+            lambda c: c["parameters"]["model_configs"][0]["params"].__setitem__("hidden_dims", [128]),
+            "model_configs",
+        ),
     ],
 )
 def test_full_config_frozen_value_drift_rejected(mutate, match: str) -> None:
@@ -355,6 +387,17 @@ def test_selection_order_independent_under_tie() -> None:
     assert select_full_winner([tiny, svm, resnet, mlp]) == expected
 
 
+def test_selection_primary_metric_breaks_tie_before_complexity() -> None:
+    # Regression: SVM is out of near-tie; both NNs beat it and share balanced-acc /
+    # worst-subject, but differ on the primary metric. complexity_priority must NOT
+    # decide — record_macro_f1_mean breaks the tie first.
+    svm = _svm(0.9000, bal_acc=0.90, worst=0.85, std=0.01, weakest=0.85)
+    mlp = _candidate(model="matrix_mlp", macro_f1=0.9500, bal_acc=0.940, worst=0.90, std=0.01, weakest=0.90)
+    tiny = _candidate(model="tiny_cnn", macro_f1=0.9460, bal_acc=0.940, worst=0.90, std=0.01, weakest=0.90)
+    assert select_full_winner([svm, mlp, tiny]) == "matrix_mlp"
+    assert select_full_winner([tiny, mlp, svm]) == "matrix_mlp"
+
+
 # ---------------------------------------------------------------------------
 # Calibration formulas (record-level, diagnostic-only)
 # ---------------------------------------------------------------------------
@@ -417,3 +460,25 @@ def test_record_ece_overconfident() -> None:
     probs = [[0.9, 0.1], [0.9, 0.1]]
     labels = [0, 1]
     assert record_ece(probs, labels) > 0.0
+
+
+def test_record_nll_rejects_empty_input() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        record_multiclass_nll([], [])
+
+
+def test_record_brier_rejects_empty_input() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        record_multiclass_brier([], [])
+
+
+def test_record_ece_rejects_empty_input() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        record_ece([], [])
+
+
+def test_record_ece_rejects_non_frozen_n_bins() -> None:
+    probs = [[0.5, 0.5], [0.5, 0.5]]
+    labels = [0, 1]
+    with pytest.raises(ValueError, match="n_bins"):
+        record_ece(probs, labels, n_bins=10)
