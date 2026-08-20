@@ -5,7 +5,7 @@
 
 ## 当前一句话状态
 
-P5.2-A CNN 训练底座与 CPU/CUDA Smoke 已完成：三种神经网络骨架在受试者隔离、fold 内 normalization、标签感知翻转、checkpoint/resume/reload 和固定种子复现口径下通过 CPU 与 RTX 4090 CUDA 通路验收。P5.2-B Mini 筛选已完成并经 Reviewer 接受：`EXP-P5.2-B-MINI-SCREEN-20260819-R01` 在 AutoDL（RTX 4090、`device=cuda`、git `0261113`、`dirty=false`）真实运行 `SUCCEEDED`，三候选 `matrix_mlp`/`tiny_cnn`/`small_resnet` 可行性 Gate 均为 `proceed`。P5.2-C Full runner 已实现并通过本地回归，当前等待一折 GPU 计时预检；**正式 Full 尚未运行，所以尚无最终排名或冠军**。P5.1 `calibrated_linear_svm` 继续保留为传统模型候选，P6 `UNKNOWN/REJECT` 在 P5.2-C 完成并经 Reviewer 接受前保持等待。结果仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
+P5.2-C Full 公平比较已完成并经 Reviewer 接受：`EXP-P5.2-C-FULL-COMPARISON-20260820-R01` 在 AutoDL RTX 4090 上完成 3 模型 × 3 repeats × 5 folds 共 45 个训练单元；独立复核确认结果与选择规则，`small_resnet` 以 record macro-F1 `0.986649 ± 0.002832`、balanced accuracy `0.986636` 成为 PoPu 固定睡姿五分类总体研究候选模型族。P5.1 `calibrated_linear_svm` 保留为传统模型对照。P6 `UNKNOWN/REJECT` 与错误分析现已放行但尚未开始；结果仍仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
 
 ## 阶段看板
 
@@ -23,8 +23,8 @@ P5.2-A CNN 训练底座与 CPU/CUDA Smoke 已完成：三种神经网络骨架�
 | P5.1/R5.1 | 横向比较框架修正与候选复核 | COMPLETE — TRADITIONAL_CANDIDATE_FROZEN | [P5.1 阶段报告](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md)、OOF 1,051,260 行、record 105,126 行、逐受试者/逐类别/消融表、混淆矩阵与图；winner=`calibrated_linear_svm`（record macro-F1 0.9452），冻结 `popu_research_candidate_p5_1_v0.1`（16,097 B，独立重载 smoke OK）；`115 passed` | 传统模型候选已冻结，不覆盖 CNN；进入 P5.2 神经网络公平比较，总体候选冻结后才放行 P6 |
 | P5.2-A/R5.2-A | CNN 训练底座与 Smoke | COMPLETE — CPU_CUDA_SMOKE_PASS | [P5.2-A 阶段报告](stage_reports/P5_2_A_POPU_NEURAL_CPU_CUDA_SMOKE_v0.1.md)；CPU `EXP-P5.2-A2-CPU-SMOKE-20260819-R02` 与 CUDA `EXP-P5.2-A2-CUDA-SMOKE-20260819-R02` 均通过。CUDA R02：干净 Git SHA `5803f5c`、RTX 4090、PyTorch `2.8.0+cu128`、1,000 样本、1 epoch；三模型训练、checkpoint/resume、参数变化、独立重载一致、固定 seed 复现均通过；`271 passed` | P5.2-B 必须另行冻结 Mini 配置并授权；当前 Smoke 指标不排名；不跑 Full CV |
 | P5.2-B/R5.2-B | Mini 筛选 | COMPLETE — MINI_ACCEPTED | [P5.2-B 结果报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_RESULTS_v0.1.md)、[P5.2-B 协议报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_PROTOCOL_v0.1.md)；`EXP-P5.2-B-MINI-SCREEN-20260819-R01`（git `0261113`、RTX 4090、`device=cuda`）`SUCCEEDED`；三候选 `matrix_mlp`/`tiny_cnn`/`small_resnet` Gate 均 `proceed`；Reviewer record-level 独立重算通过；`reproducible_seed=true`、`overall_verdict=proceed` | 三候选都进入 P5.2-C Full；先冻结 Full 公平比较协议与配置，再实现与授权；Mini 不排名 |
-| P5.2-C/R5.2-C | Full 公平比较 | RUNNER_READY — PREFLIGHT_PENDING | [P5.2-C 协议报告](stage_reports/P5_2_C_POPU_NEURAL_FULL_PROTOCOL_v0.1.md)、[Runner 就绪记录](stage_reports/P5_2_C_POPU_NEURAL_FULL_RUNNER_READY_v0.1.md)、冻结配置 `popu_neural_full_v0.1.json`；Full runner 已实现并通过本地回归，**一折 GPU 计时预检与正式 Full 均尚未运行** | 先在 AutoDL 执行独立一折计时预检；Reviewer 接受时间/显存预算后才运行正式 Full；Full 结果经 Reviewer 接受后才冻结 PoPu 总体候选并进入 P6 |
-| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | HOLD — WAIT_FOR_P5_2 | P5.1 传统候选 `popu_research_candidate_p5_1_v0.1`（svm，record macro-F1 0.9452）+ record/OOF 预测表（含置信度）已就绪；P5.2 总体候选选择前不冻结 UNKNOWN/REJECT 阈值 | 总体候选经 P5.2 公平比较并冻结后进入；阈值仅由验证受试者选择；高置信错误需个案分析 |
+| P5.2-C/R5.2-C | Full 公平比较 | COMPLETE — SMALL_RESNET_ACCEPTED | [P5.2-C 结果与验收](stage_reports/P5_2_C_POPU_NEURAL_FULL_RESULTS_v0.1.md)、[协议](stage_reports/P5_2_C_POPU_NEURAL_FULL_PROTOCOL_v0.1.md)；45/45 单元完成，最终 `SUCCEEDED`；Reviewer 独立复核完整性、split/OOF 覆盖、指标和选择规则；winner=`small_resnet`，record macro-F1 `0.986649 ± 0.002832`，相对 SVM `+0.041481` | 总体研究候选模型族已冻结；P6 仅从开发 OOF 证据选择 UNKNOWN/REJECT 阈值并完成错误分析 |
+| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | READY — NOT_STARTED | P5.2-C 已接受 `small_resnet`；完整 Full OOF record 概率和 Reviewer 决策已就绪 | 先冻结 P6 协议；阈值仅由开发 OOF 受试者选择；报告覆盖空床、低置信与高置信错误，禁止把阈值当作外部/产品验证 |
 | P7/R7 | 降密度、坏点、区域研究 | BLOCKED_BY_P6 | 尚未开始 | 不将软件消融误称为硬件验证 |
 | P8/R8 | 冻结候选并移交 WSL 工程化 | BLOCKED_BY_P7 | 尚未开始 | 算法规格、配置、切分和限制完整冻结 |
 

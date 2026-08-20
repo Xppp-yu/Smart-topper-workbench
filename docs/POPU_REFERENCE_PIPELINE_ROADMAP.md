@@ -16,7 +16,7 @@ PoPu 是**公开压力矩阵数据集**，用于在真实压力信号上建立�
 | 算法方法学（切分、选型、指标）的可行性 | 与 SLP/PressurePose/PMD 逐行配对或共享受试者 |
 | — | 身体区域（Head/Torso/Arm/Leg、肩/腰/骨盆）的逐记录监督真值（区域监督 HOLD） |
 
-## 3. 已完成：P0–P5.2-B
+## 3. 已完成：P0–P5.2-C
 
 | 阶段 | 内容 | 状态 | 阶段报告 |
 |---|---|---|---|
@@ -31,6 +31,7 @@ PoPu 是**公开压力矩阵数据集**，用于在真实压力信号上建立�
 | P5.1 | 横向比较与候选复核（repeated subject-grouped CV + 特征消融 + 冻结传统模型候选） | COMPLETE — TRADITIONAL_CANDIDATE_FROZEN | [P5.1](stage_reports/P5_1_POPU_GROUPED_MODEL_COMPARISON_v0.1.md) |
 | P5.2-A | CNN 训练底座与 CPU/CUDA Smoke | COMPLETE — CPU_CUDA_SMOKE_PASS | [P5.2-A](stage_reports/P5_2_A_POPU_NEURAL_CPU_CUDA_SMOKE_v0.1.md) |
 | P5.2-B | Mini 筛选（三候选 Gate 均 proceed） | COMPLETE — MINI_ACCEPTED | [P5.2-B 结果](stage_reports/P5_2_B_POPU_NEURAL_MINI_RESULTS_v0.1.md) |
+| P5.2-C | Full 公平比较（3 模型 × 3 repeats × 5 folds） | COMPLETE — SMALL_RESNET_ACCEPTED | [P5.2-C 结果与验收](stage_reports/P5_2_C_POPU_NEURAL_FULL_RESULTS_v0.1.md) |
 
 ## 4. 推进顺序与每阶段的输入 / 输出 / 通过 / 停止
 
@@ -76,11 +77,12 @@ P5 首轮 Baseline（已完成）
 - 输入：P5.2-B 通过的候选 + 与 P5.1 相同的受试者隔离原则、记录聚合与主指标。
 - 输出：record macro-F1 + repeated splits 波动、最差受试者、逐类别、校准、参数量、推理时间和训练成本。
 - 通过条件：若神经网络相对 SVM 提升 < 0.005 且稳定性/难例无实质改善，优先保留更简单的 SVM；只有 Reviewer 接受后才冻结 PoPu 总体候选。
-- 停止条件：冻结 PoPu 总体候选并进入 P6。
+- 实际结果：`EXP-P5.2-C-FULL-COMPARISON-20260820-R01` 完成 45 / 45 单元并 `SUCCEEDED`；Reviewer 接受 `small_resnet`（record macro-F1 `0.986649 ± 0.002832`，balanced accuracy `0.986636`）为 PoPu 固定睡姿五分类总体研究候选模型族；[结果与验收报告](stage_reports/P5_2_C_POPU_NEURAL_FULL_RESULTS_v0.1.md)。
+- 停止条件：已满足；PoPu 总体候选模型族已冻结，P6 已放行。
 
 ### P6 UNKNOWN/REJECT 与错误分析
 
-- 前置：P5.2 完成总体候选选择并冻结后放行；P5.1 传统候选不足以单独作为最终阈值基准。
+- 前置：已满足；P5.2-C 已接受并冻结 `small_resnet` 候选模型族。P5.1 传统候选只保留为对照。
 - 输入：冻结的总体候选 + 逐样本预测（含置信度）。
 - 输出：confidence 阈值表、UNKNOWN/REJECT 口径、高置信错误个案。
 - 通过条件：阈值仅由验证（开发集 OOF）受试者选择；空床与卧姿、高低置信错误的取舍被明确记录。

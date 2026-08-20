@@ -1,0 +1,74 @@
+{
+  "decision_id": "DEC-P5.2-C-SMALL-RESNET-ACCEPT-20260820-R01",
+  "stage": "P5.2-C/R5.2-C",
+  "experiment_id": "EXP-P5.2-C-FULL-COMPARISON-20260820-R01",
+  "reviewed_at": "2026-08-20",
+  "review_status": "ACCEPTED",
+  "accepted_candidate_family": "small_resnet",
+  "candidate_scope": "PoPu Tactilus fixed-posture 5-class research candidate family",
+  "runner_recommendation": "small_resnet",
+  "runner_candidate_frozen": false,
+  "reviewer_candidate_accepted": true,
+  "selection_metric": "record_macro_f1_mean",
+  "selection_margin": 0.005,
+  "metrics": {
+    "calibrated_linear_svm": {
+      "record_macro_f1_mean": 0.945168,
+      "record_macro_f1_std": 0.002169,
+      "record_balanced_accuracy_mean": 0.942864,
+      "worst_subject_macro_f1_mean": 0.7405562222247553
+    },
+    "matrix_mlp": {
+      "record_macro_f1_mean": 0.9741834877603731,
+      "record_macro_f1_std": 0.0010767301365449844,
+      "record_balanced_accuracy_mean": 0.9748138246590478,
+      "worst_subject_macro_f1_mean": 0.7557060455883985
+    },
+    "tiny_cnn": {
+      "record_macro_f1_mean": 0.9789060594248902,
+      "record_macro_f1_std": 0.000350769051942431,
+      "record_balanced_accuracy_mean": 0.97888544179263,
+      "worst_subject_macro_f1_mean": 0.8206354418893492
+    },
+    "small_resnet": {
+      "record_macro_f1_mean": 0.9866486236690362,
+      "record_macro_f1_std": 0.0028319875039526958,
+      "record_balanced_accuracy_mean": 0.9866363282635304,
+      "worst_subject_macro_f1_mean": 0.8824828482321623
+    }
+  },
+  "selection_deltas": {
+    "small_resnet_minus_tiny_cnn_macro_f1": 0.0077425642441459885,
+    "small_resnet_minus_calibrated_linear_svm_macro_f1": 0.041480623669036154
+  },
+  "execution": {
+    "state": "SUCCEEDED",
+    "completed_units": 45,
+    "training_git_sha": "ca9abb08a3c0bacacec07de7ef50b53c00952af6",
+    "training_git_dirty": false,
+    "aggregation_resume_git_sha": "4bf589917435f9edadd82567101fae5ff324a1fd",
+    "completed_units_before_resume": 45,
+    "retrained_units_during_resume": 0
+  },
+  "evidence_archive": {
+    "filename": "EXP-P5.2-C-FULL-COMPARISON-20260820-R01-FINAL.tar.gz",
+    "sha256": "131e6fd6f66254d410114d3f25c13a2e04d6c9c5a86e294da8612ca1dafe7b5b",
+    "repository_policy": "External governed evidence; not committed because the archive is about 198 MB"
+  },
+  "review_checks": {
+    "complete_unit_grid_3_models_x_3_repeats_x_5_folds": true,
+    "referenced_artifact_hashes_verified": true,
+    "subject_grouped_split_manifest_verified": true,
+    "oof_coverage_verified": true,
+    "record_metrics_independently_recomputed": true,
+    "selection_rule_independently_recomputed": true,
+    "checkpoint_reload_verified": true,
+    "quality_manifest_verified": true
+  },
+  "decision_boundary": [
+    "This accepts the Small ResNet architecture family as the overall PoPu fixed-posture research candidate; it does not designate one universal deployment checkpoint.",
+    "This is grouped cross-validation evidence on public PoPu data, not external-dataset, self-developed-sensor, overnight, comfort, safety, or product validation.",
+    "P6 UNKNOWN/REJECT and error analysis plus P7 robustness remain required before the PoPu reference validation package is complete."
+  ],
+  "next_stage": "P6/R6 UNKNOWN/REJECT and error analysis"
+}
