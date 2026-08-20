@@ -28,4 +28,4 @@ outputs/models/*
 !outputs/models/.gitkeep
 outputs/experiments/*
 !outputs/experiments/.gitkeep
-
+outputs/analysis/*

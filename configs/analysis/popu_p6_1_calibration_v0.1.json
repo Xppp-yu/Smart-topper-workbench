@@ -1,0 +1,19 @@
+{
+  "schema_version": "p6.1-calibration-v0.1",
+  "model": "small_resnet",
+  "seed": 6061,
+  "evaluation_subject_count": 20,
+  "temperature_grid": [0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00, 4.00, 5.00],
+  "threshold_grid": [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.985, 0.99, 0.995, 0.999],
+  "selection_constraints": {
+    "max_wrong_action_rate": 0.005,
+    "min_accepted_accuracy": 0.995,
+    "min_coverage": 0.50
+  },
+  "fairness_gates": {
+    "evaluation_min_subject_coverage": 0.80,
+    "evaluation_min_subject_accepted_accuracy": 0.95,
+    "evaluation_max_subject_wrong_action_rate": 0.05
+  },
+  "scope": "OOF-only CPU simulation; no retraining and no deployment-checkpoint claim"
+}

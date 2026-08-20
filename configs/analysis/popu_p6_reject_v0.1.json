@@ -1,0 +1,30 @@
+{
+  "schema_version": "p6-reject-v0.1",
+  "model": "small_resnet",
+  "level": "record",
+  "labels": ["empty", "supine", "prone", "left", "right"],
+  "oof_repeats": [0, 1, 2],
+  "development_repeats": [0, 1],
+  "evaluation_repeats": [2],
+  "threshold_metric": "max_probability",
+  "alternative_metrics": ["max_probability", "top2_margin", "normalized_entropy"],
+  "threshold_grid": [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.985, 0.99, 0.995, 0.999],
+  "selection_constraints": {
+    "max_wrong_action_rate": 0.005,
+    "min_accepted_accuracy": 0.995,
+    "min_coverage": 0.50
+  },
+  "fairness_gates": {
+    "evaluation_min_subject_coverage": 0.80,
+    "evaluation_min_subject_accepted_accuracy": 0.95,
+    "evaluation_max_subject_wrong_action_rate": 0.05,
+    "evaluation_max_class_coverage_range": 0.10
+  },
+  "high_confidence_error_threshold": 0.90,
+  "rule": {
+    "accept": "finite valid five-class record probability vector and max_probability >= selected threshold",
+    "reject": "invalid input, non-finite probability, probability row not summing to 1, or max_probability below selected threshold",
+    "output": "argmax posture when accepted; UNKNOWN/REJECT otherwise",
+    "scope": "PoPu Tactilus fixed five-posture research evaluation; not product or overnight control validation"
+  }
+}
