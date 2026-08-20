@@ -1,0 +1,133 @@
+{
+  "schema_version": "experiment-v0.1",
+  "exp_id": "EXP-P5.2-C-FULL-COMPARISON-20260820-R01",
+  "task_id": "TASK-P5.2-C1-FULL-PROTOCOL-v0.1",
+  "scope": "full",
+  "runner_type": "popu_neural_full",
+  "seed": 42,
+  "output_root": "outputs/experiments",
+  "data_manifests": [
+    {
+      "path": "outputs/metrics/popu_tactilus_quality_results_v0.1.csv",
+      "sha256": "9d3398a587b183f7e27ea68ada2eda1e5e82ebadb2ac9caf7a74b5763d3e954c"
+    }
+  ],
+  "parameters": {
+    "_frozen_note": "P5.2-C Full 公平比较协议（冻结）。本配置仅冻结协议与边界，未运行 Full。P5.2-C Full 尚未运行；subject_ids 在运行期由冻结质量 manifest 的 ACCEPT-only primary cohort 派生（预期 60 个受试者）。",
+    "dataset": "popu_tactilus",
+    "cohort": "primary",
+    "quality_manifest": "outputs/metrics/popu_tactilus_quality_results_v0.1.csv",
+    "quality_manifest_sha256": "9d3398a587b183f7e27ea68ada2eda1e5e82ebadb2ac9caf7a74b5763d3e954c",
+    "data_boundary": {
+      "n_subjects": 60,
+      "n_records": 5006,
+      "n_snapshots": 50060,
+      "snapshots_per_record": 10,
+      "fail_closed": "加载后校验；任一计数不符即失败，不静默降级到不同 cohort。无 WARN/EXCLUDED/REJECT 记录。"
+    },
+    "candidates": {
+      "neural": ["matrix_mlp", "tiny_cnn", "small_resnet"],
+      "frozen_svm_reference": "calibrated_linear_svm",
+      "notes": "不因 Mini 指标淘汰任何 NN 候选；不重训/覆盖/重冻结 SVM；不新增 CNN+工程特征或额外架构。"
+    },
+    "evaluation_protocol": {
+      "kind": "repeated_subject_grouped_cv",
+      "group": "subject_id",
+      "n_splits": 5,
+      "n_repeats": 3,
+      "shuffle": true,
+      "seeds": [11, 22, 33],
+      "seeds_are_repeats": "one subject-grouped fold set is generated per seed in the list, giving exactly 3 repeats; all candidates share the same fold sets",
+      "all_candidates_share_folds": "所有候选共享同一外层受试者折；同一受试者绝不同时出现在 train 与 test",
+      "record_aggregation": "record = 10 个 snapshot 概率取平均后 argmax；先按 repeat 汇总每 repeat 指标，再取 mean/std（绝不合并 150,180 个 OOF snapshot）",
+      "no_unseen_popu_test_claim": "PoPu 无可重命名的 never-seen 外部测试集，仅作 cross-validation 估计，不宣称外部泛化"
+    },
+    "split_manifest": {
+      "produce": true,
+      "fields": ["repeat", "outer_seed", "local_fold", "outer_train_subjects", "outer_test_subjects", "inner_train_subjects", "inner_validation_subjects", "inner_seed", "inner_validation_fold"],
+      "sha256": "manifest 记录自身 SHA-256，运行前与运行后均可复核"
+    },
+    "inner_epoch_selection": {
+      "stage": "A",
+      "leakage_rule": "外层测试折绝不用作早停/超参/checkpoint/normalization/calibration",
+      "inner_n_splits": 4,
+      "inner_seed_derivation": "inner_seed(repeat, local_fold) = 1000000 + OUTER_SEEDS[repeat]*100 + local_fold（纯算术，无 Python hash()、无进程随机）",
+      "inner_validation_fold_rule": "local_fold % inner_n_splits",
+      "normalization_scope": "仅在 inner training 受试者上 fit",
+      "flip_augmentation_scope": "仅 inner training 受试者（左右翻转 + 标签交换）",
+      "max_epochs": 15,
+      "min_epochs": 5,
+      "patience": 3,
+      "monitor": "val_loss",
+      "optimizer": { "lr": 1e-3, "weight_decay": 1e-4 },
+      "no_hyperparameter_search": true
+    },
+    "outer_refit": {
+      "stage": "B",
+      "best_epoch_from_stage_a": true,
+      "reinit": true,
+      "train_subjects": "all outer-train subjects",
+      "normalization_scope": "仅在全部 outer-train 受试者上重新 fit",
+      "flip_augmentation_scope": "仅 outer training",
+      "train_fixed_best_epoch": true,
+      "infer_once_on_outer_test": true
+    },
+    "metrics_and_artifacts": {
+      "primary": "record_macro_f1_mean",
+      "also_output": [
+        "record/snapshot macro-F1 + balanced-accuracy + accuracy（3 repeats mean±std）",
+        "per-repeat/per-fold metrics",
+        "per-class precision/recall/F1",
+        "per-subject record accuracy + macro-F1（含 worst subject）",
+        "confusion matrix",
+        "record-level multiclass NLL",
+        "Brier score",
+        "ECE（15 equal-width bins）",
+        "param count",
+        "checkpoint size",
+        "per-fold training time",
+        "inference time（含样本数）",
+        "peak CUDA memory",
+        "epoch-selection + refit 全量日志",
+        "OOF snapshot predictions",
+        "record-level predictions",
+        "checkpoint reload consistency"
+      ],
+      "calibration": "仅诊断；不做 temperature scaling，不改排名"
+    },
+    "model_selection": {
+      "criterion": "record_macro_f1_mean",
+      "margin": 0.005,
+      "tie_break": ["record_balanced_acc_mean", "worst_subject_macro_f1_mean"],
+      "exclude": ["dummy"],
+      "neural_vs_svm": {
+        "neural_wins_if_above_svm_by_more_than": 0.005,
+        "default_prefer_svm_within_margin": true,
+        "substantial_improvement": {
+          "worst_subject_macro_f1_absolute_gain": 0.02,
+          "weakest_class_record_f1_absolute_gain": 0.01,
+          "record_macro_f1_std_absolute_reduction": 0.001
+        },
+        "requires_not_trailing_svm_by_more_than": 0.005
+      },
+      "calibration_params_time_reported_not_ranking": true,
+      "no_freeze_until_reviewer_accepts": true
+    },
+    "resources_and_stop": {
+      "device": "cuda",
+      "amp_enabled": true,
+      "max_cuda_mb": 8000,
+      "max_total_train_seconds": 21600,
+      "timing_preflight": "单 fold 计时预检单独进行，在 Full 授权前",
+      "stop_and_request_reviewer_if_over_budget": "超时即停止并请求 Reviewer（不自动删模型/不缩小 fold）",
+      "fail_closed_on": ["OOM", "NaN", "Inf", "fold leak", "manifest mismatch", "git dirty", "EXP-ID exists", "checkpoint reload inconsistency"],
+      "resume_without_overwriting_completed_folds": true,
+      "run_in_screen_tmux": true
+    },
+    "model_configs": [
+      { "name": "matrix_mlp", "params": {} },
+      { "name": "tiny_cnn", "params": {} },
+      { "name": "small_resnet", "params": {} }
+    ]
+  }
+}

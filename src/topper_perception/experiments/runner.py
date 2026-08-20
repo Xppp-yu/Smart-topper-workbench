@@ -139,11 +139,30 @@ def run_popu_neural_mini(
     return _run(parameters, seed, experiment_dir)
 
 
+def run_popu_neural_full(
+    parameters: Mapping[str, Any], seed: int, experiment_dir: Path
+) -> dict[str, Any]:
+    """Frozen placeholder for the P5.2-C Full runner (NOT implemented).
+
+    The P5.2-C Full protocol/config/tests are frozen, but the actual Full runner
+    is deliberately absent: this task must not run Full and must not pretend to.
+    Registering the ``runner_type`` lets the frozen config validate while any
+    attempt to execute it fails closed with a clear error.
+    """
+    raise NotImplementedError(
+        "P5.2-C Full runner is not implemented. Only the frozen protocol, config "
+        "and validation tests exist; the Full comparison must not be executed "
+        "until a Reviewer accepts the protocol and a separate task authorizes "
+        "the runner + GPU."
+    )
+
+
 #: Registry mapping ``runner_type`` to its execution function.
 RUNNER_REGISTRY: dict[str, RunnerFn] = {
     "dummy": run_dummy_smoke,
     "popu_neural": run_popu_neural,
     "popu_neural_mini": run_popu_neural_mini,
+    "popu_neural_full": run_popu_neural_full,
 }
 
 
