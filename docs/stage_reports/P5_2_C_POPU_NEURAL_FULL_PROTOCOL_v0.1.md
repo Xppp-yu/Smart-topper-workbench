@@ -25,6 +25,39 @@ P5.1 `calibrated_linear_svm`、P5.2-A CPU/CUDA Smoke、P5.2-B Mini 的历史证�
 | 禁用 | 无 CNN+工程特征、无额外架构 | 不新增候选或特征工程 |
 | 全局 seed | `42` | 与 outer fold seeds 无关 |
 
+### 2.1 冻结训练参数
+
+三候选（`matrix_mlp` / `tiny_cnn` / `small_resnet`）使用**完全相同**的训练参数，逐项冻结并 fail-closed 校验：
+
+| 参数 | 冻结值 |
+|---|---|
+| batch_size | `32` |
+| num_workers | `0` |
+| loss | `cross_entropy` |
+| optimizer | `AdamW`（`lr=1e-3`、`weight_decay=1e-4`） |
+| deterministic cudnn | `true`（`torch.backends.cudnn.deterministic=True`） |
+| cudnn benchmark | `false`（`torch.backends.cudnn.benchmark=False`） |
+| AMP | 当前 torch `autocast` + `GradScaler` 路径 |
+| 冻结标签顺序 | `["empty", "supine", "prone", "left", "right"]` |
+
+确定性训练 seed（每个 outer fold、纯算术派生，见第 5 节）：
+- `stage_a_train_seed = 2_000_000 + outer_seed * 100 + local_fold`
+- `stage_b_refit_seed = 3_000_000 + outer_seed * 100 + local_fold`
+- **每个候选开始训练前必须重新 `set_seed`**；三候选在同一 fold 使用相同派生 seed；两个 seed 均写入 split manifest。
+
+### 2.2 冻结 SVM 参考证据绑定
+
+P5.1 `calibrated_linear_svm` 的六份历史证据文件**只读绑定**（路径 + SHA-256 + 大小），本任务只计算并记录哈希、**不修改这些文件**。未来 Full runner 在读取前必须校验每个哈希，且只使用其中 `calibrated_linear_svm` 行：
+
+| 文件 | SHA-256（前 12 位） | 大小 (B) |
+|---|---|---|
+| `data/processed/popu/popu_model_comparison_p5_1_oof_predictions_v0.1.csv` | `807afca919b7` | 191,504,818 |
+| `outputs/metrics/popu_model_comparison_p5_1_record_level_v0.1.csv` | `13aafaaf048b` | 10,798,258 |
+| `outputs/metrics/popu_model_comparison_p5_1_summary_v0.1.csv` | `8a637809f1d2` | 2,281 |
+| `outputs/metrics/popu_model_comparison_p5_1_fold_repeat_v0.1.csv` | `a7c34ca17ec2` | 7,375 |
+| `outputs/metrics/popu_model_comparison_p5_1_per_class_v0.1.csv` | `7ec36b48ffad` | 5,349 |
+| `outputs/metrics/popu_model_comparison_p5_1_per_subject_v0.1.csv` | `3b1f757ee17f` | 49,669 |
+
 ## 3. 外层公平评估协议（复用 P5.1）
 
 - `kind=repeated_subject_grouped_cv`，`group=subject_id`，`n_splits=5`，`n_repeats=3`，`shuffle=true`，`seeds=[11,22,33]`。
@@ -58,27 +91,34 @@ P5.1 `calibrated_linear_svm`、P5.2-A CPU/CUDA Smoke、P5.2-B Mini 的历史证�
 outer_seed(repeat)          = OUTER_SEEDS[repeat] = [11, 22, 33][repeat]
 inner_seed(repeat, fold)    = 1_000_000 + outer_seed(repeat) * 100 + local_fold
 inner_validation_fold(fold) = local_fold % 4
+stage_a_train_seed(repeat, fold) = 2_000_000 + outer_seed(repeat) * 100 + local_fold
+stage_b_refit_seed(repeat, fold) = 3_000_000 + outer_seed(repeat) * 100 + local_fold
 ```
 
-纯整数算术，**不使用 Python `hash()`，不使用进程级随机状态**，保证跨机器可复现、可逐行审计。split manifest 记录自身 SHA-256（对内容做 canonical JSON 哈希），运行前后均可复核。
+纯整数算术，**不使用 Python `hash()`，不使用进程级随机状态**，保证跨机器可复现、可逐行审计。`stage_a_train_seed`（Stage A epoch 选择）与 `stage_b_refit_seed`（Stage B 外层 refit）均写入 split manifest；**每个候选开始训练前必须重新 `set_seed`**，且三候选在同一 fold 使用相同派生 seed。split manifest 记录自身 SHA-256（对内容做 canonical JSON 哈希），运行前后均可复核。
 
 ## 6. 主指标与产物
 
 - **主指标**：`record_macro_f1_mean`（record = 10 个 snapshot 概率取平均后 argmax，与 P5.1 口径一致）。
 - 同时输出：record/snapshot 的 macro-F1 + balanced-accuracy + accuracy（3 repeats mean±std）、per-repeat/per-fold 指标、逐类别 precision/recall/F1、逐受试者 record accuracy + macro-F1（含 worst subject）、混淆矩阵、record-level multiclass NLL、Brier score、ECE（15 equal-width bins）、param count、checkpoint size、per-fold 训练时间、推理时间（含样本数）、峰值 CUDA 显存、epoch 选择 + refit 全量日志、OOF snapshot 预测、record-level 预测、checkpoint reload 一致性。
-- 校准诊断**仅作诊断**，不做 temperature scaling，不改排名。
+- 校准诊断**仅作诊断**，不做 temperature scaling，不改排名。冻结公式（record-level）：
+  - `NLL = -mean(log(clip(p_true, 1e-15, 1)))`
+  - `multiclass Brier = mean(sum_k((p_k - y_k)^2))`，其中 `y_k` 为 one-hot 目标
+  - ECE：`confidence = max probability`、`correct = (argmax == label)`，15 个等宽 bins，左闭右开、最后一个 bin 包含 1.0，按 bin 样本占比加权 `abs(accuracy - confidence)`
+  - 概率行必须 finite、每项位于 `[0,1]`、行和在容差（`1e-6`）内等于 1，否则 fail-closed
 
 ## 7. 最终选择规则（固定）
 
+0. **所有排名指标先检查 finite 且范围合理**（NaN/Inf 立即失败；F1/accuracy/worst-subject 落在 `[0,1]`）；
 1. gate/evidence 失败者排除；
 2. 主准则 = `record_macro_f1_mean`；
 3. 差距 ≤ `margin=0.005` 视为近似并列（near-tie）；
-4. 并列裁决：先 `record_balanced_acc_mean`，再 `worst_subject_macro_f1_mean`；
+4. 并列裁决：先 `record_balanced_acc_mean`，再 `worst_subject_macro_f1_mean`，最后固定 `complexity_priority = calibrated_linear_svm → tiny_cnn → small_resnet → matrix_mlp`（**仅在主指标、balanced accuracy、worst-subject 指标全部相同时使用**）；
 5. NN vs SVM：NN 高于 SVM **超过** 0.005 方可按主准则胜出；否则（near-tie 内）默认偏好 SVM，除非 NN 呈现预注册的实质性改进——(a) worst-subject macro-F1 绝对提高 ≥0.02，(b) 最弱类别 record F1 绝对提高 ≥0.01，(c) record macro-F1 标准差绝对降低 ≥0.001——且不落后 SVM 超过 0.005；
 6. calibration / param count / inference / training 时长均报告但不改变排名；
 7. **Reviewer 接受前不冻结候选**。
 
-> 边界语义：`>` 0.005 才“凭主准则胜出”；恰好 0.005 属 near-tie，默认回落到 SVM。
+> 边界语义：`>` 0.005 才”凭主准则胜出”；恰好 0.005 属 near-tie，默认回落到 SVM。胜者选择**与候选输入顺序无关**（交换候选顺序仍得到同一 winner）。
 
 ## 8. 资源与停止条件
 
@@ -109,12 +149,12 @@ inner_validation_fold(fold) = local_fold % 4
 
 | 文件 | 覆盖 |
 |---|---|
-| `tests/test_neural_full_protocol.py` | 冻结配置通过 schema + 冻结值校验；manifest SHA / 边界 / 候选 / seeds / lr / monitor / margin / device / model_configs 漂移逐一 fail-closed；数据边界三态与跨一致性；选择规则（NN 超 margin、near-tie 默认偏好 SVM、worst-subject/weakest-class/std 三类实质改进、bal-acc 阶梯、gate 排除、SVM 唯一性）；runner stub `NotImplementedError` |
-| `tests/test_neural_full_splits.py` | 外层 seed 取值、inner seed 公式、inner 校验折规则、确定性（无进程随机）；manifest 形状/SHA 确定性/逐 repeat 受试者分区/隔离不变量/记录种子；篡改破坏 SHA、outer 重叠、inner 逃逸三者 fail-closed |
+| `tests/test_neural_full_protocol.py` | 冻结配置通过 schema + 冻结值校验；manifest SHA / 边界 / 候选 / seeds / lr / monitor / margin / device / model_configs / **optimizer.name / batch_size / num_workers / loss / optimizer / deterministic_cudnn / cudnn_benchmark / amp / frozen_label_order / stage_a·b_train_seed / reset_seed / frozen_svm_reference_artifacts / record_nll / ece_bins / complexity_priority** 漂移逐一 fail-closed；数据边界三态与跨一致性；选择规则（NN 超 margin、near-tie 默认偏好 SVM、worst-subject/weakest-class/std 三类实质改进、bal-acc 阶梯、gate 排除、SVM 唯一性、**NaN/Inf/越界立即失败、complexity_priority 并列裁决、交换候选顺序 winner 不变**）；校准公式（NLL clip、Brier、ECE、概率行 finite/范围/行和 fail-closed）；runner stub `NotImplementedError` |
+| `tests/test_neural_full_splits.py` | 外层 seed 取值、inner seed 公式、**stage_a/stage_b 训练 seed 公式与确定性**、inner 校验折规则、确定性（无进程随机）；manifest 形状/SHA 确定性/逐 repeat 受试者分区/隔离不变量/记录种子（**含 stage_a·b 训练 seed**）；篡改破坏 SHA、outer 重叠、inner 逃逸、**篡改 seed/header/outer_seeds + 重算 SHA、重编号 fold + 重算 SHA 均 fail-closed** |
 
 测试只使用构造的 60 个受试者 ID + 冻结配置，不读完整 PoPu 矩阵、不训练、不触发 GPU。
 
-结果：`uv run pytest -q` → **390 passed**（含本轮新增 44 项），`git diff --check` 通过。
+结果：`uv run pytest -q` → **431 passed**（含本轮新增 41 项），`git diff --check` 通过。
 
 ## 11. 已知限制
 

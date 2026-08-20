@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,11 @@ from topper_perception.experiments.contracts import validate_experiment_config
 from topper_perception.experiments.runner import RUNNER_REGISTRY
 from topper_perception.neural.full_protocol import (
     FullCandidateResult,
+    record_ece,
+    record_multiclass_brier,
+    record_multiclass_nll,
     select_full_winner,
+    validate_calibration_probabilities,
     validate_full_config,
     validate_full_data_boundary,
 )
@@ -92,6 +97,81 @@ def test_full_runner_registered_but_not_implemented() -> None:
         (
             lambda c: c["parameters"]["model_configs"].append({"name": "extra_cnn", "params": {}}),
             "model_configs",
+        ),
+        (
+            lambda c: c["parameters"]["inner_epoch_selection"]["optimizer"].__setitem__("name", "SGD"),
+            "optimizer.name",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__("batch_size", 64),
+            "batch_size",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__("num_workers", 2),
+            "num_workers",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__("loss", "mse"),
+            "loss",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__("optimizer", "SGD"),
+            "optimizer",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__("deterministic_cudnn", False),
+            "deterministic_cudnn",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__("cudnn_benchmark", True),
+            "cudnn_benchmark",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__("amp", "apex"),
+            "amp",
+        ),
+        (
+            lambda c: c["parameters"]["training_params"].__setitem__(
+                "frozen_label_order", ["a", "b", "c", "d", "e"]
+            ),
+            "frozen_label_order",
+        ),
+        (
+            lambda c: c["parameters"]["training_seeds"].__setitem__(
+                "stage_a_train_seed", "9_000_000 + outer_seed * 100 + local_fold"
+            ),
+            "stage_a_train_seed",
+        ),
+        (
+            lambda c: c["parameters"]["training_seeds"].__setitem__(
+                "stage_b_refit_seed", "9_000_000 + outer_seed * 100 + local_fold"
+            ),
+            "stage_b_refit_seed",
+        ),
+        (
+            lambda c: c["parameters"]["training_seeds"].__setitem__(
+                "reset_seed_before_each_candidate", False
+            ),
+            "reset_seed_before_each_candidate",
+        ),
+        (
+            lambda c: c["parameters"]["frozen_svm_reference_artifacts"].pop(),
+            "frozen_svm_reference_artifacts",
+        ),
+        (
+            lambda c: c["parameters"]["calibration"].__setitem__("record_nll", "-mean(log(p_true))"),
+            "record_nll",
+        ),
+        (
+            lambda c: c["parameters"]["calibration"].__setitem__("ece_bins", 10),
+            "ece_bins",
+        ),
+        (
+            lambda c: c["parameters"]["model_selection"].__setitem__(
+                "complexity_priority",
+                ["matrix_mlp", "tiny_cnn", "small_resnet", "calibrated_linear_svm"],
+            ),
+            "complexity_priority",
         ),
     ],
 )
@@ -232,3 +312,108 @@ def test_candidate_dataclass_is_frozen() -> None:
     c = _svm(0.9)
     with pytest.raises((AttributeError, TypeError)):
         c.record_macro_f1_mean = 0.99  # type: ignore[misc]
+
+
+def test_selection_rejects_nan_metric() -> None:
+    svm = _svm(0.9500)
+    nn = _candidate(model="matrix_mlp", macro_f1=float("nan"))
+    with pytest.raises(ValueError, match="non-finite"):
+        select_full_winner([svm, nn])
+
+
+def test_selection_rejects_inf_metric() -> None:
+    svm = _svm(0.9500)
+    nn = _candidate(model="tiny_cnn", macro_f1=0.95, bal_acc=float("inf"))
+    with pytest.raises(ValueError, match="non-finite"):
+        select_full_winner([svm, nn])
+
+
+def test_selection_rejects_out_of_range_metric() -> None:
+    svm = _svm(0.9500)
+    nn = _candidate(model="small_resnet", macro_f1=0.95, bal_acc=1.5)
+    with pytest.raises(ValueError, match="outside reasonable range"):
+        select_full_winner([svm, nn])
+
+
+def test_selection_complexity_priority_prefers_smaller_network() -> None:
+    svm = _svm(0.9000, bal_acc=0.90, worst=0.80, std=0.01, weakest=0.80)
+    mlp = _candidate(model="matrix_mlp", macro_f1=0.9600, bal_acc=0.960, worst=0.90, std=0.01, weakest=0.90)
+    resnet = _candidate(model="small_resnet", macro_f1=0.9600, bal_acc=0.960, worst=0.90, std=0.01, weakest=0.90)
+    # Both NNs clear the SVM and tie on primary/balanced-acc/worst-subject, so the
+    # fixed complexity_priority breaks the tie: small_resnet < matrix_mlp.
+    assert select_full_winner([mlp, resnet, svm]) == "small_resnet"
+
+
+def test_selection_order_independent_under_tie() -> None:
+    svm = _svm(0.9000, bal_acc=0.90, worst=0.80, std=0.01, weakest=0.80)
+    mlp = _candidate(model="matrix_mlp", macro_f1=0.9600, bal_acc=0.960, worst=0.90, std=0.01, weakest=0.90)
+    tiny = _candidate(model="tiny_cnn", macro_f1=0.9600, bal_acc=0.960, worst=0.90, std=0.01, weakest=0.90)
+    resnet = _candidate(model="small_resnet", macro_f1=0.9600, bal_acc=0.960, worst=0.90, std=0.01, weakest=0.90)
+    expected = "tiny_cnn"
+    assert select_full_winner([svm, mlp, tiny, resnet]) == expected
+    assert select_full_winner([resnet, tiny, mlp, svm]) == expected
+    assert select_full_winner([tiny, svm, resnet, mlp]) == expected
+
+
+# ---------------------------------------------------------------------------
+# Calibration formulas (record-level, diagnostic-only)
+# ---------------------------------------------------------------------------
+
+
+def test_calibration_validate_rejects_non_finite() -> None:
+    with pytest.raises(ValueError, match="non-finite"):
+        validate_calibration_probabilities([[0.5, 0.5, float("nan")]], [0])
+
+
+def test_calibration_validate_rejects_out_of_unit_range() -> None:
+    with pytest.raises(ValueError, match=r"outside \[0, 1\]"):
+        validate_calibration_probabilities([[1.2, -0.2, 0.0]], [0])
+
+
+def test_calibration_validate_rejects_row_sum_mismatch() -> None:
+    with pytest.raises(ValueError, match="sums to"):
+        validate_calibration_probabilities([[0.6, 0.3, 0.3]], [0])
+
+
+def test_calibration_validate_rejects_label_out_of_range() -> None:
+    with pytest.raises(ValueError, match="out of range"):
+        validate_calibration_probabilities([[1.0, 0.0, 0.0]], [3])
+
+
+def test_record_multiclass_nll_perfect_prediction() -> None:
+    probs = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    labels = [0, 1, 2]
+    assert record_multiclass_nll(probs, labels) == pytest.approx(0.0)
+
+
+def test_record_multiclass_nll_clips_at_1e_minus_15() -> None:
+    probs = [[0.0, 1.0, 0.0]]
+    labels = [0]
+    assert record_multiclass_nll(probs, labels) == pytest.approx(-math.log(1e-15))
+
+
+def test_record_multiclass_brier_perfect() -> None:
+    probs = [[1.0, 0.0], [0.0, 1.0]]
+    labels = [0, 1]
+    assert record_multiclass_brier(probs, labels) == pytest.approx(0.0)
+
+
+def test_record_multiclass_brier_known_value() -> None:
+    probs = [[0.7, 0.3]]
+    labels = [0]
+    # (0.7-1)^2 + (0.3-0)^2 = 0.09 + 0.09 = 0.18
+    assert record_multiclass_brier(probs, labels) == pytest.approx(0.18)
+
+
+def test_record_ece_perfectly_calibrated() -> None:
+    # Both rows at confidence 0.5; one correct, one incorrect -> accuracy 0.5.
+    probs = [[0.5, 0.5], [0.5, 0.5]]
+    labels = [0, 1]
+    assert record_ece(probs, labels) == pytest.approx(0.0)
+
+
+def test_record_ece_overconfident() -> None:
+    # Both rows confident (0.9) but only one correct -> ECE > 0.
+    probs = [[0.9, 0.1], [0.9, 0.1]]
+    labels = [0, 1]
+    assert record_ece(probs, labels) > 0.0

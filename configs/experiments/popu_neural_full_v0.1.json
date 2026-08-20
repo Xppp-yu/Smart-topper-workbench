@@ -44,7 +44,7 @@
     },
     "split_manifest": {
       "produce": true,
-      "fields": ["repeat", "outer_seed", "local_fold", "outer_train_subjects", "outer_test_subjects", "inner_train_subjects", "inner_validation_subjects", "inner_seed", "inner_validation_fold"],
+      "fields": ["repeat", "outer_seed", "local_fold", "outer_train_subjects", "outer_test_subjects", "inner_train_subjects", "inner_validation_subjects", "inner_seed", "inner_validation_fold", "stage_a_train_seed", "stage_b_refit_seed"],
       "sha256": "manifest 记录自身 SHA-256，运行前与运行后均可复核"
     },
     "inner_epoch_selection": {
@@ -59,7 +59,7 @@
       "min_epochs": 5,
       "patience": 3,
       "monitor": "val_loss",
-      "optimizer": { "lr": 1e-3, "weight_decay": 1e-4 },
+      "optimizer": { "name": "AdamW", "lr": 1e-3, "weight_decay": 1e-4 },
       "no_hyperparameter_search": true
     },
     "outer_refit": {
@@ -99,6 +99,8 @@
       "criterion": "record_macro_f1_mean",
       "margin": 0.005,
       "tie_break": ["record_balanced_acc_mean", "worst_subject_macro_f1_mean"],
+      "complexity_priority": ["calibrated_linear_svm", "tiny_cnn", "small_resnet", "matrix_mlp"],
+      "complexity_priority_note": "仅在主指标、balanced accuracy、worst-subject 指标全部相同时使用",
       "exclude": ["dummy"],
       "neural_vs_svm": {
         "neural_wins_if_above_svm_by_more_than": 0.005,
@@ -123,6 +125,67 @@
       "fail_closed_on": ["OOM", "NaN", "Inf", "fold leak", "manifest mismatch", "git dirty", "EXP-ID exists", "checkpoint reload inconsistency"],
       "resume_without_overwriting_completed_folds": true,
       "run_in_screen_tmux": true
+    },
+    "training_params": {
+      "batch_size": 32,
+      "num_workers": 0,
+      "loss": "cross_entropy",
+      "optimizer": "AdamW",
+      "deterministic_cudnn": true,
+      "cudnn_benchmark": false,
+      "amp": "torch_autocast_gradscaler",
+      "frozen_label_order": ["empty", "supine", "prone", "left", "right"]
+    },
+    "training_seeds": {
+      "stage_a_train_seed": "2_000_000 + outer_seed * 100 + local_fold",
+      "stage_b_refit_seed": "3_000_000 + outer_seed * 100 + local_fold",
+      "reset_seed_before_each_candidate": true,
+      "all_candidates_share_same_derived_seed": true,
+      "note": "每个候选开始训练前必须重新 set_seed；三候选在同一 fold 使用相同派生 seed；两个 seed 均写入 split manifest"
+    },
+    "frozen_svm_reference_artifacts": [
+      {
+        "path": "data/processed/popu/popu_model_comparison_p5_1_oof_predictions_v0.1.csv",
+        "sha256": "807afca919b7737964b870fc4a521a2b1e79bacb669b9eb4f6027b404c6f1ecb",
+        "size_bytes": 191504818
+      },
+      {
+        "path": "outputs/metrics/popu_model_comparison_p5_1_record_level_v0.1.csv",
+        "sha256": "13aafaaf048ba4c412e6aaf51f002208bbfa40dd496d218b84ed0d9bd595e798",
+        "size_bytes": 10798258
+      },
+      {
+        "path": "outputs/metrics/popu_model_comparison_p5_1_summary_v0.1.csv",
+        "sha256": "8a637809f1d29ea7f885459b49406ac8fe5f87898328792ca9bffe7ba6b00366",
+        "size_bytes": 2281
+      },
+      {
+        "path": "outputs/metrics/popu_model_comparison_p5_1_fold_repeat_v0.1.csv",
+        "sha256": "a7c34ca17ec2384320ed2c87637786b7fa408316e3d4fe50b8085cf7afedf986",
+        "size_bytes": 7375
+      },
+      {
+        "path": "outputs/metrics/popu_model_comparison_p5_1_per_class_v0.1.csv",
+        "sha256": "7ec36b48ffadc3f96f989791b769cb6ed4f1360543613f30bfea90316bbe4291",
+        "size_bytes": 5349
+      },
+      {
+        "path": "outputs/metrics/popu_model_comparison_p5_1_per_subject_v0.1.csv",
+        "sha256": "3b1f757ee17feb6c4346060234bd5817467ffc3339a345802ccae06eee6f7d13",
+        "size_bytes": 49669
+      }
+    ],
+    "calibration": {
+      "record_nll": "-mean(log(clip(p_true, 1e-15, 1)))",
+      "record_brier": "mean(sum_k((p_k - y_k)^2))",
+      "ece_confidence": "max probability",
+      "ece_correct": "argmax == label",
+      "ece_bins": 15,
+      "ece_binning": "left-closed right-open; last bin includes 1.0",
+      "ece_weighting": "weighted by bin sample proportion of abs(accuracy - confidence)",
+      "prob_row_checks": "finite + each in [0,1] + row sum within tolerance == 1 (fail closed)",
+      "row_sum_tolerance": 1e-6,
+      "diagnostic_only_not_ranking": true
     },
     "model_configs": [
       { "name": "matrix_mlp", "params": {} },

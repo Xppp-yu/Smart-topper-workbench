@@ -13,6 +13,8 @@ machine and can be audited line by line:
 - ``outer_seed(repeat)      = OUTER_SEEDS[repeat]``
 - ``inner_seed(repeat, fold) = 1_000_000 + outer_seed(repeat) * 100 + local_fold``
 - ``inner_validation_fold(local_fold) = local_fold % INNER_N_SPLITS``
+- ``stage_a_train_seed(repeat, fold) = 2_000_000 + outer_seed(repeat) * 100 + local_fold``
+- ``stage_b_refit_seed(repeat, fold) = 3_000_000 + outer_seed(repeat) * 100 + local_fold``
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from typing import Any, Mapping, Sequence
 
 from topper_perception.evaluation.grouped import generate_group_folds
 from topper_perception.neural.full_protocol import (
+    DATA_BOUNDARY,
     GROUP_KEY,
     INNER_N_SPLITS,
     N_SPLITS,
@@ -33,6 +36,14 @@ from topper_perception.neural.full_protocol import (
 #: explicit and auditable rather than magic.
 INNER_SEED_BASE = 1_000_000
 INNER_SEED_STRIDE = 100
+
+#: Base values for the two per-fold training seeds (Stage A epoch selection and
+#: Stage B refit). They share the inner-seed stride and the ``local_fold`` offset.
+STAGE_A_TRAIN_SEED_BASE = 2_000_000
+STAGE_B_REFIT_SEED_BASE = 3_000_000
+
+#: Frozen manifest protocol marker, cross-checked on validation.
+MANIFEST_PROTOCOL = "popu_neural_full_v0.1"
 
 
 def outer_seed_for_repeat(repeat: int, outer_seeds: Sequence[int] = OUTER_SEEDS) -> int:
@@ -73,6 +84,36 @@ def inner_validation_fold(local_fold: int, inner_n_splits: int = INNER_N_SPLITS)
     if local_fold < 0:
         raise ValueError("local_fold must be non-negative.")
     return local_fold % inner_n_splits
+
+
+def derive_stage_a_train_seed(
+    outer_seed: int, local_fold: int, *, stride: int = INNER_SEED_STRIDE
+) -> int:
+    """Stage A per-fold training seed (deterministic, no hash()/process-random).
+
+    ``stage_a_train_seed = 2_000_000 + outer_seed * 100 + local_fold``. All three
+    candidates share this same derived seed within a given fold; each candidate
+    re-applies ``set_seed`` before its own training starts.
+    """
+    return STAGE_A_TRAIN_SEED_BASE + outer_seed * stride + local_fold
+
+
+def derive_stage_b_refit_seed(
+    outer_seed: int, local_fold: int, *, stride: int = INNER_SEED_STRIDE
+) -> int:
+    """Stage B per-fold refit seed (deterministic, no hash()/process-random).
+
+    ``stage_b_refit_seed = 3_000_000 + outer_seed * 100 + local_fold``.
+    """
+    return STAGE_B_REFIT_SEED_BASE + outer_seed * stride + local_fold
+
+
+def _require_frozen(actual: Any, expected: Any, label: str) -> None:
+    """Fail closed when a fold-manifest field differs from its frozen value."""
+    if actual != expected:
+        raise ValueError(
+            f"Fold manifest violation: {label} is {actual!r}, expected {expected!r}."
+        )
 
 
 def _canonical_sha256(data: Any) -> str:
@@ -138,13 +179,19 @@ def build_full_fold_manifest(
                     "outer_test_subjects": outer_test,
                     "inner_seed": inner_seed,
                     "inner_validation_fold": validation_fold,
+                    "stage_a_train_seed": derive_stage_a_train_seed(
+                        int(outer_seed), local_fold
+                    ),
+                    "stage_b_refit_seed": derive_stage_b_refit_seed(
+                        int(outer_seed), local_fold
+                    ),
                     "inner_train_subjects": inner_train,
                     "inner_validation_subjects": inner_validation,
                 }
             )
 
     manifest: dict[str, Any] = {
-        "protocol": "popu_neural_full_v0.1",
+        "protocol": MANIFEST_PROTOCOL,
         "group_key": GROUP_KEY,
         "n_subjects": len(subjects),
         "n_splits": n_splits,
@@ -155,6 +202,12 @@ def build_full_fold_manifest(
             "outer_seed": "OUTER_SEEDS[repeat]",
             "inner_seed": f"{INNER_SEED_BASE} + outer_seed * {INNER_SEED_STRIDE} + local_fold",
             "inner_validation_fold": f"local_fold % {inner_n_splits}",
+            "stage_a_train_seed": (
+                f"{STAGE_A_TRAIN_SEED_BASE} + outer_seed * {INNER_SEED_STRIDE} + local_fold"
+            ),
+            "stage_b_refit_seed": (
+                f"{STAGE_B_REFIT_SEED_BASE} + outer_seed * {INNER_SEED_STRIDE} + local_fold"
+            ),
             "note": "Deterministic arithmetic; no Python hash(), no process-random.",
         },
         "folds": folds,
@@ -167,18 +220,46 @@ def validate_full_fold_manifest(
     manifest: Mapping[str, Any],
     subject_ids: Sequence[str],
 ) -> None:
-    """Fail closed when a full fold manifest violates isolation or determinism.
+    """Fail closed when a full fold manifest violates the frozen protocol.
 
-    Checks: the SHA-256 recomputes identically; every expected (repeat, fold)
-    is present; outer train/test partition all subjects disjointly; inner
-    subjects are a subset of outer train; and inner train/validation partition
-    the outer-train subjects disjointly. Any violation raises :class:`ValueError`.
+    Verifies, in order: (a) the header fields match the frozen protocol;
+    (b) the unique subject count matches the frozen boundary; (c) the SHA-256
+    recomputes identically; (d) the ``(repeat, local_fold)`` grid is exactly
+    ``0..N_REPEATS-1 x 0..N_SPLITS-1``; (e) every fold's derived seeds (inner /
+    validation / Stage A / Stage B) match the frozen formulas; (f) the outer and
+    inner subject isolation + coverage invariants hold; and (g) the whole
+    manifest equals a fresh rebuild with the frozen defaults. Any violation
+    raises :class:`ValueError`.
     """
     if not isinstance(manifest, Mapping):
         raise ValueError("Fold manifest must be a mapping.")
 
     subjects = sorted({str(s) for s in subject_ids})
     all_subjects = set(subjects)
+
+    # (a) Header must match the frozen protocol.
+    _require_frozen(manifest.get("protocol"), MANIFEST_PROTOCOL, "manifest.protocol")
+    _require_frozen(manifest.get("group_key"), GROUP_KEY, "manifest.group_key")
+    _require_frozen(int(manifest.get("n_subjects")), len(subjects), "manifest.n_subjects")
+    _require_frozen(int(manifest.get("n_splits")), N_SPLITS, "manifest.n_splits")
+    _require_frozen(int(manifest.get("n_repeats")), len(OUTER_SEEDS), "manifest.n_repeats")
+    _require_frozen(
+        list(manifest.get("outer_seeds", [])), list(OUTER_SEEDS), "manifest.outer_seeds"
+    )
+    _require_frozen(
+        int(manifest.get("inner_n_splits")), INNER_N_SPLITS, "manifest.inner_n_splits"
+    )
+
+    # (b) The unique subject count is a frozen-cohort invariant (60 subjects).
+    _require_frozen(
+        len(subjects), DATA_BOUNDARY["n_subjects"], "manifest unique subject count"
+    )
+
+    # (c) Determinism: the stored digest must match a recomputation over content.
+    content = dict(manifest)
+    stored_sha = content.pop("sha256", None)
+    if stored_sha != _canonical_sha256(content):
+        raise ValueError("Fold manifest SHA-256 does not match its content.")
 
     expected_folds = len(OUTER_SEEDS) * N_SPLITS
     folds = manifest.get("folds")
@@ -188,16 +269,48 @@ def validate_full_fold_manifest(
             f"got {len(folds) if isinstance(folds, list) else 'not-a-list'}."
         )
 
-    # Determinism: the stored digest must match a recomputation over content.
-    content = dict(manifest)
-    stored_sha = content.pop("sha256", None)
-    if stored_sha != _canonical_sha256(content):
-        raise ValueError("Fold manifest SHA-256 does not match its content.")
+    # (d) Exactly repeats 0..2, each with exactly local folds 0..4.
+    repeats_present = sorted({int(fold["repeat"]) for fold in folds})
+    _require_frozen(repeats_present, list(range(len(OUTER_SEEDS))), "manifest.repeats")
+    for repeat in range(len(OUTER_SEEDS)):
+        local_folds_present = sorted(
+            {int(fold["local_fold"]) for fold in folds if int(fold["repeat"]) == repeat}
+        )
+        _require_frozen(
+            local_folds_present,
+            list(range(N_SPLITS)),
+            f"manifest.repeat_{repeat}.local_folds",
+        )
 
-    # Isolation + coverage.
+    # (e) Per-fold seed formulas + (f) isolation/coverage.
     per_repeat_test: dict[int, set[str]] = {}
     for fold in folds:
         repeat = int(fold["repeat"])
+        local_fold = int(fold["local_fold"])
+        outer_seed = int(fold["outer_seed"])
+
+        _require_frozen(outer_seed, OUTER_SEEDS[repeat], f"fold({repeat},{local_fold}).outer_seed")
+        _require_frozen(
+            int(fold["inner_seed"]),
+            derive_inner_seed(outer_seed, local_fold),
+            f"fold({repeat},{local_fold}).inner_seed",
+        )
+        _require_frozen(
+            int(fold["inner_validation_fold"]),
+            inner_validation_fold(local_fold, INNER_N_SPLITS),
+            f"fold({repeat},{local_fold}).inner_validation_fold",
+        )
+        _require_frozen(
+            int(fold["stage_a_train_seed"]),
+            derive_stage_a_train_seed(outer_seed, local_fold),
+            f"fold({repeat},{local_fold}).stage_a_train_seed",
+        )
+        _require_frozen(
+            int(fold["stage_b_refit_seed"]),
+            derive_stage_b_refit_seed(outer_seed, local_fold),
+            f"fold({repeat},{local_fold}).stage_b_refit_seed",
+        )
+
         outer_train = set(fold["outer_train_subjects"])
         outer_test = set(fold["outer_test_subjects"])
         inner_train = set(fold["inner_train_subjects"])
@@ -235,3 +348,11 @@ def validate_full_fold_manifest(
                 f"Outer test folds do not cover every subject exactly once "
                 f"in repeat {repeat}."
             )
+
+    # (g) Full reproducibility: the manifest must equal a fresh rebuild with the
+    # frozen defaults. This is the catch-all that defeats reordered/renumbered
+    # folds and edited seeds even when a tamperer recomputed the SHA-256.
+    rebuilt = build_full_fold_manifest(subject_ids)
+    rebuilt_content = {key: value for key, value in rebuilt.items() if key != "sha256"}
+    if content != rebuilt_content:
+        raise ValueError("Fold manifest does not match a fresh rebuild from the frozen protocol.")
