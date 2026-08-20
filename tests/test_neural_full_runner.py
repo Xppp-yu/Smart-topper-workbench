@@ -10,6 +10,7 @@ import pytest
 from topper_perception.experiments.artifacts import atomic_write_json, sha256_hex
 from topper_perception.neural.full import (
     PROBA_COLUMNS,
+    _calibration_summary,
     aggregate_record_rows,
     validate_candidate_complete,
 )
@@ -90,3 +91,24 @@ def test_completed_candidate_marker_is_content_hashed(tmp_path: Path) -> None:
             local_fold=0,
             split_manifest_sha256="a" * 64,
         )
+
+
+def test_frozen_svm_quantized_probabilities_are_bounded_and_renormalized() -> None:
+    rows = []
+    for repeat in range(3):
+        row = {"repeat": repeat, "y_true": "supine"}
+        row.update(dict(zip(PROBA_COLUMNS, [0.0, 0.500001, 0.2, 0.2, 0.100001], strict=True)))
+        rows.append(row)
+    import pandas as pd
+
+    result = _calibration_summary(
+        pd.DataFrame(rows), normalize_serialized_svm=True
+    )
+    assert result["serialized_probability_renormalization"] is True
+    assert result["renormalized_rows"] == 3
+    assert result["max_raw_row_sum_drift"] == pytest.approx(2e-6)
+
+    bad = pd.DataFrame(rows)
+    bad.loc[0, "proba__right"] = 0.10002
+    with pytest.raises(ValueError, match="serialization drift exceeds"):
+        _calibration_summary(bad, normalize_serialized_svm=True)

@@ -105,6 +105,7 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 FROZEN_CONFIG_PATH = PROJECT_ROOT / "configs" / "experiments" / "popu_neural_full_v0.1.json"
 PROBA_COLUMNS = tuple(f"proba__{label}" for label in FROZEN_LABELS)
+SVM_SERIALIZATION_MAX_ROW_SUM_DRIFT = 5e-6
 SNAPSHOT_COLUMNS = (
     "model",
     "repeat",
@@ -804,9 +805,32 @@ def _subject_and_class_summary(record_frame: pd.DataFrame) -> tuple[list[dict[st
     return subject_rows, class_rows
 
 
-def _calibration_summary(record_frame: pd.DataFrame) -> dict[str, Any]:
+def _calibration_summary(
+    record_frame: pd.DataFrame, *, normalize_serialized_svm: bool = False
+) -> dict[str, Any]:
+    frame = record_frame.copy() if normalize_serialized_svm else record_frame
+    renormalized_rows = 0
+    max_raw_row_sum_drift = 0.0
+    if normalize_serialized_svm:
+        raw = frame[list(PROBA_COLUMNS)].to_numpy(dtype=float)
+        if not np.isfinite(raw).all() or bool(((raw < 0.0) | (raw > 1.0)).any()):
+            raise ValueError("Serialized SVM probabilities are non-finite or outside [0, 1].")
+        row_sums = raw.sum(axis=1)
+        drift = np.abs(row_sums - 1.0)
+        max_raw_row_sum_drift = float(drift.max(initial=0.0))
+        if max_raw_row_sum_drift > SVM_SERIALIZATION_MAX_ROW_SUM_DRIFT:
+            raise ValueError(
+                "Frozen SVM probability serialization drift exceeds the reviewed "
+                f"{SVM_SERIALIZATION_MAX_ROW_SUM_DRIFT} bound: "
+                f"{max_raw_row_sum_drift}."
+            )
+        if bool((row_sums <= 0.0).any()):
+            raise ValueError("Serialized SVM probability row has a non-positive sum.")
+        renormalized_rows = int((drift > 1e-6).sum())
+        frame.loc[:, list(PROBA_COLUMNS)] = raw / row_sums[:, None]
+
     rows: list[dict[str, Any]] = []
-    for repeat, group in record_frame.groupby("repeat", sort=True):
+    for repeat, group in frame.groupby("repeat", sort=True):
         probabilities = group[list(PROBA_COLUMNS)].to_numpy(dtype=float).tolist()
         labels = [LABEL_TO_INDEX[str(value)] for value in group["y_true"]]
         rows.append(
@@ -817,7 +841,12 @@ def _calibration_summary(record_frame: pd.DataFrame) -> dict[str, Any]:
                 "ece": record_ece(probabilities, labels, n_bins=CALIBRATION_ECE_BINS),
             }
         )
-    result: dict[str, Any] = {"per_repeat": rows}
+    result: dict[str, Any] = {
+        "per_repeat": rows,
+        "serialized_probability_renormalization": normalize_serialized_svm,
+        "renormalized_rows": renormalized_rows,
+        "max_raw_row_sum_drift": max_raw_row_sum_drift,
+    }
     for name in ("nll", "brier", "ece"):
         values = np.asarray([row[name] for row in rows], dtype=float)
         result[f"{name}_mean"] = float(values.mean())
@@ -943,7 +972,7 @@ def _summarize_frozen_svm() -> dict[str, Any]:
         },
         "per_class": per_class.to_dict(orient="records"),
         "weakest_class_record_f1": float(per_class["f1_mean"].min()),
-        "calibration": _calibration_summary(record),
+        "calibration": _calibration_summary(record, normalize_serialized_svm=True),
         "frozen_reference": True,
     }
 
