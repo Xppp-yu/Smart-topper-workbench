@@ -5,7 +5,7 @@
 
 ## 当前一句话状态
 
-P5.2-C Full 公平比较已完成并经 Reviewer 接受：`EXP-P5.2-C-FULL-COMPARISON-20260820-R01` 在 AutoDL RTX 4090 上完成 3 模型 × 3 repeats × 5 folds 共 45 个训练单元；独立复核确认结果与选择规则，`small_resnet` 以 record macro-F1 `0.986649 ± 0.002832`、balanced accuracy `0.986636` 成为 PoPu 固定睡姿五分类总体研究候选模型族。P5.1 `calibrated_linear_svm` 保留为传统模型对照。P6 `UNKNOWN/REJECT` 与错误分析现已放行但尚未开始；结果仍仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
+P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族。P6/P6.1 已完成 UNKNOWN/REJECT、原始重点案例复核、温度校准与三模型一致性模拟：一致性规则降低了最差受试者错误风险，但最差覆盖率未达到冻结门槛，故只作为研究候选，不作为部署规则。P7 软件鲁棒性协议、配置和确定性扰动代码已就绪，真实 checkpoint 扰动推理尚未运行；结果仍仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
 
 ## 阶段看板
 
@@ -24,8 +24,8 @@ P5.2-C Full 公平比较已完成并经 Reviewer 接受：`EXP-P5.2-C-FULL-COMPA
 | P5.2-A/R5.2-A | CNN 训练底座与 Smoke | COMPLETE — CPU_CUDA_SMOKE_PASS | [P5.2-A 阶段报告](stage_reports/P5_2_A_POPU_NEURAL_CPU_CUDA_SMOKE_v0.1.md)；CPU `EXP-P5.2-A2-CPU-SMOKE-20260819-R02` 与 CUDA `EXP-P5.2-A2-CUDA-SMOKE-20260819-R02` 均通过。CUDA R02：干净 Git SHA `5803f5c`、RTX 4090、PyTorch `2.8.0+cu128`、1,000 样本、1 epoch；三模型训练、checkpoint/resume、参数变化、独立重载一致、固定 seed 复现均通过；`271 passed` | P5.2-B 必须另行冻结 Mini 配置并授权；当前 Smoke 指标不排名；不跑 Full CV |
 | P5.2-B/R5.2-B | Mini 筛选 | COMPLETE — MINI_ACCEPTED | [P5.2-B 结果报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_RESULTS_v0.1.md)、[P5.2-B 协议报告](stage_reports/P5_2_B_POPU_NEURAL_MINI_PROTOCOL_v0.1.md)；`EXP-P5.2-B-MINI-SCREEN-20260819-R01`（git `0261113`、RTX 4090、`device=cuda`）`SUCCEEDED`；三候选 `matrix_mlp`/`tiny_cnn`/`small_resnet` Gate 均 `proceed`；Reviewer record-level 独立重算通过；`reproducible_seed=true`、`overall_verdict=proceed` | 三候选都进入 P5.2-C Full；先冻结 Full 公平比较协议与配置，再实现与授权；Mini 不排名 |
 | P5.2-C/R5.2-C | Full 公平比较 | COMPLETE — SMALL_RESNET_ACCEPTED | [P5.2-C 结果与验收](stage_reports/P5_2_C_POPU_NEURAL_FULL_RESULTS_v0.1.md)、[协议](stage_reports/P5_2_C_POPU_NEURAL_FULL_PROTOCOL_v0.1.md)；45/45 单元完成，最终 `SUCCEEDED`；Reviewer 独立复核完整性、split/OOF 覆盖、指标和选择规则；winner=`small_resnet`，record macro-F1 `0.986649 ± 0.002832`，相对 SVM `+0.041481` | 总体研究候选模型族已冻结；P6 仅从开发 OOF 证据选择 UNKNOWN/REJECT 阈值并完成错误分析 |
-| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | READY — NOT_STARTED | P5.2-C 已接受 `small_resnet`；完整 Full OOF record 概率和 Reviewer 决策已就绪 | 先冻结 P6 协议；阈值仅由开发 OOF 受试者选择；报告覆盖空床、低置信与高置信错误，禁止把阈值当作外部/产品验证 |
-| P7/R7 | 降密度、坏点、区域研究 | BLOCKED_BY_P6 | 尚未开始 | 不将软件消融误称为硬件验证 |
+| P6/R6 | `UNKNOWN/REJECT` 与错误分析 | COMPLETE — BOUNDED_LIMITATION_RECORDED | [P6 结果](stage_reports/P6_POPU_REJECT_RESULTS_v0.1.md)、[P6.1 校准与一致性结果](stage_reports/P6_1_POPU_CALIBRATION_ENSEMBLE_RESULTS_v0.1.md)；重点原始案例 36/36 标签与结构一致；24 条 record 跨 3 repeats 持续错判；一致性候选降低 WAR 但牺牲最差受试者覆盖率 | 停止继续调 PoPu 阈值；一致性规则仅作研究候选；进入 P7 时保留高置信错误与覆盖率边界 |
+| P7/R7 | 降密度、噪声、坏点、坏行坏列 | PROTOCOL_AND_PERTURBATIONS_READY | [P7 协议](stage_reports/P7_POPU_SOFTWARE_ROBUSTNESS_PROTOCOL_v0.1.md)、冻结配置、确定性扰动模块与测试 | 提取 15 个 Small ResNet fold checkpoint，在对应 outer-test 原始 record 上运行 clean/扰动推理；不将软件消融误称为硬件验证 |
 | P8/R8 | 冻结候选并移交 WSL 工程化 | BLOCKED_BY_P7 | 尚未开始 | 算法规格、配置、切分和限制完整冻结 |
 
 ## 当前数据使用边界

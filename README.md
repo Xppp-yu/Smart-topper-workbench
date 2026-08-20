@@ -22,7 +22,7 @@ E:\TeamProjects\datasets\smart-topper
 
 ## 当前状态
 
-`WINDOWS-RESEARCH-WORKBENCH / POPU-P5.2-C-SMALL-RESNET-ACCEPTED`
+`WINDOWS-RESEARCH-WORKBENCH / POPU-P6.1-COMPLETE / P7-PROTOCOL-READY`
 
 已经完成（均有真实产物与阶段报告）：
 
@@ -37,7 +37,7 @@ E:\TeamProjects\datasets\smart-topper
 
 P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存中保留当前文件与最终的紧凑清单，不会把 5,160 个记录或所有压力矩阵整体载入内存。
 
-P5.2-A CNN 训练底座与 CPU/CUDA Smoke、P5.2-B Mini 筛选和 P5.2-C Full 公平比较均已完成。P5.2-C 在 RTX 4090 上完成 3 模型 × 3 repeats × 5 folds 共 45 个训练单元，Reviewer 独立复核后接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族（record macro-F1 `0.986649 ± 0.002832`）；P5.1 `calibrated_linear_svm` 保留为传统模型对照。尚未完成：P6 UNKNOWN/REJECT 与错误分析、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告。P6 现已放行但尚未开始；PoPu 结果仍不等于外部数据集、自研硬件或产品验证。
+P5.2-A CNN 训练底座与 CPU/CUDA Smoke、P5.2-B Mini 筛选和 P5.2-C Full 公平比较均已完成。P5.2-C 在 RTX 4090 上完成 3 模型 × 3 repeats × 5 folds 共 45 个训练单元，Reviewer 独立复核后接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族（record macro-F1 `0.986649 ± 0.002832`）；P5.1 `calibrated_linear_svm` 保留为传统模型对照。P6/P6.1 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟已完成：总体拒识风险下降，但存在 24 条跨 repeat 持续错判，一致性规则以覆盖率换取更低 WAR，因此只保留为研究候选。P7 降密度、噪声、坏点、坏行坏列协议与扰动代码已就绪，模型扰动推理尚未运行。PoPu 结果仍不等于外部数据集、自研硬件或产品验证。
 
 ## 新的固定定位
 
