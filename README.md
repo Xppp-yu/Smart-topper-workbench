@@ -37,7 +37,7 @@ E:\TeamProjects\datasets\smart-topper
 
 P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存中保留当前文件与最终的紧凑清单，不会把 5,160 个记录或所有压力矩阵整体载入内存。
 
-P5.2-A CNN 训练底座与 CPU/CUDA Smoke 已完成；尚未完成：P5.2-B Mini 筛选、P5.2-C Full 公平比较、P6 UNKNOWN/REJECT 与错误分析、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告。P5.1 已冻结传统模型候选；后续 P5.2-B/C 用神经网络候选与之公平比较，只有 Reviewer 接受并冻结 PoPu 总体候选后才放行 P6 设置 UNKNOWN/REJECT 阈值；P5.2 总体候选冻结前不设置 UNKNOWN/REJECT 阈值。
+P5.2-A CNN 训练底座与 CPU/CUDA Smoke、P5.2-B Mini 筛选均已完成；P5.2-C Full runner 已实现并通过本地回归，但一折 GPU 计时预检与正式 Full 尚未运行。尚未完成：P5.2-C Full 公平比较、P6 UNKNOWN/REJECT 与错误分析、P7 密度/坏点/噪声鲁棒性、区域算法和最终研究报告。P5.1 已冻结传统模型候选；P5.2-C 将三个神经网络候选与之公平比较，只有 Reviewer 接受并冻结 PoPu 总体候选后才放行 P6 设置 UNKNOWN/REJECT 阈值；P5.2 总体候选冻结前不设置 UNKNOWN/REJECT 阈值。
 
 ## 新的固定定位
 

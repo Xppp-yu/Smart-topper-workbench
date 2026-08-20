@@ -2,7 +2,9 @@
 
 ## 1. 结论
 
-**状态：PROTOCOL_FROZEN — PENDING_REVIEW（协议/配置/校验测试已冻结，尚未运行）。**
+**协议冻结时状态：PROTOCOL_FROZEN — PENDING_REVIEW。当前执行状态见 [Runner 就绪记录](P5_2_C_POPU_NEURAL_FULL_RUNNER_READY_v0.1.md)：RUNNER_READY — PREFLIGHT_PENDING；Full 仍尚未运行。**
+
+> 后续实现说明（2026-08-20）：本文件保留协议冻结任务当时“尚未实现 runner”的历史边界；协议获接受后，runner 已在独立实现任务中完成。实现就绪不等于 Full 已运行，真实结果仍为空。
 
 本任务 `TASK-P5.2-C1-FULL-PROTOCOL-v0.1` **只冻结** P5.2-C Full 公平比较的协议、配置、校验测试与状态记录，**没有**实现 Full runner，**没有**运行任何真实 Mini/Full，**没有**连接或启动 AutoDL。**P5.2-C Full 尚未运行。**
 

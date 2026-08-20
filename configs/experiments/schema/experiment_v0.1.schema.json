@@ -38,7 +38,7 @@
     "runner_type": {
       "type": "string",
       "enum": ["dummy", "popu_neural", "popu_neural_mini", "popu_neural_full"],
-      "description": "Registered runner function. 'dummy' is the deterministic no-data runner; 'popu_neural' lazily imports torch and runs the P5.2-A2 neural training smoke; 'popu_neural_mini' runs the P5.2-B multi-epoch Mini screening with early stopping and a viability gate; 'popu_neural_full' is a frozen placeholder that fails closed (the P5.2-C Full runner is not implemented yet)."
+      "description": "Registered runner function. 'dummy' is the deterministic no-data runner; 'popu_neural' runs the P5.2-A2 neural smoke; 'popu_neural_mini' runs P5.2-B Mini; 'popu_neural_full' runs the governed P5.2-C repeated subject-grouped Full comparison."
     },
     "seed": {
       "type": "integer",

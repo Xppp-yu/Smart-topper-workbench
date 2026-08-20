@@ -44,11 +44,21 @@ def test_full_config_parses_schema_and_frozen_values() -> None:
     validate_full_config(config)  # frozen-values: must not raise
 
 
-def test_full_runner_registered_but_not_implemented() -> None:
+def test_full_runner_registered_and_delegates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     assert "popu_neural_full" in contracts.RUNNER_TYPES
     assert "popu_neural_full" in RUNNER_REGISTRY
-    with pytest.raises(NotImplementedError, match="not implemented"):
-        RUNNER_REGISTRY["popu_neural_full"]({}, seed=42, experiment_dir=Path("."))
+    expected = {"implemented": True, "full_not_run_by_test": True}
+
+    def fake_run(parameters, seed, experiment_dir):
+        assert parameters == {"frozen": True}
+        assert seed == 42
+        assert experiment_dir == tmp_path
+        return expected
+
+    monkeypatch.setattr("topper_perception.neural.full.run_popu_neural_full", fake_run)
+    assert RUNNER_REGISTRY["popu_neural_full"](
+        {"frozen": True}, seed=42, experiment_dir=tmp_path
+    ) == expected
 
 
 @pytest.mark.parametrize(

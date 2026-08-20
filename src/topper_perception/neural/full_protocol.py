@@ -1,4 +1,4 @@
-"""Frozen P5.2-C Full fair-comparison protocol (no runner).
+"""Frozen P5.2-C Full fair-comparison protocol contracts.
 
 This module is the single source of truth for the *frozen* P5.2-C Full protocol:
 data boundary, candidate set, outer subject-grouped CV, inner epoch-selection,
@@ -6,9 +6,10 @@ primary metric, and the fixed final-selection rule. It is deliberately **pure
 stdlib** (no ``torch``, no NumPy, no PoPu I/O) so it can be imported, validated
 and unit-tested on any machine without the optional ``neural`` dependency.
 
-It does **not** run anything: there is no Full runner here. The corresponding
-config is ``configs/experiments/popu_neural_full_v0.1.json`` and the frozen
-prose is ``docs/stage_reports/P5_2_C_POPU_NEURAL_FULL_PROTOCOL_v0.1.md``.
+This module itself does **not** run anything. The separately implemented runner
+is ``neural/full.py``; the corresponding config is
+``configs/experiments/popu_neural_full_v0.1.json`` and the frozen prose is
+``docs/stage_reports/P5_2_C_POPU_NEURAL_FULL_PROTOCOL_v0.1.md``.
 
 P5.2-C Full 尚未运行 (the Full comparison has not been run).
 """
