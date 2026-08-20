@@ -18,7 +18,7 @@
 - ACCEPT-only cohort 只读预检：516 条记录考虑，11 条排除，505 条 ACCEPT 保留，5,050 个选中 snapshot（505 × 10）。
 - 无阻断 Mini 的问题，P5.2-B 获准标记为 `MINI_READY_TO_RUN`。
 
-下一步是 **部署 Git bundle + 单独上传 P2 质量 manifest 并校验 SHA-256**之后，由 Experiment Runner 在 AutoDL 上执行 Mini Run。
+当时（协议/实现任务完成时）的下一交接点是 **部署 Git bundle + 单独上传 P2 质量 manifest 并校验 SHA-256**之后，由 Experiment Runner 在 AutoDL 上执行 Mini Run；该步骤后来已由 `EXP-P5.2-B-MINI-SCREEN-20260819-R01` 完成并经 Reviewer 接受，结果见 [P5.2-B 结果报告](P5_2_B_POPU_NEURAL_MINI_RESULTS_v0.1.md)。
 
 ## 2. 冻结的 Mini 协议
 
