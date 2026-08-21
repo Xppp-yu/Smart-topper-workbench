@@ -12,12 +12,14 @@ from topper_perception.io.slp_inventory import COVER_CONDITIONS, SETTING_MODALIT
 
 def _make_subject(root: Path, setting: str, subject_id: str, *, frames: int = 2) -> Path:
     subject = root / setting / subject_id
+    raw_modalities = {"IRraw", "depthRaw"}
     for modality in SETTING_MODALITIES[setting]:
         for cover in COVER_CONDITIONS:
             group = subject / modality / cover
             group.mkdir(parents=True, exist_ok=True)
-            suffix = ".npy" if modality.endswith("raw") else ".png"
-            prefix = "" if suffix == ".npy" else "image_"
+            is_raw = modality in raw_modalities
+            suffix = ".npy" if is_raw else ".png"
+            prefix = "" if is_raw else "image_"
             for index in range(1, frames + 1):
                 (group / f"{prefix}{index:06d}{suffix}").write_bytes(b"x")
     return subject
@@ -103,10 +105,32 @@ def test_missing_depthraw_is_preserved_per_frame(tmp_path: Path) -> None:
         assert "missing_depthRaw" in values["quality_flags"]
 
 
+def test_wrong_depthraw_extension_does_not_satisfy_raw_slot(tmp_path: Path) -> None:
+    root = _make_root(tmp_path)
+    subject = _make_subject(root, "simLab", "00003", frames=1)
+    raw_dir = subject / "depthRaw" / "uncover"
+    (raw_dir / "000001.npy").unlink()
+    (raw_dir / "image_000001.png").write_bytes(b"not-raw")
+
+    row = next(
+        build_subject_cover_rows(
+            root,
+            setting="simLab",
+            subject_dir=subject,
+            cover_condition="uncover",
+            expected_frames=1,
+        )
+    ).as_dict()
+
+    assert row["depthraw_uri"] == ""
+    assert row["missing_modalities"] == "depthRaw"
+    assert row["quarantine"] is True
+
+
 def test_duplicate_frame_file_fails_closed_instead_of_sort_pairing(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
     subject = _make_subject(root, "danaLab", "00001", frames=2)
-    duplicate = subject / "RGB" / "uncover" / "000001.png"
+    duplicate = subject / "RGB" / "uncover" / "image_000001.PNG"
     duplicate.write_bytes(b"duplicate")
 
     rows = list(
