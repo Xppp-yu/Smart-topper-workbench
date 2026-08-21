@@ -2,6 +2,9 @@
   "schema_version": "p7-robustness-v0.1",
   "model_family": "small_resnet",
   "level": "record",
+  "repeats": [0, 1, 2],
+  "local_folds": [0, 1, 2, 3, 4],
+  "n_total_folds_required": 15,
   "seeds": [701, 702, 703, 704, 705],
   "conditions": {
     "density_nearest": [
@@ -13,11 +16,54 @@
     "bad_rows": [1, 2, 4],
     "bad_columns": [1, 2, 4]
   },
+  "p6_evidence": {
+    "single_threshold_source": {
+      "kind": "summary_json",
+      "path": "outputs/analysis/EXP-P6-POPU-REJECT-20260820-R01/summary.json",
+      "expected_sha256": "af9ec5d74d64699c27cc2b18976d74424fa3c475915415a9afe6ed3907666929",
+      "threshold_pointer": "/selected_rule/confidence_threshold",
+      "fallback_threshold_pointer": "/selection/threshold",
+      "scope": "PoPu P6 single-checkpoint reject rule for small_resnet at record level."
+    },
+    "ensemble_rule_source": {
+      "kind": "summary_json",
+      "path": "outputs/analysis/EXP-P6.1-POPU-CALIBRATION-20260820-R01/summary.json",
+      "expected_sha256": "d8b191ba2a8fefc2d4a91c654fa6c411f326f031514176eb4f92be919d744125",
+      "temperature_pointer": "/temperature",
+      "rule_pointer": "/rules/1/threshold",
+      "unanimous_require_field": "/rules/1/require_unanimous",
+      "scope": "PoPu P6.1 calibrated_mean_plus_unanimous: temperature=0.75, threshold=0.5 (rules[1] unanimity branch), require_unanimous=true. rules[0] pre-unanimity threshold is never applied here."
+    }
+  },
+  "stitching": {
+    "policy": "pool_first_then_metric",
+    "rationale": "Stitch every (repeat, local_fold, condition, seed) record row across all 15 folds into one frame before computing macro-F1, balanced accuracy, WAR, per-class and per-subject. Never average per-fold metrics."
+  },
+  "outputs": [
+    "per_condition_per_seed_record_metrics",
+    "delta_vs_clean_mean_std_worst",
+    "per_class_breakdown",
+    "per_subject_breakdown",
+    "worst_subjects_per_condition",
+    "error_cases",
+    "p6_single_rule_coverage_acc_war",
+    "p6_1_ensemble_rule_coverage_acc_war",
+    "condition_comparison"
+  ],
+  "fail_closed": {
+    "split_manifest_sha": true,
+    "complete_json_sha": true,
+    "checkpoint_sha": true,
+    "p6_evidence_sha": true
+  },
   "report": [
-    "record macro-F1, balanced accuracy and accuracy",
-    "delta from clean baseline",
-    "UNKNOWN/REJECT coverage, accepted accuracy and WAR",
-    "per-class and per-subject degradation",
+    "record macro-F1, balanced accuracy and accuracy (computed on stitched OOF)",
+    "delta from clean baseline at stitched level",
+    "P6 single-checkpoint coverage, accepted accuracy and WAR",
+    "P6.1 ensemble coverage, accepted accuracy and WAR (unanimity consistency rule)",
+    "per-class and per-subject degradation on stitched OOF",
+    "worst subject per condition",
+    "error cases sorted by confidence",
     "condition seed mean, standard deviation and worst case"
   ],
   "decision": "sensitivity characterization only; no hardware PASS claim without real sensor tolerances",

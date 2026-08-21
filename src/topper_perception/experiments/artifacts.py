@@ -3,12 +3,20 @@
 All JSON artifacts are written via temp-file + atomic replace so a crash never
 leaves a half-written file. Environment and Git metadata are gathered here so
 the runner can record a truthful ``manifest.json``.
+
+Per Round-4 review the JSON writer sanitizes every non-finite float
+(``NaN``, ``+Infinity``, ``-Infinity``) in the object tree into JSON
+``null`` and writes with ``allow_nan=False``. Python's default
+``json.dump(allow_nan=True)`` emits ``NaN`` / ``Infinity`` / ``-Infinity``
+literals that are NOT valid JSON (RFC 7159) and that strict consumers
+(e.g. ``json.loads``, downstream P7 reports) reject.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
@@ -19,14 +27,43 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively convert non-finite floats to ``None`` in ``obj``.
+
+    The walker descends into mappings, lists and tuples. Sets are sorted
+    before sanitization so the output remains deterministic. Every other
+    object is returned unchanged so encoders can deal with it normally.
+    Non-finite means ``NaN``, ``+Infinity`` or ``-Infinity`` as defined by
+    :func:`math.isfinite`.
+    """
+    if isinstance(obj, float):
+        if not math.isfinite(obj):
+            return None
+        return obj
+    if isinstance(obj, Mapping):
+        return {str(key): _sanitize_for_json(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+    if isinstance(obj, (set, frozenset)):
+        return [_sanitize_for_json(item) for item in sorted(obj, key=repr)]
+    return obj
+
+
 def atomic_write_json(path: Path, data: Mapping[str, Any]) -> None:
-    """Write ``data`` as pretty JSON, atomically, via a temp file + replace."""
+    """Write ``data`` as pretty JSON, atomically, with non-finite floats → null.
+
+    The object tree is walked through :func:`_sanitize_for_json` so every
+    ``NaN`` / ``Infinity`` / ``-Infinity`` becomes ``null`` before
+    encoding, and the writer is invoked with ``allow_nan=False`` to fail
+    closed if a non-finite value slips past the sanitizer.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     tmp_path = Path(tmp_name)
     try:
+        sanitized = _sanitize_for_json(data)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
+            json.dump(sanitized, handle, ensure_ascii=False, indent=2, allow_nan=False)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
