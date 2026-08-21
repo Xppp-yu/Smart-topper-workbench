@@ -1,92 +1,153 @@
-# Codex × Claude Code 协作约定
+# Smart Topper 多 Agent 协作制度 v0.2
 
-## 1. 目的
+状态：`ACTIVE`
 
-本项目采用“Codex 负责研究与验收闭环，Claude Code 负责较大实现，Experiment Runner 负责后台计算”的协作方式。目标是提高开发速度，同时避免代码一次性生成后缺少方向、证据、复用边界和阶段记录，也避免 Agent 陪跑全量实验后自行给出研究结论。
+适用范围：PoPu、SLP、PressurePose、自采数据及其后续工程化任务。
 
-## 2. 角色分工（四层）
+## 1. 核心原则
 
-当前流程从“一个 Agent 负责设计、开发、全量计算、自审和总结”调整为四层职责。完整依据见 [docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md](docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md)。
+> Owner 负责方向和最终授权；网页 GPT 负责战略讨论、任务设计和 GitHub 层二审；Claude Code 负责本地实现；Codex 负责本地真实状态、任务控制和阶段验收；Experiment Runner 负责冻结实验；GitHub 保存已提交、已推送的共享基线。
 
-### Controller（Codex）：定义与验收
+任何角色都不能把自己看不到的状态当成已验证事实。尤其要始终区分：
 
-- 定义研究问题、变量、评价协议、Gate 和单张任务单（`TASK-ID`）；
-- 判断当前数据、证据、缺口和阶段位置；
-- 给 Coding Agent 编写明确任务书，包括输入、输出、禁止范围和验收标准；
-- 审阅提交范围、代码结构、配置、测试和生成产物；
-- 更新阶段报告与项目状态，验收后完成 Git 提交；
-- 明确区分 `COMPLETE`、`READY_TO_RUN`、`HOLD` 和 `BLOCKED`。
+- **GitHub 状态**：最后一次已经 commit + push、协作者都能读取的共享基线；
+- **本地状态**：GitHub 基线，加上未提交修改、untracked 文件、ignored outputs、raw data、运行中的任务和实验。
 
-### Coding Agent（Claude Code）：实现与冒烟
+因此：`GitHub is the shared baseline, not the local latest state.`
 
-- 读代码、实现、调试、单元测试和小数据 Smoke Test；
-- 按任务书编写新模块、脚本、配置和测试；
-- 承担较大功能修改、重构以及新研究路线的代码实现；
-- 保持模块可复用，避免把逻辑全部写成一次性脚本；
-- 报告修改文件、测试结果、尚未运行的命令和已知限制；
-- **通过 Smoke Test 后即停止，不陪跑 Mini/Full 实验，不自行给出最终研究结论。**
+## 2. 角色与权限边界
 
-### Experiment Runner（本地计算机或租用服务器）：后台计算
+| 角色 | 主要职责 | 不应承担或不得自行决定 |
+|---|---|---|
+| Owner | 决定方向、优先级、预算、是否运行 Mini/Full、是否合并，以及最终 `ACCEPT / ITERATE / STOP` | 不需要亲自管理全部代码细节 |
+| 网页 GPT | 读取 GitHub 基线；讨论研究路线；起草 `TASK-ID`；审查已推送的 commit、diff、协议和脱敏证据；提供第二视角 | 不得声称掌握本地 dirty worktree、ignored outputs、raw data 或正在运行的任务；不得把 GitHub 二审当成本地验收 |
+| Claude Code | 按单个 `TASK-ID` 在指定工作树中实现、调试、测试、Smoke 和交付 | 不扩展任务范围；不自行宣布研究成功；不擅自运行 Mini/Full；未获明确授权不 commit/push |
+| Codex | 读取本地真实仓库、未提交代码、原始数据、outputs 和运行状态；核对任务冲突；复跑测试；检查证据；阶段验收；必要时做定点修复；形成正式提交 | 不把路线讨论当作实验结果；不因单元测试通过而批准 Full；不替 Owner 作最终产品授权 |
+| Experiment Runner | 按冻结的 Git SHA、resolved config、data/split manifest 和 `EXP-ID` 执行 Mini/Full，完整保存状态和产物 | 不边跑边改代码、参数或数据；不从运行成功直接推导研究结论 |
+| GitHub | 保存已确认的代码、协议、任务、测试和脱敏证据，作为团队交接中枢 | 不是 raw data 仓库，也不是本地实时状态的完整镜像 |
+| 人工/第二 Reviewer | 对 Region Reference、关键标签、产品结论和发布结论做最终复核 | 不能被自动指标或单一 Agent 完全替代 |
 
-- 基于冻结 Git SHA 与 resolved config 后台执行 Mini/Full Run；
-- 保存日志、指标、预测、图和 checkpoint；
-- 训练过程与 Agent 会话解耦，不让 Claude Code 等待；
-- 记录 `manifest.json`、`status.json` 与 `DONE.json` / `FAILED.json` 产物。
+## 3. 本地状态快照
 
-### Reviewer（Codex）：只读复核
+网页 GPT 起草新任务前，应获得以下最小快照：
 
-- 只读复核配置、数据版本、split、指标、关键图和失败样本；
-- 给出 `ACCEPT / ITERATE / STOP / INVALID`；
-- 下一轮修改必须由 Reviewer 形成新的 `EXP-ID` 和任务单。
+```text
+Branch:
+HEAD:
+Dirty:
+Untracked:
+Active TASK:
+Running jobs:
+Relevant outputs:
+Ahead/behind GitHub:
+```
 
-> Codex 同时担任 Controller 和 Reviewer，属于流程内独立复核，不等同于论文级盲审；关键产品或发布结论仍应增加人工/第二审阅者。
+仓库提供以下命令生成快照；无法自动判断的字段必须显式填写或保留 `UNSET`，不得猜测：
 
-## 3. TASK-ID 与 EXP-ID
+```powershell
+uv run python scripts\project_status_snapshot.py `
+  --active-task TASK-SLP-A02-CONTENT-QA-v0.1 `
+  --running-jobs "none" `
+  --relevant-output "outputs/reports/slp_content_qa_v0.1.json"
+```
 
-### TASK-ID：开发任务
+快照只用于交接，不代表任务已验收。
 
-示例：`TASK-P5.2-A-CNN-SCAFFOLD-v0.1`。任务单必须包含：目标与非目标、允许修改目录、输入合同、数据子集、配置、需新增/修改模块、Unit/错误/Smoke Test、禁止执行的 Mini/Full 命令、交付文件、Git commit 和已知限制。
+## 4. 标准开发流程
 
-### EXP-ID：不可变计算实验
+```text
+Owner 提出目标并决定优先级
+  -> 网页 GPT 读取 GitHub，讨论方案并起草 TASK-ID
+  -> Codex 核对本地状态、证据、冲突和任务边界
+  -> Claude Code 本地实现、测试、Smoke、handoff
+  -> Codex 读取本地代码/raw data/ignored outputs，复核并给出阶段结论
+  -> 形成边界清楚的 commit，并 push GitHub
+  -> 网页 GPT 对已推送基线做 Second Review
+  -> Owner 决定 ACCEPT / ITERATE / STOP
+```
 
-建议格式 `EXP-P5.2-<MODEL>-<SCOPE>-<YYYYMMDD>-RNN`。同一 `EXP-ID` 的 Git SHA、resolved config、数据 Manifest 和 split Manifest 一旦进入 `QUEUED` 不再修改；参数变化必须创建新 `EXP-ID`。
+### TASK-ID 最低合同
 
-## 4. 标准协作流程
+每张任务单至少包含：
 
-1. 用户提出目标或研究问题。
-2. Codex（Controller）检查当前仓库、数据证据和项目看板，确定任务位置并签发 `TASK-ID` 任务书：
-   - 目标与非目标；
-   - 输入数据与配置；
-   - 要修改或新增的模块；
-   - 最低测试与输出；
-   - 禁止推进的后续阶段；
-   - 验收条件。
-3. Claude Code（Coding Agent）完成较大代码实现、单元测试与小数据 Smoke，并提交交付清单。
-4. Experiment Runner 基于冻结 SHA 与配置后台执行 Mini/Full Run。
-5. Codex（Reviewer）审查 diff、复跑测试、复核配置/指标/图/失败样本，给出 `ACCEPT / ITERATE / STOP / INVALID`。
-6. 如果只有定位明确的小问题，由 Codex 定点修复并补回归测试；较大问题重新签发任务单交回 Claude Code。
-7. Codex 写阶段报告、更新 `docs/PROJECT_STATUS.md`，确认边界后完成 Git 提交。
+- 目标与明确非目标；
+- 允许修改的目录和禁止触碰的文件；
+- 输入、输出、数据子集和真值来源；
+- 必须新增或修改的模块；
+- Unit、错误路径和 Smoke 验证；
+- 禁止运行的 Mini/Full 命令；
+- 交付文件、已知限制和 Reviewer checklist。
 
-## 5. 每次交付必须包含
+Claude Code 的 handoff 必须报告：`TASK-ID`、修改文件、实际运行命令、测试结果、生成产物、已知失败、禁止结论、Git 状态。没有真实运行的步骤必须写成 `NOT RUN`。
 
-- 修改和新增文件清单；
-- Git 提交 ID 或明确说明尚未提交；
-- 已运行的测试命令和结果；
-- 尚未运行的全量命令；
-- 真实输出路径；
-- 已知限制和不能得出的结论；
-- 工作区是否干净。
+## 5. 冻结实验流程
 
-只有代码、空目录、配置模板或单元测试时，阶段最多标为 `READY_TO_RUN`。只有真实数据运行、产物检查和阶段报告都完成后，才可标为 `COMPLETE`。得到“无法使用”或“缺少真值”也可以完成审计任务，但相应训练路线必须保持 `HOLD/BLOCKED`。Smoke/Mini 通过不等于 Full 结论。
+正式 Mini/Full 只能在代码验收后进入 Runner：
 
-## 6. 数据与版本边界
+```text
+代码和协议验收
+  -> 冻结 Git SHA + resolved config + data manifest + split manifest + EXP-ID
+  -> Owner 明确授权预算与运行范围
+  -> Runner 执行并写 status / logs / metrics / predictions / DONE 或 FAILED
+  -> Codex 复核本地真实证据
+  -> 网页 GPT 做 GitHub 层研究二审
+  -> Owner 最终授权
+```
 
-- 外部原始数据、`outputs/` 生成物和 `configs/paths.local.json` 不进入 Git；
-- 代码、通用配置、测试和阶段报告进入 Git；
-- 不静默填补缺失值、伪造标签或强行建立样本配对；
-- 公开数据结果只支持研究链路和算法候选，不外推为自研硬件或产品验证；
-- 每个大阶段尽量使用独立提交，保证可回退、可比较和可交接。
+同一 `EXP-ID` 进入 `QUEUED` 后不得修改 SHA、配置、manifest 或 split；任何变化都必须创建新 `EXP-ID`。Smoke/Mini 通过不等于 Full 成功，运行成功也不等于研究结论成立。
 
-## 7. 当前交接点
+## 6. 并行开发规则
 
-截至 2026-08-20：P0–P5.2-B 已完成。P5.2-A 的 CPU 与 RTX 4090 CUDA Smoke 均已通过。P5.1 的 `calibrated_linear_svm` 继续保留为**传统模型候选**（record macro-F1 0.9452），不是已经覆盖 CNN 的总体最优模型。P5.2-B Mini 筛选已完成并经 Reviewer 接受（`COMPLETE — MINI_ACCEPTED`）：`EXP-P5.2-B-MINI-SCREEN-20260819-R01` 在 AutoDL（RTX 4090、`device=cuda`、git `0261113`、`dirty=false`）真实运行 `SUCCEEDED`，三候选 `matrix_mlp`/`tiny_cnn`/`small_resnet` Gate 均为 `proceed`，数据 Manifest SHA-256 校验通过，Reviewer 从 `*_best.json` 独立重算 record-level 指标后接受；Mini 只作可行性筛选，**不形成排名、不宣布冠军**，结果见 `docs/stage_reports/P5_2_B_POPU_NEURAL_MINI_RESULTS_v0.1.md`。下一交接点为 Controller/Reviewer 先冻结 P5.2-C Full 公平比较协议与配置，再另行进行代码实现与 GPU 授权；P5.2-C 完成总体候选选择并经 Reviewer 接受后才放行 P6 `UNKNOWN/REJECT`。P4b 人体区域监督因 PoPu 标注无法唯一配对而继续 HOLD。
+PoPu 和 SLP 可以并行，但必须满足以下任一条件：
+
+1. 使用不同 branch + 不同 worktree；或
+2. 使用不同 `TASK-ID`，并在任务单中声明互不重叠的文件边界。
+
+推荐：
+
+```text
+worktree/popu  -> PoPu TASK-ID
+worktree/slp   -> SLP TASK-ID
+```
+
+禁止两个 Coding Agent 在同一工作树中同时修改相同文件。发现未归属的 dirty/untracked 文件时，先保留并查明所有者，不得顺手覆盖、暂存或提交。
+
+## 7. Git 与 GitHub 规则
+
+- 私密 GitHub 只承载代码、通用配置、测试、协议、任务和脱敏证据；
+- 不提交凭据、`configs/paths.local.json`、raw RGB/IR/depth/pressure、数据压缩包、大模型 checkpoint 或敏感样本；
+- 每次只暂存当前 `TASK-ID` 已确认的精确路径，禁止 `git add .`、`git add -A`；
+- 本地 Review 在 commit/push 前完成；网页 GPT 的 Second Review 只针对已推送的 GitHub 基线；
+- 每个大阶段使用独立提交；提交信息应包含任务或阶段语义；
+- GitHub 上看不到的 outputs，应以摘要、manifest、hash、指标和必要脱敏图表交接，不伪装成仓库内证据。
+
+## 8. SLP 当前执行顺序
+
+SLP 不重新设计路线，以现有 Backlog 为准：
+
+```text
+A01 License / Data Version
+A02 Content QA
+A03 Frame Master Index
+A09 Region Schema Review
+  -> A04 Homography Audit
+  -> A05 Adapter
+  -> A07/A08 Joint and Body Geometry
+  -> A10 R0 Geometry Seed
+  -> A11 OpenCV Refinement
+  -> A12 R1 Pseudo-label Export
+  -> A13-A17 Human Review and Region Reference Freeze
+  -> B01+ Frozen R2/R3 Dataset Training and Evaluation
+```
+
+真值边界保持不变：SLP 的 RGB/IR 14 关节点是 `J0`；homography 映射是派生 `J1`；几何/OpenCV 结果是 `R0/R1` 伪标签；只有人工复核并通过 QC 的 `R2/R3` 可作为默认区域训练参考。OpenCV 不是现在越过配对、坐标和人体几何合同直接开写的独立捷径。
+
+## 9. 状态与结论口径
+
+- 只有代码、任务书、配置模板或测试：最多 `READY_TO_RUN`；
+- Smoke 通过：只能证明最小执行链路；
+- 真实数据运行且产物完成：可进入 Reviewer 验收；
+- 缺少真值或配对：审计任务可标记完成，但训练路线保持 `HOLD/BLOCKED`；
+- 公开数据结果不外推为自研硬件、舒适性、医疗效果、整夜稳定性或气囊闭环验证。
+
+若本文件与单次聊天摘要冲突，以已提交的本文件、对应 `TASK-ID` 和冻结实验协议为仓库治理基线；Owner 的新决定需通过后续版本化修改进入仓库。

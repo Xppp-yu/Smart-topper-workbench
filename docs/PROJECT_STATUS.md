@@ -48,7 +48,7 @@ P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选
 
 ## 治理口径
 
-四层角色（Controller / Coding Agent / Experiment Runner / Reviewer）、`TASK-ID` / `EXP-ID`、`QUEUED` 后参数不可变，以及“Coding Agent 通过 Smoke 后即停止、不陪跑 Mini/Full”的边界，见 [实验治理与远程 GPU 执行方案](EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md) 与 [Codex × Claude Code 协作约定](../COLLABORATION_WORKFLOW.md)。
+当前采用多 Agent 协作制度 v0.2：Owner 决策，网页 GPT 负责战略讨论、任务起草和 GitHub 二审，Claude Code 负责单任务本地实现，Codex 负责本地控制与阶段验收，Runner 只执行冻结实验，GitHub 保存已提交/已推送的共享基线。`TASK-ID` / `EXP-ID`、本地状态快照、并行 worktree、`QUEUED` 后参数不可变及 Smoke/Mini/Full 边界，见 [多 Agent 协作制度 v0.2](../COLLABORATION_WORKFLOW.md) 与 [实验治理与远程 GPU 执行方案](EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md)。
 
 ## 如何阅读与更新
 

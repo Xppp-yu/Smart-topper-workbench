@@ -46,7 +46,10 @@ SLP 已进入两阶段连续开发：S0 全量结构 Inventory 已完成（109 �
 ### Windows负责研究
 
 - 用户决定问题、方向、优先级和是否继续；
-- Codex把问题转为可运行实验，编写代码并执行；
+- 网页 GPT 基于已推送的 GitHub 基线讨论路线、起草任务并做第二视角审查；
+- Claude Code 按单个 TASK-ID 完成本地实现、测试与 Smoke；
+- Codex 核对本地真实状态、数据与 outputs，完成阶段验收和定点修复；
+- Experiment Runner 只执行已冻结并获授权的 Mini/Full；
 - 使用真实全量数据生成CSV、JSON、图片、模型和报告；
 - 同时交付结果解释、失败原因、结论边界和下一步建议；
 - 允许快速尝试多个算法版本，但必须保存配置、测试和证据。
@@ -62,7 +65,7 @@ SLP 已进入两阶段连续开发：S0 全量结构 Inventory 已完成（109 �
 详细规则见：
 
 - [项目总状态与阶段入口](docs/PROJECT_STATUS.md)
-- [Codex × Claude Code 协作约定（四层角色 / TASK-ID / EXP-ID）](COLLABORATION_WORKFLOW.md)
+- [多 Agent 协作制度 v0.2（角色 / 本地快照 / TASK-ID / EXP-ID / GitHub）](COLLABORATION_WORKFLOW.md)
 - [实验治理与远程 GPU 执行方案](docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md)
 - [验证 Workflow 总蓝图：有什么、缺什么、怎么验证、能得到什么](docs/VALIDATION_WORKFLOW_MASTER.md)
 - [阶段记录与报告约定](docs/STAGE_REPORTING_CONVENTION.md)

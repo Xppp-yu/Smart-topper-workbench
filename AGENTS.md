@@ -4,11 +4,21 @@
 
 Before changing this repository, read:
 
-1. `docs/PROJECT_STATUS.md`
-2. `docs/VALIDATION_WORKFLOW_MASTER.md`
-3. `docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md`
-4. For SLP work: `docs/SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md`
-5. For SLP work: `docs/SLP_AGENT_TASK_BACKLOG_v0.1.md`
+1. `COLLABORATION_WORKFLOW.md`
+2. `docs/PROJECT_STATUS.md`
+3. `docs/VALIDATION_WORKFLOW_MASTER.md`
+4. `docs/EXPERIMENT_GOVERNANCE_AND_GPU_EXECUTION_PLAN_v0.1.md`
+5. For SLP work: `docs/SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md`
+6. For SLP work: `docs/SLP_AGENT_TASK_BACKLOG_v0.1.md`
+
+## Collaboration roles
+
+- The Owner sets direction, priority, budget, run authorization and final acceptance.
+- Web GPT works from the pushed GitHub baseline for strategy, task drafting and second review; it must not claim knowledge of local dirty files, raw data or ignored outputs.
+- Claude Code is the main coding agent for one declared TASK-ID in one bounded worktree.
+- Codex is the local controller/reviewer and verifies the actual worktree, data, outputs and stage evidence before a formal commit.
+- Experiment Runner executes only frozen experiments.
+- GitHub is the committed and pushed shared baseline, not the latest local state.
 
 ## Scope and evidence
 
@@ -30,6 +40,8 @@ Before changing this repository, read:
 ## Implementation and testing
 
 - Preserve unrelated user changes in a dirty worktree.
+- Before editing, capture branch, HEAD, dirty/untracked state, active TASK, running jobs, relevant outputs and ahead/behind status. Use `scripts/project_status_snapshot.py` when helpful.
+- Separate parallel PoPu and SLP work with different branches/worktrees or explicit non-overlapping file boundaries.
 - Use deterministic subject-level splits and fit preprocessing on training subjects only.
 - Add focused tests for each behavior and run the relevant suite.
 - Do not run Mini/Full GPU experiments without an explicit frozen protocol and authorization.
@@ -38,4 +50,4 @@ Before changing this repository, read:
 
 ## Handoff
 
-Each handoff must include TASK-ID, files changed, commands run, test results, generated artifacts, known failures, prohibited conclusions and reviewer checklist.
+Each handoff must include TASK-ID, files changed, commands run, test results, generated artifacts, known failures, prohibited conclusions, reviewer checklist and current Git status. Mark unexecuted checks as `NOT RUN`. Do not commit or push unless the TASK explicitly authorizes it.
