@@ -198,7 +198,7 @@ def _worst_subjects(stitched, *, rule):
 15. `test_worst_subjects_uses_p6_rejected_coverage_not_raw_coverage`：by_coverage 走 P6 拒绝后 coverage，不是 raw `accepted_n/n`。
 16. `test_condition_seed_drift_stats_produces_mean_std_worst` fixture 更新：worst_subjects 4 键 placeholder 替换旧单数字段。
 
-合计新增 16 条；含 v0.1.2 既有 47 条基线 + 5 条新增非 noise 类扰动 caller-seed 保留测试（详见 §5）。
+Round-4 相关回归测试已纳入当前 `test_neural_p7_runner.py` 的 60 个测试中；与 `test_neural_p7_robustness.py` 合计 65 个，均已通过。
 
 ---
 
