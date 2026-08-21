@@ -1,6 +1,6 @@
 {
   "team_817_exploration": "E:/path/to/817论文数据探索",
   "popu_data": "E:/TeamProjects/datasets/smart-topper/popu/PoPu_data",
-  "pmd_data": "E:/TeamProjects/datasets/smart-topper/pmd"
+  "pmd_data": "E:/TeamProjects/datasets/smart-topper/pmd",
+  "slp_data": "E:/TeamProjects/datasets/smart-topper/SLP2022/SLP"
 }
-

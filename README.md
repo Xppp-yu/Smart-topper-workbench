@@ -22,7 +22,7 @@ E:\TeamProjects\datasets\smart-topper
 
 ## 当前状态
 
-`WINDOWS-RESEARCH-WORKBENCH / POPU-P6.1-COMPLETE / P7-PROTOCOL-READY`
+`WINDOWS-RESEARCH-WORKBENCH / POPU-P6.1-COMPLETE / P7-PROTOCOL-READY / SLP-S0-COMPLETE`
 
 已经完成（均有真实产物与阶段报告）：
 
@@ -38,6 +38,8 @@ E:\TeamProjects\datasets\smart-topper
 P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存中保留当前文件与最终的紧凑清单，不会把 5,160 个记录或所有压力矩阵整体载入内存。
 
 P5.2-A CNN 训练底座与 CPU/CUDA Smoke、P5.2-B Mini 筛选和 P5.2-C Full 公平比较均已完成。P5.2-C 在 RTX 4090 上完成 3 模型 × 3 repeats × 5 folds 共 45 个训练单元，Reviewer 独立复核后接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族（record macro-F1 `0.986649 ± 0.002832`）；P5.1 `calibrated_linear_svm` 保留为传统模型对照。P6/P6.1 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟已完成：总体拒识风险下降，但存在 24 条跨 repeat 持续错判，一致性规则以覆盖率换取更低 WAR，因此只保留为研究候选。P7 降密度、噪声、坏点、坏行坏列协议与扰动代码已就绪，模型扰动推理尚未运行。PoPu 结果仍不等于外部数据集、自研硬件或产品验证。
+
+SLP 已进入两阶段连续开发：S0 全量结构 Inventory 已完成（109 名受试者、1,941 个模态组合、1,939 完整、2 个 `simLab cover2/depthRaw` 组合 quarantine）。SLP 只有 RGB/IR 原始人工 14 节点，不含腰、臀等像素级身体区域真值。区域线按“节点几何 R0 → OpenCV 预标注 R1 → 人工复核 R2 → 双审共识 R3”推进；只有 R2/R3 可作为默认区域训练参考。
 
 ## 新的固定定位
 
@@ -68,6 +70,10 @@ P5.2-A CNN 训练底座与 CPU/CUDA Smoke、P5.2-B Mini 筛选和 P5.2-C Full �
 - [文件夹结构与数据流](docs/FOLDER_STRUCTURE_AND_DATA_FLOW.md)
 - [团队文件接收与验收清单](docs/TEAM_INTAKE_CHECKLIST.md)
 - [PoPu二维热力图说明](docs/POPU_HEATMAP_CONTRACT.md)
+- [SLP 两阶段连续开发总计划](docs/SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md)
+- [SLP Agent 连续开发任务清单](docs/SLP_AGENT_TASK_BACKLOG_v0.1.md)
+- [SLP S0 全量 Inventory 与标注边界](docs/stage_reports/S0_SLP_FULL_INVENTORY_AND_ANNOTATION_BOUNDARY_v0.1.md)
+- [私密 GitHub 与多 Agent 交接清单](docs/PRIVATE_GITHUB_AND_AGENT_HANDOFF_CHECKLIST_v0.1.md)
 
 ## 环境
 

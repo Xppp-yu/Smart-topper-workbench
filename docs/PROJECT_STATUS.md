@@ -1,11 +1,11 @@
 # Smart Topper Windows Research Workbench — 项目状态
 
-最后更新：2026-08-20
+最后更新：2026-08-21
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成。
 
 ## 当前一句话状态
 
-P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族。P6/P6.1 已完成 UNKNOWN/REJECT、原始重点案例复核、温度校准与三模型一致性模拟：一致性规则降低了最差受试者错误风险，但最差覆盖率未达到冻结门槛，故只作为研究候选，不作为部署规则。P7 软件鲁棒性协议、配置和确定性扰动代码已就绪，真实 checkpoint 扰动推理尚未运行；结果仍仅为 PoPu 公开数据研究证据，区域监督继续 HOLD。
+P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族。P6/P6.1 已完成 UNKNOWN/REJECT、原始重点案例复核、温度校准与三模型一致性模拟；P7 真实 checkpoint 扰动推理仍待运行。SLP 已启动 S0 全量 Inventory：109 名受试者、1,941 个模态组合中 1,939 完整，2 个 simLab `cover2/depthRaw` 组合进入 quarantine；RGB/IR 关节真值结构完整，但身体区域真值不存在，后续按“节点几何 + 图像辅助 + 人工复核”独立推进。
 
 ## 阶段看板
 
@@ -27,6 +27,17 @@ P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选
 | P6/R6 | `UNKNOWN/REJECT` 与错误分析 | COMPLETE — BOUNDED_LIMITATION_RECORDED | [P6 结果](stage_reports/P6_POPU_REJECT_RESULTS_v0.1.md)、[P6.1 校准与一致性结果](stage_reports/P6_1_POPU_CALIBRATION_ENSEMBLE_RESULTS_v0.1.md)；重点原始案例 36/36 标签与结构一致；24 条 record 跨 3 repeats 持续错判；一致性候选降低 WAR 但牺牲最差受试者覆盖率 | 停止继续调 PoPu 阈值；一致性规则仅作研究候选；进入 P7 时保留高置信错误与覆盖率边界 |
 | P7/R7 | 降密度、噪声、坏点、坏行坏列 | PROTOCOL_AND_PERTURBATIONS_READY | [P7 协议](stage_reports/P7_POPU_SOFTWARE_ROBUSTNESS_PROTOCOL_v0.1.md)、冻结配置、确定性扰动模块与测试 | 提取 15 个 Small ResNet fold checkpoint，在对应 outer-test 原始 record 上运行 clean/扰动推理；不将软件消融误称为硬件验证 |
 | P8/R8 | 冻结候选并移交 WSL 工程化 | BLOCKED_BY_P7 | 尚未开始 | 算法规格、配置、切分和限制完整冻结 |
+
+## SLP 阶段看板
+
+| 阶段 | 目标 | 状态 | 已有证据 | 下一步门槛 |
+|---|---|---|---|---|
+| S0 | 全量目录、模态与标注边界审计 | COMPLETE_WITH_QUARANTINE | [S0 结果](stage_reports/S0_SLP_FULL_INVENTORY_AND_ANNOTATION_BOUNDARY_v0.1.md)、1,941 组 Inventory、109 人标注表和摘要；2 组 depthRaw 缺失 | 精确 quarantine；进入 S1 配对与坐标审计 |
+| S1 | 跨模态配对、homography 与 overlay 审计 | READY | [两阶段路线与交接冻结](stage_reports/S0_2_SLP_TWO_PHASE_ROUTE_AND_AGENT_HANDOFF_v0.1.md)、[SLP 两阶段总计划](SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md)、[Agent 任务清单](SLP_AGENT_TASK_BACKLOG_v0.1.md) | 固定主键、映射方向、越界率和往返误差通过 |
+| S2 | Canonical Sample 与受试者拆分冻结 | PENDING_S1 | 尚未开始 | 同一受试者的全部模态/遮盖/帧严格隔离 |
+| S3 | RGB/IR/Depth/PM 单模态关节基线 | BLOCKED_BY_S2 | 尚未开始 | 每模态保留 1–2 个候选，分开报告原始与映射标签 |
+| S4 | 身体区域伪标签 Pilot 与人工复核 | CONTRACT_IMPLEMENTED / BLOCKED_BY_S1 | Region schema v0.1 已实现；SLP 无区域真值 | 12–20 人 Pilot、R1→R2/R3 复核状态和一致性 Gate |
+| S5–S7 | 遮盖压力测试、有限融合、Full 比较 | BLOCKED_BY_S3_S4 | 尚未开始 | 固定候选、拆分、预算和受试者级评价 |
 
 ## 当前数据使用边界
 

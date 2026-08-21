@@ -1,0 +1,40 @@
+{
+  "dataset": "SLP",
+  "evidence_scope": "sanitized structural inventory summary; no raw data or local paths",
+  "subjects": 109,
+  "subjects_by_setting": {
+    "danaLab": 102,
+    "simLab": 7
+  },
+  "inventory_grain": "subject x cover_condition x modality",
+  "inventory_groups": 1941,
+  "group_status_counts": {
+    "OK": 1939,
+    "ERROR": 2
+  },
+  "total_frame_files": 87255,
+  "known_quarantine": [
+    {
+      "setting": "simLab",
+      "subject_id": "00003",
+      "cover_condition": "cover2",
+      "modality": "depthRaw",
+      "missing_frame_indices": "1-45"
+    },
+    {
+      "setting": "simLab",
+      "subject_id": "00004",
+      "cover_condition": "cover2",
+      "modality": "depthRaw",
+      "missing_frame_indices": "1-45"
+    }
+  ],
+  "annotation_boundary": {
+    "original_manual_joint_modalities": ["RGB", "IR"],
+    "joint_count": 14,
+    "mapped_joint_labels_are_derived": true,
+    "pixel_level_body_region_ground_truth_present": false,
+    "default_region_training_reference_requires_human_review": true
+  },
+  "source_report": "docs/stage_reports/S0_SLP_FULL_INVENTORY_AND_ANNOTATION_BOUNDARY_v0.1.md"
+}
