@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import topper_perception.io.slp_frame_index as slp_frame_index
 from topper_perception.io.slp_frame_index import (
     build_slp_frame_index,
     build_subject_cover_rows,
@@ -127,11 +128,24 @@ def test_wrong_depthraw_extension_does_not_satisfy_raw_slot(tmp_path: Path) -> N
     assert row["quarantine"] is True
 
 
-def test_duplicate_frame_file_fails_closed_instead_of_sort_pairing(tmp_path: Path) -> None:
+def test_duplicate_frame_file_fails_closed_instead_of_sort_pairing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     root = _make_root(tmp_path)
     subject = _make_subject(root, "danaLab", "00001", frames=2)
-    duplicate = subject / "RGB" / "uncover" / "image_000001.PNG"
-    duplicate.write_bytes(b"duplicate")
+    original_scan = slp_frame_index._scan_modality_directory
+
+    def scan_with_duplicate(group_dir: Path, *, modality: str) -> dict[int, list[Path]]:
+        matches = original_scan(group_dir, modality=modality)
+        if modality == "RGB" and group_dir.name == "uncover":
+            matches[1] = [
+                group_dir / "image_000001.png",
+                group_dir / "synthetic_duplicate_for_frame_000001.png",
+            ]
+        return matches
+
+    monkeypatch.setattr(slp_frame_index, "_scan_modality_directory", scan_with_duplicate)
 
     rows = list(
         build_subject_cover_rows(
