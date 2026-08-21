@@ -25,10 +25,18 @@ from .slp_inventory import (
 
 
 CANONICAL_MODALITIES = ("RGB", "IR", "IRraw", "depth", "depthRaw", "PM")
-_FRAME_PATTERN = re.compile(
-    r"^(?:image_)?(?P<index>\d{6})\.(?P<extension>png|npy)$",
-    re.IGNORECASE,
-)
+
+# SLP uses rendered PNG frames for image-like modalities and NPY arrays for
+# raw IR/depth modalities. Keep this contract explicit so a wrongly named file
+# cannot accidentally satisfy another modality's frame slot.
+_MODALITY_FRAME_PATTERN = {
+    "RGB": re.compile(r"^image_(?P<index>\d{6})\.png$", re.IGNORECASE),
+    "IR": re.compile(r"^image_(?P<index>\d{6})\.png$", re.IGNORECASE),
+    "depth": re.compile(r"^image_(?P<index>\d{6})\.png$", re.IGNORECASE),
+    "PM": re.compile(r"^image_(?P<index>\d{6})\.png$", re.IGNORECASE),
+    "IRraw": re.compile(r"^(?P<index>\d{6})\.npy$", re.IGNORECASE),
+    "depthRaw": re.compile(r"^(?P<index>\d{6})\.npy$", re.IGNORECASE),
+}
 
 FRAME_INDEX_COLUMNS = (
     "sample_id",
@@ -67,8 +75,18 @@ class SlpFrameIndexRow:
         return {column: self.values.get(column, "") for column in FRAME_INDEX_COLUMNS}
 
 
-def _scan_modality_directory(group_dir: Path) -> dict[int, list[Path]]:
-    """Return explicit frame-index -> files mapping for one modality directory."""
+def _scan_modality_directory(group_dir: Path, *, modality: str) -> dict[int, list[Path]]:
+    """Return explicit frame-index -> files mapping for one modality directory.
+
+    Only filenames that satisfy the modality-specific SLP contract are
+    accepted. Wrong extensions/prefixes remain absent from the frame index and
+    therefore fail closed as missing rather than being silently paired.
+    """
+    try:
+        frame_pattern = _MODALITY_FRAME_PATTERN[modality]
+    except KeyError as exc:
+        raise ValueError(f"unsupported SLP modality: {modality}") from exc
+
     files_by_index: dict[int, list[Path]] = {}
     if not group_dir.is_dir():
         return files_by_index
@@ -76,7 +94,7 @@ def _scan_modality_directory(group_dir: Path) -> dict[int, list[Path]]:
     for source_file in group_dir.iterdir():
         if not source_file.is_file():
             continue
-        match = _FRAME_PATTERN.fullmatch(source_file.name)
+        match = frame_pattern.fullmatch(source_file.name)
         if match is None:
             continue
         frame_index = int(match.group("index"))
@@ -108,7 +126,10 @@ def build_subject_cover_rows(
 
     expected_modalities = _expected_modalities(setting)
     modality_files = {
-        modality: _scan_modality_directory(subject_dir / modality / cover_condition)
+        modality: _scan_modality_directory(
+            subject_dir / modality / cover_condition,
+            modality=modality,
+        )
         for modality in CANONICAL_MODALITIES
     }
 
