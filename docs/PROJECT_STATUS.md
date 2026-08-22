@@ -33,7 +33,7 @@ P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选
 | 阶段 | 目标 | 状态 | 已有证据 | 下一步门槛 |
 |---|---|---|---|---|
 | S0 | 全量目录、模态与标注边界审计 | COMPLETE_WITH_QUARANTINE | [S0 结果](stage_reports/S0_SLP_FULL_INVENTORY_AND_ANNOTATION_BOUNDARY_v0.1.md)、1,941 组 Inventory、109 人标注表和摘要；2 组 depthRaw 缺失 | 精确 quarantine；进入 S1 配对与坐标审计 |
-| S1 | 跨模态配对、homography 与 overlay 审计 | READY | [两阶段路线与交接冻结](stage_reports/S0_2_SLP_TWO_PHASE_ROUTE_AND_AGENT_HANDOFF_v0.1.md)、[SLP 两阶段总计划](SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md)、[Agent 任务清单](SLP_AGENT_TASK_BACKLOG_v0.1.md) | 固定主键、映射方向、越界率和往返误差通过 |
+| S1 | 跨模态配对、homography 与 overlay 审计 | IN_PROGRESS_WITH_A04_DIRECTION_CONFIRMED | [A03 Frame Master Index](stage_reports/S1_1_SLP_FRAME_MASTER_INDEX_v0.1.md)、[A04 Homography 审计](stage_reports/S1_2_SLP_HOMOGRAPHY_AUDIT_v0.1.md)、[SLP 两阶段总计划](SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md)、[Agent 任务清单](SLP_AGENT_TASK_BACKLOG_v0.1.md) | A05 Canonical Sample / Adapter 启动；A07 / A15 补 per-frame / per-cover overlay；simLab 方向单独复核 |
 | S2 | Canonical Sample 与受试者拆分冻结 | PENDING_S1 | 尚未开始 | 同一受试者的全部模态/遮盖/帧严格隔离 |
 | S3 | RGB/IR/Depth/PM 单模态关节基线 | BLOCKED_BY_S2 | 尚未开始 | 每模态保留 1–2 个候选，分开报告原始与映射标签 |
 | S4 | 身体区域伪标签 Pilot 与人工复核 | CONTRACT_IMPLEMENTED / BLOCKED_BY_S1 | Region schema v0.1 已实现；SLP 无区域真值 | 12–20 人 Pilot、R1→R2/R3 复核状态和一致性 Gate |
