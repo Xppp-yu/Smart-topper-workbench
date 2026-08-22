@@ -100,15 +100,16 @@ Reviewer checklist:
 
 ### TASK-SLP-A06：受试者拆分冻结
 
-- 状态：`BLOCKED_BY_A05`。
+- 状态：`DONE`。
 - 目标：在任何模型分数出现前冻结 subject-level split/folds。
-- 输出：split manifest、SHA-256、覆盖/隔离测试。
+- 已有：split manifest JSON、SHA-256 `024f5abe`、19 单元测试、6 isolation tests PASS、62 回归测试 PASS；109 subjects split 81/10/18（danaLab 80/10/10，simLab 0/0/100 TEST held-out）；90 quarantined frames 单独统计，不混入 train/val；确定性复现验证通过。
+- 入口：`docs/stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md`。
 - 要求：danaLab/simLab 分层；同一受试者所有模态、遮盖、帧不可跨 split。
 - 禁止：根据后续 TEST 分数调整受试者。
 
 ### TASK-SLP-A07：节点与遮挡 EDA
 
-- 状态：`BLOCKED_BY_A05`。
+- 状态：`BLOCKED_BY_A05_A06`（A05 COMPLETE，A06 COMPLETE，ready to start）。
 - 目标：统计14节点坐标、遮挡、越界、骨段长度和异常。
 - 输出：逐节点/遮盖/场景/受试者 QA 表与图。
 - 验收：J0 和 J1 分开报告；不把映射节点混入原始 GT 汇总。
@@ -191,7 +192,7 @@ Reviewer checklist:
 
 ### TASK-SLP-A18：节点定位轻量基线
 
-- 状态：`BLOCKED_BY_A05_A06`，可与 A10–A17 并行。
+- 状态：`BLOCKED_BY_A05_A06`（A05 COMPLETE，A06 COMPLETE，can start）。
 - 目标：验证 RGB/IR J0 与 PM/Depth J1 的学习链路。
 - 输出：Smoke/Mini，不做区域分割结论。
 - 验收：PCK/PCKh/normalized error，逐节点/遮盖/受试者报告。
