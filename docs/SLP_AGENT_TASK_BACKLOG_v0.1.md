@@ -80,18 +80,20 @@ Reviewer checklist:
 
 ### TASK-SLP-A04：Homography 数学与方向审计
 
-- 状态：`BLOCKED_BY_A03`。
+- 状态：`DIRECTION_CONFIRMED_BY_README_AND_AUDIT_AND_OVERLAY — READY_FOR_REVIEW`。
 - 目标：实现和验证 modality↔PM 坐标转换。
 - 输出：transform 模块、往返误差表、越界表、固定 overlay、测试。
+- 入口：`docs/stage_reports/S1_2_SLP_HOMOGRAPHY_AUDIT_v0.1.md`。
+- 已交付：327 / 327 矩阵可逆、max probe round-trip 4.55 × 10⁻¹³、danaLab RGB/IR direct in-bounds 99.28 % / 99.27 %、6 名抽样 overlay、27 / 27 单元测试。
 - 验收：矩阵 singular 检查、齐次除法、方向合同和单位说明齐全。
 - 停止条件：方向无法由 README/overlay 确认时，标记 BLOCKED，不凭模型分数倒推方向。
 
 ### TASK-SLP-A05：Canonical Sample 与 Adapter
 
-- 状态：`BLOCKED_BY_A03_A04`。
+- 状态：`READY_AFTER_A04_DIRECTION_CONFIRM`。
 - 目标：实现 SLP Adapter、Frame/Joint/Region 分层对象。
 - 输出：schema、adapter、provenance、quarantine、测试。
-- 验收：读取单帧时可回到全部原始 URI 和 transform；标签层不污染基础样本。
+- 验收：读取单帧时可回到全部原始 URI 和 transform；标签层不污染基础样本；保留 A04 报告中的 H 方向与 round-trip / in-bounds 字段。
 - 禁止：把 split、review status 或模型预测写回原始样本。
 
 ### TASK-SLP-A06：受试者拆分冻结
