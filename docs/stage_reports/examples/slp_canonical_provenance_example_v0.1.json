@@ -1,0 +1,128 @@
+{
+  "coordinate_frame": "raw_dataset_pixel_coordinates_no_offset",
+  "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+  "cover_condition": "uncover",
+  "frame": {
+    "ambiguous_modalities": [],
+    "cover_condition": "uncover",
+    "expected_missing_modalities": [],
+    "frame_index": 1,
+    "missing_modalities": [],
+    "modality_uris": {
+      "IR": "danaLab/00001/IR/uncover/image_000001.png",
+      "IRraw": "danaLab/00001/IRraw/uncover/000001.npy",
+      "PM": "danaLab/00001/PM/uncover/image_000001.png",
+      "RGB": "danaLab/00001/RGB/uncover/image_000001.png",
+      "depth": "danaLab/00001/depth/uncover/image_000001.png",
+      "depthRaw": "danaLab/00001/depthRaw/uncover/000001.npy"
+    },
+    "sample_id": "slp::danaLab::00001::uncover::000001",
+    "setting": "danaLab",
+    "subject_id": "00001",
+    "uri_existence_flags": {
+      "IR": "present",
+      "IRraw": "present",
+      "PM": "present",
+      "RGB": "present",
+      "depth": "present",
+      "depthRaw": "present"
+    }
+  },
+  "frame_index": 1,
+  "joint": {
+    "homography_contracts": {
+      "IR": {
+        "blocked": false,
+        "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+        "direct_joint_in_bounds_rate": 0.9841269841269841,
+        "direction_status": "UNRESOLVED_REQUIRES_DOCUMENT_AND_OVERLAY_REVIEW",
+        "error_codes": [],
+        "inverse_joint_in_bounds_rate": 0.6793650793650794,
+        "invertible": true,
+        "matrix_present": true,
+        "matrix_uri": "danaLab/00001/align_PTr_IR.npy",
+        "modality": "IR",
+        "probe_roundtrip_max_error": 4.263256414560601e-14,
+        "probe_roundtrip_mean_error": 1.7618117071164332e-14,
+        "unresolved_direction": true
+      },
+      "RGB": {
+        "blocked": false,
+        "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+        "direct_joint_in_bounds_rate": 0.9952380952380953,
+        "direction_status": "UNRESOLVED_REQUIRES_DOCUMENT_AND_OVERLAY_REVIEW",
+        "error_codes": [],
+        "inverse_joint_in_bounds_rate": 0.0,
+        "invertible": true,
+        "matrix_present": true,
+        "matrix_uri": "danaLab/00001/align_PTr_RGB.npy",
+        "modality": "RGB",
+        "probe_roundtrip_max_error": 1.1458020283384065e-13,
+        "probe_roundtrip_mean_error": 6.744678205266596e-14,
+        "unresolved_direction": true
+      },
+      "depth": {
+        "blocked": false,
+        "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+        "direct_joint_in_bounds_rate": null,
+        "direction_status": "UNRESOLVED_NO_ORIGINAL_DEPTH_J0",
+        "error_codes": [],
+        "inverse_joint_in_bounds_rate": null,
+        "invertible": true,
+        "matrix_present": true,
+        "matrix_uri": "danaLab/00001/align_PTr_depth.npy",
+        "modality": "depth",
+        "probe_roundtrip_max_error": 2.0495186137532011e-13,
+        "probe_roundtrip_mean_error": 8.856054346823132e-14,
+        "unresolved_direction": true
+      }
+    },
+    "j0_artifact_count": 14,
+    "j0_present": {
+      "IR": true,
+      "RGB": true
+    },
+    "j0_source_uris": {
+      "IR": "danaLab/00001/joints_gt_IR.mat",
+      "RGB": "danaLab/00001/joints_gt_RGB.mat"
+    },
+    "j1_status": "not_generated_A04_direction_unresolved_see_homography_contract",
+    "joint_provenance_status": "j0_only_j1_pending_a04_direction_resolution"
+  },
+  "provenance": {
+    "a03_frame_index_source": "E:\\TeamProjects\\smarttopper-slp-a05\\data\\processed\\slp\\slp_frame_index_v0.1.csv",
+    "a04_homography_audit_source": "E:\\TeamProjects\\smarttopper-slp-a05\\outputs\\analysis\\slp_homography_audit_v0.1.csv",
+    "adapter_version": "slp_canonical_adapter_v0.1",
+    "canonical_schema_version": "slp_canonical_sample_v0.1",
+    "coordinate_origin_auto_shifted": false,
+    "created_at": "2026-08-22T07:49:17.823852+00:00",
+    "generator": "topper_perception.io.slp_canonical.SlpCanonicalAdapter",
+    "model_prediction_applied": false,
+    "pairing_method": "explicit_frame_index_join_via_a03",
+    "review_status_applied": false,
+    "semantic_direction_auto_selected": false,
+    "silent_imputation": false,
+    "slp_root": "E:\\TeamProjects\\datasets\\smart-topper\\SLP2022\\SLP",
+    "subject_split_applied": false,
+    "task_id": "TASK-SLP-A05-CANONICAL-ADAPTER-v0.1"
+  },
+  "quality_flags": [
+    "coordinate_origin_unresolved",
+    "homography_unresolved_IR",
+    "homography_unresolved_RGB",
+    "homography_unresolved_depth",
+    "region_placeholder_only"
+  ],
+  "quarantine": false,
+  "quarantine_reasons": [],
+  "region": {
+    "annotation_count": 0,
+    "annotations": [],
+    "can_be_used_as_training_truth": false,
+    "placeholder_status": "A10_to_A17_pending_no_training_truth_generated_by_a05",
+    "schema_version": "slp_region_annotation_v0.1"
+  },
+  "sample_id": "slp::danaLab::00001::uncover::000001",
+  "setting": "danaLab",
+  "subject_id": "00001"
+}

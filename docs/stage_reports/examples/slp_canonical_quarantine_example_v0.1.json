@@ -1,0 +1,135 @@
+{
+  "coordinate_frame": "raw_dataset_pixel_coordinates_no_offset",
+  "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+  "cover_condition": "cover2",
+  "frame": {
+    "ambiguous_modalities": [],
+    "cover_condition": "cover2",
+    "expected_missing_modalities": [
+      "PM"
+    ],
+    "frame_index": 1,
+    "missing_modalities": [
+      "depthRaw"
+    ],
+    "modality_uris": {
+      "IR": "simLab/00003/IR/cover2/image_000001.png",
+      "IRraw": "simLab/00003/IRraw/cover2/000001.npy",
+      "PM": "",
+      "RGB": "simLab/00003/RGB/cover2/image_000001.png",
+      "depth": "simLab/00003/depth/cover2/image_000001.png",
+      "depthRaw": ""
+    },
+    "sample_id": "slp::simLab::00003::cover2::000001",
+    "setting": "simLab",
+    "subject_id": "00003",
+    "uri_existence_flags": {
+      "IR": "present",
+      "IRraw": "present",
+      "PM": "absent",
+      "RGB": "present",
+      "depth": "present",
+      "depthRaw": "absent"
+    }
+  },
+  "frame_index": 1,
+  "joint": {
+    "homography_contracts": {
+      "IR": {
+        "blocked": false,
+        "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+        "direct_joint_in_bounds_rate": null,
+        "direction_status": "UNRESOLVED_NO_PM_REFERENCE_IMAGE",
+        "error_codes": [],
+        "inverse_joint_in_bounds_rate": null,
+        "invertible": true,
+        "matrix_present": true,
+        "matrix_uri": "simLab/00003/align_PTr_IR.npy",
+        "modality": "IR",
+        "probe_roundtrip_max_error": 1.4210854715202004e-14,
+        "probe_roundtrip_mean_error": 1.1196972018737769e-14,
+        "unresolved_direction": true
+      },
+      "RGB": {
+        "blocked": false,
+        "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+        "direct_joint_in_bounds_rate": null,
+        "direction_status": "UNRESOLVED_NO_PM_REFERENCE_IMAGE",
+        "error_codes": [],
+        "inverse_joint_in_bounds_rate": null,
+        "invertible": true,
+        "matrix_present": true,
+        "matrix_uri": "simLab/00003/align_PTr_RGB.npy",
+        "modality": "RGB",
+        "probe_roundtrip_max_error": 2.2737367544323206e-13,
+        "probe_roundtrip_mean_error": 7.089588481789849e-14,
+        "unresolved_direction": true
+      },
+      "depth": {
+        "blocked": false,
+        "coordinate_origin_status": "UNRESOLVED_RAW_DATASET_COORDINATES_NO_OFFSET_APPLIED",
+        "direct_joint_in_bounds_rate": null,
+        "direction_status": "UNRESOLVED_NO_ORIGINAL_DEPTH_J0",
+        "error_codes": [],
+        "inverse_joint_in_bounds_rate": null,
+        "invertible": true,
+        "matrix_present": true,
+        "matrix_uri": "simLab/00003/align_PTr_depth.npy",
+        "modality": "depth",
+        "probe_roundtrip_max_error": 1.1368683772161603e-13,
+        "probe_roundtrip_mean_error": 6.125704921566816e-14,
+        "unresolved_direction": true
+      }
+    },
+    "j0_artifact_count": 14,
+    "j0_present": {
+      "IR": true,
+      "RGB": true
+    },
+    "j0_source_uris": {
+      "IR": "simLab/00003/joints_gt_IR.mat",
+      "RGB": "simLab/00003/joints_gt_RGB.mat"
+    },
+    "j1_status": "not_generated_A04_direction_unresolved_see_homography_contract",
+    "joint_provenance_status": "j0_only_j1_pending_a04_direction_resolution"
+  },
+  "provenance": {
+    "a03_frame_index_source": "E:\\TeamProjects\\smarttopper-slp-a05\\data\\processed\\slp\\slp_frame_index_v0.1.csv",
+    "a04_homography_audit_source": "E:\\TeamProjects\\smarttopper-slp-a05\\outputs\\analysis\\slp_homography_audit_v0.1.csv",
+    "adapter_version": "slp_canonical_adapter_v0.1",
+    "canonical_schema_version": "slp_canonical_sample_v0.1",
+    "coordinate_origin_auto_shifted": false,
+    "created_at": "2026-08-22T07:49:17.823852+00:00",
+    "generator": "topper_perception.io.slp_canonical.SlpCanonicalAdapter",
+    "model_prediction_applied": false,
+    "pairing_method": "explicit_frame_index_join_via_a03",
+    "review_status_applied": false,
+    "semantic_direction_auto_selected": false,
+    "silent_imputation": false,
+    "slp_root": "E:\\TeamProjects\\datasets\\smart-topper\\SLP2022\\SLP",
+    "subject_split_applied": false,
+    "task_id": "TASK-SLP-A05-CANONICAL-ADAPTER-v0.1"
+  },
+  "quality_flags": [
+    "coordinate_origin_unresolved",
+    "homography_unresolved_IR",
+    "homography_unresolved_RGB",
+    "homography_unresolved_depth",
+    "missing_depthRaw",
+    "region_placeholder_only"
+  ],
+  "quarantine": true,
+  "quarantine_reasons": [
+    "missing_modality:depthRaw"
+  ],
+  "region": {
+    "annotation_count": 0,
+    "annotations": [],
+    "can_be_used_as_training_truth": false,
+    "placeholder_status": "A10_to_A17_pending_no_training_truth_generated_by_a05",
+    "schema_version": "slp_region_annotation_v0.1"
+  },
+  "sample_id": "slp::simLab::00003::cover2::000001",
+  "setting": "simLab",
+  "subject_id": "00003"
+}
