@@ -1,6 +1,6 @@
 # Smart Topper Windows Research Workbench — 项目状态
 
-最后更新：2026-08-22（A07 节点遮挡 EDA 完成）
+最后更新：2026-08-22（A08 几何基础设施完成）
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成。
 
 ## 当前一句话状态
@@ -33,7 +33,7 @@ P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选
 | 阶段 | 目标 | 状态 | 已有证据 | 下一步门槛 |
 |---|---|---|---|---|
 | S0 | 全量目录、模态与标注边界审计 | COMPLETE_WITH_QUARANTINE | [S0 结果](stage_reports/S0_SLP_FULL_INVENTORY_AND_ANNOTATION_BOUNDARY_v0.1.md)、1,941 组 Inventory、109 人标注表和摘要；2 组 depthRaw 缺失 | 精确 quarantine；进入 S1 配对与坐标审计 |
-| S1 | 跨模态配对、homography 与 overlay 审计 | IN_PROGRESS_WITH_A05_A06_A07_DELIVERED | [A03 Frame Master Index](stage_reports/S1_1_SLP_FRAME_MASTER_INDEX_v0.1.md)、[A04 Homography 审计](stage_reports/S1_2_SLP_HOMOGRAPHY_AUDIT_v0.1.md)、[A05 Canonical Adapter](stage_reports/S1_3_SLP_CANONICAL_ADAPTER_v0.1.md)、[A06 Subject Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、[A07 Joint Occlusion EDA](stage_reports/S1_5_SLP_JOINT_EDA_v0.1.md)、[Examples](stage_reports/SLP_CANONICAL_SAMPLE_EXAMPLES_v0.1.md)、[SLP 两阶段总计划](SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md)、[Agent 任务清单](SLP_AGENT_TASK_BACKLOG_v0.1.md) | A07 节点 EDA 完成；A18 节点基线启动；A15 补 per-frame / per-cover overlay；B01 冻结训练表等待 A17 |
+| S1 | 跨模态配对、homography 与 overlay 审计 | IN_PROGRESS_WITH_A05_A06_A07_A08_DELIVERED | [A03 Frame Master Index](stage_reports/S1_1_SLP_FRAME_MASTER_INDEX_v0.1.md)、[A04 Homography 审计](stage_reports/S1_2_SLP_HOMOGRAPHY_AUDIT_v0.1.md)、[A05 Canonical Adapter](stage_reports/S1_3_SLP_CANONICAL_ADAPTER_v0.1.md)、[A06 Subject Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、[A07 Joint Occlusion EDA](stage_reports/S1_5_SLP_JOINT_EDA_v0.1.md)、[A08 Body Axis Geometry](stage_reports/S1_8_SLP_BODY_AXIS_GEOMETRY_v0.1.md)、[Examples](stage_reports/SLP_CANONICAL_SAMPLE_EXAMPLES_v0.1.md)、[SLP 两阶段总计划](SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md)、[Agent 任务清单](SLP_AGENT_TASK_BACKLOG_v0.1.md) | A08 几何基础设施完成（body axis + bbox + orientation，14,625 帧，27.9% accept）；A18 节点基线启动；A15 补 per-frame / per-cover overlay；B01 冻结训练表等待 A17 |
 | S2 | Canonical Sample 与受试者拆分冻结 | COMPLETE_WITH_A06_SPLIT_FROZEN | [A06 Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、manifest JSON、SHA-256 `024f5abe`；109 subjects split 81/10/18 (danaLab 80/10/10, simLab 0/0/100 TEST held-out)；quarantine 90 frames 单独统计；6 isolation tests PASS | A18 节点基线使用此 split；fold 设计由 B07 Full 协议另行冻结 |
 | S3 | RGB/IR/Depth/PM 单模态关节基线 | BLOCKED_BY_S2 | 尚未开始 | 每模态保留 1–2 个候选，分开报告原始与映射标签 |
 | S4 | 身体区域伪标签 Pilot 与人工复核 | CONTRACT_IMPLEMENTED / BLOCKED_BY_S1 | Region schema v0.1 已实现；SLP 无区域真值 | 12–20 人 Pilot、R1→R2/R3 复核状态和一致性 Gate |
