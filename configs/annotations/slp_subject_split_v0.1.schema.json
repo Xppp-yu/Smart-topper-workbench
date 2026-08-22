@@ -1,0 +1,224 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/smarttopper/smarttopper-slp-a06/configs/annotations/slp_subject_split_v0.1.schema.json",
+  "title": "SLP Subject Split Manifest v0.1",
+  "description": "Frozen subject-level train/val/test split for the SLP dataset. Generated before any model scores appear.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "adapter_version",
+    "generator",
+    "created_at",
+    "random_seed",
+    "split_rationale",
+    "split_strategy_summary",
+    "danaLab_train_frac",
+    "danaLab_val_frac",
+    "danaLab_test_frac",
+    "subject_entries",
+    "split_statistics",
+    "total_subjects",
+    "total_frames",
+    "total_quarantined_frames",
+    "total_usable_frames",
+    "danaLab_subjects",
+    "simLab_subjects",
+    "manifest_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "slp_subject_split_v0.1",
+      "description": "Schema version identifier."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "TASK-ID that produced this manifest."
+    },
+    "adapter_version": {
+      "type": "string",
+      "description": "Adapter version that produced this manifest."
+    },
+    "generator": {
+      "type": "string",
+      "description": "Fully qualified class / function that generated this manifest."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of manifest creation."
+    },
+    "random_seed": {
+      "type": "integer",
+      "description": "Fixed random seed used for reproducibility."
+    },
+    "split_rationale": {
+      "type": "string",
+      "description": "Human-readable rationale for the split design."
+    },
+    "split_strategy_summary": {
+      "type": "string",
+      "description": "One-line summary of the split strategy."
+    },
+    "danaLab_train_frac": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Target train fraction for danaLab subjects."
+    },
+    "danaLab_val_frac": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Target val fraction for danaLab subjects."
+    },
+    "danaLab_test_frac": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Target test fraction for danaLab subjects."
+    },
+    "subject_entries": {
+      "type": "array",
+      "description": "One entry per subject.",
+      "items": {
+        "$ref": "#/definitions/SubjectSplitEntry"
+      }
+    },
+    "split_statistics": {
+      "type": "array",
+      "description": "Per-split statistics.",
+      "items": {
+        "$ref": "#/definitions/SplitStatistics"
+      }
+    },
+    "total_subjects": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of subjects across all settings."
+    },
+    "total_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of frame-level canonical samples."
+    },
+    "total_quarantined_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total quarantined frames (not in any split)."
+    },
+    "total_usable_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total usable frames = total_frames - quarantined."
+    },
+    "danaLab_subjects": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of danaLab subjects."
+    },
+    "simLab_subjects": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of simLab subjects."
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of the canonical subject assignment JSON for integrity."
+    }
+  },
+  "definitions": {
+    "SubjectSplitEntry": {
+      "type": "object",
+      "required": ["subject_id", "setting", "split", "canonical_sample_count", "frame_count", "quarantine_count"],
+      "additionalProperties": false,
+      "properties": {
+        "subject_id": {
+          "type": "string",
+          "description": "SLP subject ID (zero-padded string)."
+        },
+        "setting": {
+          "type": "string",
+          "enum": ["danaLab", "simLab"],
+          "description": "SLP acquisition setting."
+        },
+        "split": {
+          "type": "string",
+          "enum": ["train", "val", "test"],
+          "description": "Assigned split."
+        },
+        "canonical_sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of canonical sample rows for this subject (one per frame)."
+        },
+        "frame_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of distinct frame indices for this subject."
+        },
+        "quarantine_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of quarantined frames for this subject."
+        }
+      }
+    },
+    "SplitStatistics": {
+      "type": "object",
+      "required": [
+        "split",
+        "subject_count",
+        "subject_count_danaLab",
+        "subject_count_simLab",
+        "total_frames",
+        "quarantined_frames",
+        "usable_frames",
+        "frame_count_danaLab",
+        "frame_count_simLab"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "split": {
+          "type": "string",
+          "enum": ["train", "val", "test"]
+        },
+        "subject_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "subject_count_danaLab": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "subject_count_simLab": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quarantined_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usable_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame_count_danaLab": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame_count_simLab": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
