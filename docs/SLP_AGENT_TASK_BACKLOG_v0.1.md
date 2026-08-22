@@ -118,10 +118,11 @@ Reviewer checklist:
 
 ### TASK-SLP-A08：人体轴与粗几何基线
 
-- 状态：`READY`（A07 DONE）。
+- 状态：`DONE`。
 - 目标：由肩、髋、thorax/head 建立 body axis、bbox 和方向置信度。
 - 输出：几何模块、overlay、错误案例、测试。
-- 验收：左右翻转、坐标旋转、节点缺失/遮挡均有测试。
+- 已有：几何模块 `src/topper_perception/io/slp_body_geometry.py`；运行脚本 `scripts/run_slp_body_geometry.py`；48 单元测试（全部通过）；几何输出 schema JSON；几何 CSV（14,625 帧）；error cases CSV（10,546 行）；QA summary JSON；overlay manifest（12 张）；A08 Stage Report；14,625 帧真实 SLP 数据运行结果：ACCEPT 4,079 (27.9%)、UNCERTAIN 5,261 (36.0%)、REJECT 5,285 (36.1%)；A03–A07 回归测试全部通过（109 passed, 1 skipped）。
+- 验收：左右翻转、坐标旋转、节点缺失/遮挡均有测试；A06 split 未被修改。
 
 ### TASK-SLP-A09：Region Ontology 与机器合同
 
@@ -132,7 +133,7 @@ Reviewer checklist:
 
 ### TASK-SLP-A10：几何 Region Seeder
 
-- 状态：`BLOCKED_BY_A08_A09`。
+- 状态：`READY`（A08 DONE，A09 IMPLEMENTED_PENDING_REVIEW）。
 - 目标：用节点、人体轴和体型先验生成 R0 polygon。
 - 输出：head/shoulder/thorax/waist/pelvis/thigh/lower-leg 几何 proposal。
 - 验收：确定性、无自交、边界合法、左右一致；缺关键节点时 reject/uncertain。
@@ -165,7 +166,7 @@ Reviewer checklist:
 
 ### TASK-SLP-A14：Pilot 采样 Manifest
 
-- 状态：`BLOCKED_BY_A03_A07`。
+- 状态：`READY`（A03 COMPLETE，A07 COMPLETE）。
 - 目标：选择12–20人 Pilot，覆盖 setting、cover、体型、方向、遮挡和区域。
 - 输出：冻结 manifest 和抽样理由。
 - 验收：抽样发生在看区域模型结果前；不以“容易标”替代代表性。
