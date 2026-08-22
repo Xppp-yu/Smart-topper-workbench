@@ -737,8 +737,53 @@ def test_j0_image_bounds() -> None:
 
 
 def test_j1_image_bounds() -> None:
-    assert J1_IMAGE_BOUNDS["width"] == 192
-    assert J1_IMAGE_BOUNDS["height"] == 84
+    """PM image confirmed from real SLP data: width=84, height=192."""
+    assert J1_IMAGE_BOUNDS["width"] == 84
+    assert J1_IMAGE_BOUNDS["height"] == 192
+
+
+def test_j1_out_of_bounds_pm_84x192() -> None:
+    """Test J1 (PM space) out-of-bounds uses PM dimensions 84x192.
+
+    PM bounds: width=84, height=192.
+    - Joint at x=90 (>84) is out of bounds.
+    - Joint at y=200 (>192) is out of bounds.
+    - Joint at x=80,y=100 is in bounds.
+    """
+    records = [
+        {
+            "sample_id": "s1",
+            "setting": "danaLab",
+            "subject_id": "00001",
+            "cover_condition": "uncover",
+            "frame_index": 1,
+            "quarantine": False,
+            "joints": [
+                # Joint 0: x=90 (OOB: 90 >= 84)
+                JointCoords(x=90.0, y=50.0, confidence=1.0),
+                # Joint 1: y=200 (OOB: 200 >= 192)
+                JointCoords(x=40.0, y=200.0, confidence=1.0),
+                # Joint 2: x=80,y=100 (in bounds)
+                JointCoords(x=80.0, y=100.0, confidence=1.0),
+            ] + [
+                JointCoords(x=40.0, y=50.0, confidence=1.0) for _ in range(3, JOINT_COUNT)
+            ],
+        }
+    ]
+
+    stats = compute_per_joint_stats(records, "J1_PM", J1_IMAGE_BOUNDS)
+
+    # Joint 0: x=90 >= 84 → OOB.
+    assert stats[0].out_of_bounds_count == 1
+    assert stats[0].out_of_bounds_rate == 1.0
+
+    # Joint 1: y=200 >= 192 → OOB.
+    assert stats[1].out_of_bounds_count == 1
+    assert stats[1].out_of_bounds_rate == 1.0
+
+    # Joint 2: x=80 < 84 AND y=100 < 192 → in bounds.
+    assert stats[2].out_of_bounds_count == 0
+    assert stats[2].out_of_bounds_rate == 0.0
 
 
 # ---------------------------------------------------------------------------

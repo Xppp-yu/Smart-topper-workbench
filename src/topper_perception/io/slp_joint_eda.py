@@ -100,9 +100,11 @@ VISIBLE = 1
 # These are conservative outer bounds; actual per-subject bounds may vary.
 DANALAB_RGB_WIDTH = 576
 DANALAB_RGB_HEIGHT = 1024
-# PM image bounds.
-PM_WIDTH = 192
-PM_HEIGHT = 84
+# PM image bounds (confirmed from real SLP data):
+#   width  = 84 pixels
+#   height = 192 pixels
+PM_WIDTH = 84
+PM_HEIGHT = 192
 
 # J0 in-bounds check uses RGB image bounds.
 J0_IMAGE_BOUNDS = {"width": DANALAB_RGB_WIDTH, "height": DANALAB_RGB_HEIGHT}
