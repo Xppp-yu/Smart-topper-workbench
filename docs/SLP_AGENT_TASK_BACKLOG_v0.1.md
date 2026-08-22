@@ -90,9 +90,11 @@ Reviewer checklist:
 
 ### TASK-SLP-A05：Canonical Sample 与 Adapter
 
-- 状态：`READY_AFTER_A04_DIRECTION_CONFIRM`。
+- 状态：`IMPLEMENTED_AND_REAL_RUN_COMPLETE — READY_FOR_REVIEW`。
 - 目标：实现 SLP Adapter、Frame/Joint/Region 分层对象。
 - 输出：schema、adapter、provenance、quarantine、测试。
+- 已有：`src/topper_perception/io/slp_canonical.py`、`scripts/build_slp_canonical_samples.py`、`tests/test_slp_canonical_adapter.py`（20 测）、`configs/annotations/slp_canonical_sample_v0.1.schema.json`、`docs/stage_reports/S1_3_SLP_CANONICAL_ADAPTER_v0.1.md`、`docs/stage_reports/SLP_CANONICAL_SAMPLE_EXAMPLES_v0.1.md`；真实 SLP 全量 14,715 canonical sample、quarantine 90（与 A03 / S0 已知 90 个 depthRaw 缺失一致）、traceable_rate 0.9883、A04 几何字段全部保留。
+- 入口：`docs/stage_reports/S1_3_SLP_CANONICAL_ADAPTER_v0.1.md`。
 - 验收：读取单帧时可回到全部原始 URI 和 transform；标签层不污染基础样本；保留 A04 报告中的 H 方向与 round-trip / in-bounds 字段。
 - 禁止：把 split、review status 或模型预测写回原始样本。
 
