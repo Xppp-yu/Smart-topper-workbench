@@ -109,14 +109,16 @@ Reviewer checklist:
 
 ### TASK-SLP-A07：节点与遮挡 EDA
 
-- 状态：`BLOCKED_BY_A05_A06`（A05 COMPLETE，A06 COMPLETE，ready to start）。
+- 状态：`DONE`。
 - 目标：统计14节点坐标、遮挡、越界、骨段长度和异常。
 - 输出：逐节点/遮盖/场景/受试者 QA 表与图。
+- 已有：J0/J1 分开报告（14,625 usable frames，90 quarantined）；逐节点遮挡率（85%/84.8% 头部，69-92% 躯干/四肢）；越界分析（头部占 70%）；147 J0 异常 + 141 J1 异常；骨段长度统计；Group-level 分组统计；5 个可视化图；28 单元测试 PASS；A08 无阻塞。
+- 入口：`docs/stage_reports/S1_5_SLP_JOINT_EDA_v0.1.md`。
 - 验收：J0 和 J1 分开报告；不把映射节点混入原始 GT 汇总。
 
 ### TASK-SLP-A08：人体轴与粗几何基线
 
-- 状态：`BLOCKED_BY_A07`。
+- 状态：`READY`（A07 DONE）。
 - 目标：由肩、髋、thorax/head 建立 body axis、bbox 和方向置信度。
 - 输出：几何模块、overlay、错误案例、测试。
 - 验收：左右翻转、坐标旋转、节点缺失/遮挡均有测试。
