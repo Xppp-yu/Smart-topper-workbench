@@ -735,7 +735,7 @@ class MockRegionLabelProvider(RegionLabelProvider):
     ) -> None:
         # Set created_at first since it's used in _build_mock_manifest
         self.created_at = datetime.now(timezone.utc).isoformat()
-        
+
         # Build mock manifest
         self.region_schema = region_schema or RegionSchema()
         mock_manifest = self._build_mock_manifest(sample_ids)

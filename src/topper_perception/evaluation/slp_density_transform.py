@@ -297,7 +297,7 @@ def select_local_high_density_positions(
         cc_low = min(margin, w - margin - 1) if w > 2 * margin else 0
         cr_high = max(margin + 1, h - margin) if h > 2 * margin else h
         cc_high = max(margin + 1, w - margin) if w > 2 * margin else w
-        
+
         cr = rng.integers(cr_low, cr_high)
         cc = rng.integers(cc_low, cc_high)
         cluster_centers.append((cr, cc))

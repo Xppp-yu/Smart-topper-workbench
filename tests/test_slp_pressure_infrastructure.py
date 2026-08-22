@@ -152,7 +152,7 @@ def region_schema():
     expected_path = Path(__file__).parent.parent / "configs" / "annotations" / "slp_region_annotation_v0.1.schema.json"
     if expected_path.exists():
         return RegionSchema(expected_path)
-    
+
     # Create a minimal mock schema
     class MockRegionSchema:
         def __init__(self):
@@ -786,7 +786,7 @@ class TestDensityTransform:
         mask2 = select_local_high_density_positions((100, 50), 0.2, seed=42)
 
         np.testing.assert_array_equal(mask1, mask2)
-        
+
         # Verify it's sparse
         assert mask1.sum() < mask1.size
 
