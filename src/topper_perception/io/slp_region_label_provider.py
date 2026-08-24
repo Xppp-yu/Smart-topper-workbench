@@ -319,6 +319,16 @@ class LabelValidationError(RegionLabelProviderError):
     pass
 
 
+class RegionIdValidationError(RegionLabelProviderError):
+    """Unknown region_id in label manifest."""
+    pass
+
+
+class PolygonValidationError(RegionLabelProviderError):
+    """Malformed polygon in label manifest."""
+    pass
+
+
 class RegionLabelProvider:
     """Provider for region labels from A17 frozen manifest.
 
@@ -461,6 +471,7 @@ class RegionLabelProvider:
     def get_sample_labels(
         self,
         sample_id: str,
+        require_training_ready: bool | None = None,
     ) -> SampleLabels:
         """Get all labels for one sample.
 
@@ -468,6 +479,11 @@ class RegionLabelProvider:
         ----------
         sample_id : str
             The sample_id to look up.
+        require_training_ready : bool | None
+            Override the instance-level require_training_ready setting.
+            - True: only return R2/R3 + accepted/edited/adjudicated labels.
+            - False: return all labels including R0/R1 (for analysis).
+            - None: use the instance-level setting.
 
         Returns
         -------
@@ -479,8 +495,15 @@ class RegionLabelProvider:
         LabelNotFoundError
             If no labels exist for the sample.
         LabelValidationError
-            If validation fails.
+            If validation fails or no training-ready labels are found.
         """
+        # Resolve per-call override or use instance default
+        require_trainable = (
+            require_training_ready
+            if require_training_ready is not None
+            else self.require_training_ready
+        )
+
         entries = self._sample_index.get(sample_id, [])
 
         if not entries:
@@ -492,12 +515,16 @@ class RegionLabelProvider:
         # Parse entries into RegionLabel objects
         labels: list[RegionLabel] = []
         for entry in entries:
-            label = self._parse_label_entry(entry)
-            if label is None:
-                continue
+            try:
+                label = self._parse_label_entry(entry)
+            except (RegionIdValidationError, PolygonValidationError, LabelValidationError) as e:
+                # Fail-closed: malformed labels must not be silently skipped
+                raise LabelValidationError(
+                    f"Invalid label entry for sample_id={sample_id}: {e}"
+                ) from e
 
             # Filter if training-ready is required
-            if self.require_training_ready:
+            if require_trainable:
                 is_trainable = (
                     label.label_tier in TRAINABLE_TIERS
                     and label.review_status in ACCEPTED_REVIEW_STATUSES
@@ -508,12 +535,17 @@ class RegionLabelProvider:
             labels.append(label)
 
         if not labels:
-            raise LabelNotFoundError(
-                f"No training-ready labels found for sample_id: {sample_id}. "
-                f"Found {len(entries)} entries but none meet training criteria "
-                f"(tier in {sorted(TRAINABLE_TIERS)} + review in "
-                f"{sorted(ACCEPTED_REVIEW_STATUSES)})."
-            )
+            if require_trainable:
+                raise LabelNotFoundError(
+                    f"No training-ready labels found for sample_id: {sample_id}. "
+                    f"Found {len(entries)} entries but none meet training criteria "
+                    f"(tier in {sorted(TRAINABLE_TIERS)} + review in "
+                    f"{sorted(ACCEPTED_REVIEW_STATUSES)})."
+                )
+            else:
+                raise LabelNotFoundError(
+                    f"No labels found for sample_id: {sample_id}."
+                )
 
         # Get sample metadata from first entry
         first = entries[0]
@@ -571,7 +603,9 @@ class RegionLabelProvider:
 
         for sample_id in self._sample_index:
             try:
-                sample_labels = self.get_sample_labels(sample_id)
+                sample_labels = self.get_sample_labels(
+                    sample_id, require_training_ready=require_training_ready
+                )
             except LabelNotFoundError:
                 continue
 
@@ -604,70 +638,130 @@ class RegionLabelProvider:
     # -- Private helpers ------------------------------------------------------
 
     def _parse_label_entry(self, entry: dict[str, Any]) -> RegionLabel | None:
-        """Parse a manifest entry into a RegionLabel."""
+        """Parse a manifest entry into a RegionLabel.
+
+        Raises
+        ------
+        RegionIdValidationError
+            If region_id is unknown according to schema.
+        PolygonValidationError
+            If polygon data is malformed.
+        """
+        # Validate region_id against schema (fail-closed)
+        region_id = str(entry.get("region_id", ""))
+        if not region_id:
+            raise LabelValidationError(
+                f"Missing region_id in annotation {entry.get('annotation_id', 'unknown')}"
+            )
+        if not self.region_schema.is_valid_region_id(region_id):
+            raise RegionIdValidationError(
+                f"Unknown region_id '{region_id}' in annotation {entry.get('annotation_id', 'unknown')}. "
+                f"Valid region_ids: {self.region_schema.region_ids}"
+            )
+
+        # Validate sample_id
+        sample_id = str(entry.get("sample_id", ""))
+        if not sample_id:
+            raise LabelValidationError(
+                f"Missing sample_id in annotation for region_id={region_id}"
+            )
+
+        # Validate annotation_id
+        annotation_id = str(entry.get("annotation_id", ""))
+        if not annotation_id:
+            raise LabelValidationError(
+                f"Missing annotation_id for sample_id={sample_id}, region_id={region_id}"
+            )
+
+        # Parse polygon (fail-closed for malformed)
+        polygon_data = entry.get("final_polygon") or entry.get("proposal_polygon")
+        if polygon_data is None:
+            raise PolygonValidationError(
+                f"Missing polygon (final_polygon/proposal_polygon) for "
+                f"annotation_id={annotation_id}"
+            )
+
         try:
-            # Validate region_id against schema
-            region_id = str(entry.get("region_id", ""))
-            if not self.region_schema.is_valid_region_id(region_id):
-                # Log warning but don't fail
-                pass
-
-            # Parse polygon
-            polygon_data = entry.get("final_polygon") or entry.get("proposal_polygon")
-            if polygon_data is None:
-                return None
-
             polygon = np.array(polygon_data, dtype=np.float64)
-            if polygon.ndim != 2 or polygon.shape[1] != 2:
-                return None
-
-            # Parse provenance
-            prov_data = entry.get("provenance", {})
-            provenance = LabelProvenance(
-                source_artifacts=tuple(prov_data.get("source_artifacts", [])),
-                generator=str(prov_data.get("generator", "")),
-                created_at=str(prov_data.get("created_at", "")),
-                algorithm_version=prov_data.get("algorithm_version"),
-                parameter_hash=prov_data.get("parameter_hash"),
+        except (ValueError, TypeError) as e:
+            raise PolygonValidationError(
+                f"Invalid polygon data for annotation_id={annotation_id}: {e}"
             )
 
-            # Quality flags
-            flags = tuple(entry.get("quality_flags", []))
-
-            # Determine ignore/uncertain status
-            review_status = str(entry.get("review_status", "pending"))
-            is_ignore = (
-                review_status in REJECTED_REVIEW_STATUSES
-                or "rejected" in flags
+        if polygon.ndim != 2:
+            raise PolygonValidationError(
+                f"Polygon must be 2D array, got {polygon.ndim}D for "
+                f"annotation_id={annotation_id}"
             )
-            is_uncertain = (
-                review_status in PENDING_REVIEW_STATUSES
-                or review_status == "uncertain"
+        if polygon.shape[1] != 2:
+            raise PolygonValidationError(
+                f"Polygon must have shape (N, 2), got {polygon.shape} for "
+                f"annotation_id={annotation_id}"
             )
-
-            return RegionLabel(
-                annotation_id=str(entry.get("annotation_id", "")),
-                sample_id=str(entry.get("sample_id", "")),
-                setting=str(entry.get("setting", "")),
-                subject_id=str(entry.get("subject_id", "")),
-                cover_condition=str(entry.get("cover_condition", "")),
-                frame_index=int(entry.get("frame_index", 0)),
-                region_id=region_id,
-                label_tier=str(entry.get("label_tier", "R0")),
-                label_source=str(entry.get("label_source", "")),
-                review_status=review_status,
-                polygon=polygon,
-                alignment_confidence=float(entry.get("alignment_confidence", 0.0)),
-                anatomical_confidence=float(entry.get("anatomical_confidence", 0.0)),
-                quality_flags=flags,
-                provenance=provenance,
-                is_ignore=is_ignore,
-                is_uncertain=is_uncertain,
+        if polygon.shape[0] < 3:
+            raise PolygonValidationError(
+                f"Polygon must have at least 3 vertices, got {polygon.shape[0]} for "
+                f"annotation_id={annotation_id}"
             )
 
-        except (ValueError, TypeError, KeyError) as e:
-            # Skip invalid entries
-            return None
+        # Validate split (fail-closed for unknown split)
+        setting = str(entry.get("setting", ""))
+        subject_id = str(entry.get("subject_id", ""))
+        key = f"{setting}::{subject_id}"
+        if key and key not in self._a06_split:
+            # Unknown split in A06 - fail-closed
+            raise LabelValidationError(
+                f"Unknown split for {key} (sample_id={sample_id}). "
+                "Subject must be in A06 split manifest."
+            )
+
+        # Parse provenance
+        prov_data = entry.get("provenance", {})
+        provenance = LabelProvenance(
+            source_artifacts=tuple(prov_data.get("source_artifacts", [])),
+            generator=str(prov_data.get("generator", "")),
+            created_at=str(prov_data.get("created_at", "")),
+            algorithm_version=prov_data.get("algorithm_version"),
+            parameter_hash=prov_data.get("parameter_hash"),
+        )
+
+        # Quality flags
+        flags_raw = entry.get("quality_flags", [])
+        if isinstance(flags_raw, str):
+            flags = tuple(f.strip() for f in flags_raw.split(";") if f.strip())
+        else:
+            flags = tuple(flags_raw)
+
+        # Determine ignore/uncertain status
+        review_status = str(entry.get("review_status", "pending"))
+        is_ignore = (
+            review_status in REJECTED_REVIEW_STATUSES
+            or "rejected" in flags
+        )
+        is_uncertain = (
+            review_status in PENDING_REVIEW_STATUSES
+            or review_status == "uncertain"
+        )
+
+        return RegionLabel(
+            annotation_id=annotation_id,
+            sample_id=sample_id,
+            setting=setting,
+            subject_id=subject_id,
+            cover_condition=str(entry.get("cover_condition", "")),
+            frame_index=int(entry.get("frame_index", 0)),
+            region_id=region_id,
+            label_tier=str(entry.get("label_tier", "R0")),
+            label_source=str(entry.get("label_source", "")),
+            review_status=review_status,
+            polygon=polygon,
+            alignment_confidence=float(entry.get("alignment_confidence", 0.0)),
+            anatomical_confidence=float(entry.get("anatomical_confidence", 0.0)),
+            quality_flags=flags,
+            provenance=provenance,
+            is_ignore=is_ignore,
+            is_uncertain=is_uncertain,
+        )
 
     def _build_masks(
         self,

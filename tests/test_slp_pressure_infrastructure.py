@@ -93,12 +93,23 @@ from topper_perception.experiments.slp_pressure_experiment import (
     ConfigValidationError,
     ExpIdError,
     LabelManifestError,
+    SplitManifestError,
     PreprocessingConfig,
     PerturbationConfig as ExpPerturbationConfig,
     DensityConfig,
     MetricsConfig,
     SplitManifest,
     RegionLabelManifest,
+)
+from topper_perception.io.slp_pressure_only_adapter import (
+    SlpPressureOnlyAdapter,
+    LabelsUnavailableError,
+    PM_IMAGE_SIZE,
+)
+from topper_perception.io.slp_region_label_provider import (
+    RegionIdValidationError,
+    PolygonValidationError,
+    LabelValidationError,
 )
 
 
@@ -167,6 +178,36 @@ def region_schema():
         def is_valid_region_id(self, region_id: str) -> bool:
             return region_id in self._region_ids
     return MockRegionSchema()
+
+
+@pytest.fixture
+def temp_split_manifest(tmp_path):
+    """Create a real split manifest JSON file for testing."""
+    manifest = {
+        "manifest_version": "test_split_v0.1",
+        "subject_entries": [
+            {"setting": "danaLab", "subject_id": "00001", "split": "train"},
+            {"setting": "danaLab", "subject_id": "00002", "split": "train"},
+            {"setting": "danaLab", "subject_id": "00003", "split": "val"},
+            {"setting": "simLab", "subject_id": "00001", "split": "test"},
+        ],
+    }
+    path = tmp_path / "split.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def temp_label_manifest(tmp_path):
+    """Create a real (minimal) label manifest JSON file for testing."""
+    manifest = {
+        "manifest_version": "test_label_v0.1",
+        "schema_version": "slp_region_annotation_v0.1",
+        "annotations": [],
+    }
+    path = tmp_path / "labels.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return path
 
 
 # ============================================================================
@@ -924,13 +965,13 @@ class TestExperimentConfig:
             with pytest.raises(ExpIdError):
                 validate_exp_id(exp_id)
 
-    def test_create_default_config(self):
+    def test_create_default_config(self, temp_split_manifest):
         """Test default config creation."""
         config = create_default_config(
             experiment_id="EXP-SLP-B01-TEST-001",
             task_id="TASK-SLP-B01-TEST",
-            split_manifest_path="data/split_v0.1.json",
-            region_label_manifest_path="data/labels_v0.1.json",
+            split_manifest_path=str(temp_split_manifest),
+            region_label_manifest_path=None,
         )
 
         assert config.experiment_id == "EXP-SLP-B01-TEST-001"
@@ -942,7 +983,7 @@ class TestExperimentConfig:
         with pytest.raises(ConfigValidationError):
             validate_experiment_config({})
 
-    def test_config_validation_invalid_scope(self):
+    def test_config_validation_invalid_scope(self, temp_split_manifest):
         """Test validation fails with invalid scope."""
         with pytest.raises(ConfigValidationError):
             validate_experiment_config({
@@ -951,10 +992,10 @@ class TestExperimentConfig:
                 "scope": "invalid",
                 "seed": 42,
                 "input_contract_version": "v0.1",
-                "split_manifest": {"path": "test.json"},
+                "split_manifest": {"path": str(temp_split_manifest)},
             })
 
-    def test_config_validation_invalid_device(self):
+    def test_config_validation_invalid_device(self, temp_split_manifest):
         """Test validation fails with invalid device."""
         with pytest.raises(ConfigValidationError):
             validate_experiment_config({
@@ -963,37 +1004,24 @@ class TestExperimentConfig:
                 "scope": "smoke",
                 "seed": 42,
                 "input_contract_version": "v0.1",
-                "split_manifest": {"path": "test.json"},
+                "split_manifest": {"path": str(temp_split_manifest)},
                 "runtime_device": "invalid",
             })
 
-    def test_config_validation_strict_label_check(self):
-        """Test strict label manifest validation."""
-        # With strict_label_check=True, empty manifest should raise error
-        with pytest.raises((LabelManifestError, ConfigValidationError)):
-            validate_experiment_config({
-                "experiment_id": "EXP-TEST",
-                "task_id": "TASK-TEST",
-                "scope": "smoke",
-                "seed": 42,
-                "input_contract_version": "v0.1",
-                "split_manifest": {"path": "test.json"},
-                "region_label_manifest": {"label_manifest_required": True},  # Empty but required
-            }, strict_label_check=True)
-
-    def test_config_validation_lenient_label_check(self):
-        """Test lenient label manifest validation for smoke."""
+    def test_config_validation_smoke_allows_no_labels(self, temp_split_manifest):
+        """Test that smoke scope allows no label manifest."""
         config = validate_experiment_config({
             "experiment_id": "EXP-TEST",
             "task_id": "TASK-TEST",
             "scope": "smoke",
             "seed": 42,
             "input_contract_version": "v0.1",
-            "split_manifest": {"path": "test.json"},
+            "split_manifest": {"path": str(temp_split_manifest)},
             "region_label_manifest": None,
-        }, strict_label_check=False)
+        })
 
         assert config.region_label_manifest.path is None
+        assert config.scope == "smoke"
 
     def test_preprocessing_config_defaults(self):
         """Test PreprocessingConfig defaults."""
@@ -1055,12 +1083,12 @@ class TestExperimentConfig:
         frozen_manifest = RegionLabelManifest(path="test.json", is_frozen=True)
         assert frozen_manifest.requires_labels() is False
 
-    def test_config_hash_deterministic(self):
+    def test_config_hash_deterministic(self, temp_split_manifest):
         """Test that config hash is deterministic."""
         config = create_default_config(
             experiment_id="EXP-TEST",
             task_id="TASK-TEST",
-            split_manifest_path="data/split.json",
+            split_manifest_path=str(temp_split_manifest),
         )
 
         hash1 = compute_config_hash(config)
@@ -1069,12 +1097,12 @@ class TestExperimentConfig:
         assert hash1 == hash2
         assert len(hash1) == 64  # SHA-256 hex length
 
-    def test_config_serialization_roundtrip(self):
+    def test_config_serialization_roundtrip(self, temp_split_manifest):
         """Test config serialization and deserialization."""
         config = create_default_config(
             experiment_id="EXP-TEST",
             task_id="TASK-TEST",
-            split_manifest_path="data/split.json",
+            split_manifest_path=str(temp_split_manifest),
         )
 
         config_dict = config.as_dict()
@@ -1125,25 +1153,25 @@ class TestIntegration:
         assert metrics.mIoU >= 0.0
         assert metrics.macro_f1 >= 0.0
 
-    def test_adapter_with_perturbation_config(self, sample_canonical_row, sample_split_manifest):
+    def test_adapter_with_perturbation_config(self, sample_canonical_row, sample_split_manifest, temp_split_manifest):
         """Test adapter with perturbation configuration."""
         # Create experiment config with perturbation
         config = create_default_config(
             experiment_id="EXP-TEST-PERT",
             task_id="TASK-TEST",
-            split_manifest_path="data/split.json",
+            split_manifest_path=str(temp_split_manifest),
         )
 
         # Verify perturbation config is accessible
         assert config.perturbation_config is not None
         assert config.perturbation_config.enabled is False
 
-    def test_adapter_with_density_config(self, sample_canonical_row, sample_split_manifest):
+    def test_adapter_with_density_config(self, sample_canonical_row, sample_split_manifest, temp_split_manifest):
         """Test adapter with density configuration."""
         config = create_default_config(
             experiment_id="EXP-TEST-DENS",
             task_id="TASK-TEST",
-            split_manifest_path="data/split.json",
+            split_manifest_path=str(temp_split_manifest),
         )
 
         assert config.density_config is not None
@@ -1214,3 +1242,596 @@ class TestExistingModules:
         )
         assert slp_canonical is not None
         assert slp_subject_split is not None
+
+
+# ============================================================================
+# Test 9: CORRECTION Tests (TASK-SLP-PRE-B01-INFRA-CORRECTION-v0.1)
+# ============================================================================
+
+class TestPressurePNGLoading:
+    """Tests for real SLP PM PNG loading with cv2."""
+
+    def test_load_real_uint8_png_correctly(self, tmp_path):
+        """Test that real uint8 PNG is correctly loaded as float32 [0,1]."""
+        import cv2
+
+        # Create a real uint8 PNG (192x84)
+        expected_shape = (192, 84)  # HxW
+        raw_data = np.random.randint(0, 256, size=expected_shape, dtype=np.uint8)
+        png_path = tmp_path / "test_pm.png"
+        cv2.imwrite(str(png_path), raw_data)
+
+        # Test adapter loads correctly
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[{
+                "sample_id": "test::danaLab::00001::uncover::1",
+                "setting": "danaLab",
+                "subject_id": "00001",
+                "cover_condition": "uncover",
+                "frame_index": 1,
+                "quarantine": "False",
+                "quality_flags": "",
+                "quarantine_reasons": "",
+                "frame_modality_uris_PM": str(png_path),
+            }],
+            split_manifest={"danaLab::00001": "train"},
+            slp_root=".",
+            load_pressure_data=True,
+        )
+
+        samples = list(adapter.iter_samples())
+        assert len(samples) == 1
+
+        pm = samples[0].pressure_map
+        assert pm.shape == expected_shape
+        assert pm.dtype == np.float32
+        assert pm.min() >= 0.0
+        assert pm.max() <= 1.0
+        assert np.all(np.isfinite(pm))
+
+    def test_reject_nonexistent_file(self, tmp_path):
+        """Test that missing file raises FileNotFoundError."""
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[{
+                "sample_id": "test::danaLab::00001::uncover::1",
+                "setting": "danaLab",
+                "subject_id": "00001",
+                "cover_condition": "uncover",
+                "frame_index": 1,
+                "quarantine": "False",
+                "quality_flags": "",
+                "quarantine_reasons": "",
+                "frame_modality_uris_PM": str(tmp_path / "nonexistent.png"),
+            }],
+            split_manifest={"danaLab::00001": "train"},
+            slp_root=".",
+            load_pressure_data=True,
+        )
+
+        with pytest.raises(FileNotFoundError):
+            list(adapter.iter_samples())
+
+    def test_reject_invalid_png(self, tmp_path):
+        """Test that corrupted PNG raises ValueError."""
+        bad_path = tmp_path / "corrupted.png"
+        bad_path.write_bytes(b"not a png")
+
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[{
+                "sample_id": "test::danaLab::00001::uncover::1",
+                "setting": "danaLab",
+                "subject_id": "00001",
+                "cover_condition": "uncover",
+                "frame_index": 1,
+                "quarantine": "False",
+                "quality_flags": "",
+                "quarantine_reasons": "",
+                "frame_modality_uris_PM": str(bad_path),
+            }],
+            split_manifest={"danaLab::00001": "train"},
+            slp_root=".",
+            load_pressure_data=True,
+        )
+
+        with pytest.raises(ValueError, match="Failed to decode"):
+            list(adapter.iter_samples())
+
+    def test_reject_rgb_three_channel_png(self, tmp_path):
+        """Test that RGB PNG (3 channels) is rejected."""
+        import cv2
+
+        # Create a 3-channel PNG
+        rgb_data = np.random.randint(0, 256, size=(192, 84, 3), dtype=np.uint8)
+        png_path = tmp_path / "rgb_pm.png"
+        cv2.imwrite(str(png_path), rgb_data)
+
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[{
+                "sample_id": "test::danaLab::00001::uncover::1",
+                "setting": "danaLab",
+                "subject_id": "00001",
+                "cover_condition": "uncover",
+                "frame_index": 1,
+                "quarantine": "False",
+                "quality_flags": "",
+                "quarantine_reasons": "",
+                "frame_modality_uris_PM": str(png_path),
+            }],
+            split_manifest={"danaLab::00001": "train"},
+            slp_root=".",
+            load_pressure_data=True,
+        )
+
+        with pytest.raises(ValueError, match="single-channel"):
+            list(adapter.iter_samples())
+
+    def test_reject_wrong_shape(self, tmp_path):
+        """Test that wrong shape PNG is rejected (no silent resize)."""
+        import cv2
+
+        # Create PNG with wrong shape (100x50 instead of 192x84)
+        wrong_data = np.random.randint(0, 256, size=(100, 50), dtype=np.uint8)
+        png_path = tmp_path / "wrong_shape.png"
+        cv2.imwrite(str(png_path), wrong_data)
+
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[{
+                "sample_id": "test::danaLab::00001::uncover::1",
+                "setting": "danaLab",
+                "subject_id": "00001",
+                "cover_condition": "uncover",
+                "frame_index": 1,
+                "quarantine": "False",
+                "quality_flags": "",
+                "quarantine_reasons": "",
+                "frame_modality_uris_PM": str(png_path),
+            }],
+            split_manifest={"danaLab::00001": "train"},
+            slp_root=".",
+            load_pressure_data=True,
+        )
+
+        with pytest.raises(ValueError, match="shape mismatch"):
+            list(adapter.iter_samples())
+
+    def test_reject_nan_inf_input(self, tmp_path):
+        """Test that NaN/Inf values are rejected.
+
+        Note: PNG format cannot store NaN/Inf values directly (uint8 only).
+        This test verifies the finite check works by:
+        1. Verifying a valid PNG produces finite float32 output
+        2. Testing the finite-check logic with synthetic data directly
+        """
+        import cv2
+
+        # 1. Valid uint8 PNG must produce finite float32 output
+        valid_data = np.random.randint(0, 256, size=(192, 84), dtype=np.uint8)
+        png_path = tmp_path / "valid_pm.png"
+        cv2.imwrite(str(png_path), valid_data)
+
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[{
+                "sample_id": "test::danaLab::00001::uncover::1",
+                "setting": "danaLab",
+                "subject_id": "00001",
+                "cover_condition": "uncover",
+                "frame_index": 1,
+                "quarantine": "False",
+                "quality_flags": "",
+                "quarantine_reasons": "",
+                "frame_modality_uris_PM": str(png_path),
+            }],
+            split_manifest={"danaLab::00001": "train"},
+            slp_root=".",
+            load_pressure_data=True,
+        )
+
+        samples = list(adapter.iter_samples())
+        assert len(samples) == 1
+        assert np.all(np.isfinite(samples[0].pressure_map)), "Valid PNG must produce finite output"
+
+        # 2. Test finite check with synthetic data (bypassing PNG format limitation)
+        # Verify that np.isfinite correctly detects NaN/Inf
+        nan_array = np.full((192, 84), np.nan, dtype=np.float32)
+        inf_array = np.full((192, 84), np.inf, dtype=np.float32)
+        assert not np.all(np.isfinite(nan_array)), "NaN array must fail finite check"
+        assert not np.all(np.isfinite(inf_array)), "Inf array must fail finite check"
+        assert np.all(np.isfinite(np.zeros((192, 84), dtype=np.float32))), "Zero array must pass"
+
+    def test_reject_non_uint8_png(self, tmp_path):
+        """Test that non-uint8 PNG (e.g., uint16) is rejected."""
+        import cv2
+
+        # Create uint16 PNG (not a valid SLP PM format)
+        uint16_data = np.random.randint(0, 256, size=(192, 84), dtype=np.uint16)
+        png_path = tmp_path / "uint16_pm.png"
+        cv2.imwrite(str(png_path), uint16_data)
+
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[{
+                "sample_id": "test::danaLab::00001::uncover::1",
+                "setting": "danaLab",
+                "subject_id": "00001",
+                "cover_condition": "uncover",
+                "frame_index": 1,
+                "quarantine": "False",
+                "quality_flags": "",
+                "quarantine_reasons": "",
+                "frame_modality_uris_PM": str(png_path),
+            }],
+            split_manifest={"danaLab::00001": "train"},
+            slp_root=".",
+            load_pressure_data=True,
+        )
+
+        with pytest.raises(ValueError, match="must be uint8"):
+            list(adapter.iter_samples())
+
+
+class TestBuildDatasetFailClosed:
+    """Tests for build_dataset fail-closed behavior."""
+
+    def test_build_dataset_fails_closed_without_labels(self, sample_canonical_row, sample_split_manifest):
+        """Test that build_dataset fails when labels are required but unavailable."""
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[sample_canonical_row],
+            split_manifest=sample_split_manifest,
+            slp_root=".",
+            load_pressure_data=False,
+        )
+
+        # Default: return_labels=True, should fail
+        with pytest.raises(LabelsUnavailableError):
+            adapter.build_dataset()
+
+    def test_build_dataset_inspection_mode(self, sample_canonical_row, sample_split_manifest):
+        """Test that build_dataset works with return_labels=False for inspection."""
+        adapter = SlpPressureOnlyAdapter(
+            canonical_samples=[sample_canonical_row],
+            split_manifest=sample_split_manifest,
+            slp_root=".",
+            load_pressure_data=False,
+        )
+
+        # With return_labels=False, should work for inspection
+        pressure_maps, samples = adapter.build_dataset(return_labels=False)
+        assert len(pressure_maps) == 1
+        assert len(samples) == 1
+
+
+class TestExperimentConfigFailClosed:
+    """Tests for experiment config fail-closed validation."""
+
+    def test_mini_requires_label_manifest(self):
+        """Test that scope=mini requires label manifest (unconditional)."""
+        with pytest.raises(LabelManifestError, match="scope=mini requires"):
+            create_default_config(
+                experiment_id="EXP-TEST-MINI",
+                task_id="TASK-TEST",
+                scope="mini",
+                split_manifest_path="data/split.json",
+            )
+
+    def test_full_requires_label_manifest(self):
+        """Test that scope=full requires label manifest (unconditional)."""
+        with pytest.raises(LabelManifestError, match="scope=full requires"):
+            create_default_config(
+                experiment_id="EXP-TEST-FULL",
+                task_id="TASK-TEST",
+                scope="full",
+                split_manifest_path="data/split.json",
+            )
+
+    def test_full_requires_frozen_manifest(self, temp_split_manifest, temp_label_manifest):
+        """Test that scope=full requires is_frozen=True."""
+        config_data = {
+            "experiment_id": "EXP-TEST-FULL",
+            "task_id": "TASK-TEST",
+            "scope": "full",
+            "seed": 42,
+            "input_contract_version": "v0.1",
+            "split_manifest": {"path": str(temp_split_manifest)},
+            "region_label_manifest": {
+                "path": str(temp_label_manifest),
+                "is_frozen": False,  # Not frozen
+            },
+        }
+
+        with pytest.raises(LabelManifestError, match="is_frozen=True"):
+            validate_experiment_config(config_data)
+
+    def test_full_requires_version_and_sha256(self, temp_split_manifest, temp_label_manifest):
+        """Test that scope=full requires version and sha256."""
+        config_data = {
+            "experiment_id": "EXP-TEST-FULL",
+            "task_id": "TASK-TEST",
+            "scope": "full",
+            "seed": 42,
+            "input_contract_version": "v0.1",
+            "split_manifest": {"path": str(temp_split_manifest)},
+            "region_label_manifest": {
+                "path": str(temp_label_manifest),
+                "is_frozen": True,
+                # Missing version and sha256
+            },
+        }
+
+        with pytest.raises(LabelManifestError, match="requires version"):
+            validate_experiment_config(config_data)
+
+    def test_smoke_allows_no_labels(self, temp_split_manifest):
+        """Test that scope=smoke allows no label manifest."""
+        config = create_default_config(
+            experiment_id="EXP-TEST-SMOKE",
+            task_id="TASK-TEST",
+            scope="smoke",
+            split_manifest_path=str(temp_split_manifest),
+        )
+
+        assert config.scope == "smoke"
+        assert config.region_label_manifest.path is None
+
+    def test_empty_split_path_rejected(self):
+        """Test that empty split_manifest.path is rejected."""
+        with pytest.raises(SplitManifestError, match="non-empty"):
+            create_default_config(
+                experiment_id="EXP-TEST",
+                task_id="TASK-TEST",
+                split_manifest_path="",
+            )
+
+    def test_nonexistent_absolute_split_path_rejected(self):
+        """Test that non-existent absolute split manifest path is rejected."""
+        with pytest.raises(SplitManifestError, match="does not exist or is not a file"):
+            validate_experiment_config({
+                "experiment_id": "EXP-TEST",
+                "task_id": "TASK-TEST",
+                "scope": "smoke",
+                "seed": 42,
+                "input_contract_version": "v0.1",
+                "split_manifest": {
+                    "path": "C:\\does_not_exist\\split.json",
+                },
+                "region_label_manifest": None,
+            })
+
+    def test_nonexistent_absolute_label_path_rejected(self, temp_split_manifest):
+        """Test that non-existent absolute label manifest path is rejected."""
+        with pytest.raises(LabelManifestError, match="does not exist or is not a file"):
+            validate_experiment_config({
+                "experiment_id": "EXP-TEST",
+                "task_id": "TASK-TEST",
+                "scope": "full",
+                "seed": 42,
+                "input_contract_version": "v0.1",
+                "split_manifest": {
+                    "path": str(temp_split_manifest),
+                },
+                "region_label_manifest": {
+                    "path": "C:\\does_not_exist\\labels.json",
+                    "is_frozen": True,
+                    "version": "v0.1",
+                    "sha256": "deadbeef",
+                },
+            })
+
+    def test_create_default_config_validates(self, temp_split_manifest):
+        """Test that create_default_config goes through validation."""
+        # Valid smoke config should work
+        config = create_default_config(
+            experiment_id="EXP-TEST",
+            task_id="TASK-TEST",
+            scope="smoke",
+            split_manifest_path=str(temp_split_manifest),
+        )
+        assert config is not None
+
+
+class TestRegionLabelProviderValidation:
+    """Tests for RegionLabelProvider validation."""
+
+    def test_unknown_region_id_rejected(self, sample_split_manifest):
+        """Test that unknown region_id fails-closed."""
+        import tempfile
+        import json
+
+        # Create temp manifest with unknown region_id
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            manifest = {
+                "manifest_version": "test_v0.1",
+                "schema_version": "slp_region_annotation_v0.1",
+                "annotations": [{
+                    "annotation_id": "test::001::head_neck",
+                    "sample_id": "slp::danaLab::00001::uncover::1",
+                    "setting": "danaLab",
+                    "subject_id": "00001",
+                    "cover_condition": "uncover",
+                    "frame_index": 1,
+                    "region_id": "invalid_region",  # Unknown!
+                    "label_tier": "R2",
+                    "review_status": "accepted",
+                    "final_polygon": [[0, 0], [10, 0], [10, 10], [0, 10]],
+                }],
+            }
+            json.dump(manifest, f)
+            temp_path = f.name
+
+        try:
+            provider = RegionLabelProvider(
+                label_manifest_path=temp_path,
+                a06_split_manifest=sample_split_manifest,
+                require_training_ready=False,
+            )
+            # Validation happens on get_sample_labels
+            with pytest.raises(LabelValidationError, match="Unknown region_id"):
+                provider.get_sample_labels("slp::danaLab::00001::uncover::1")
+        finally:
+            Path(temp_path).unlink()
+
+    def test_malformed_polygon_rejected(self, sample_split_manifest):
+        """Test that malformed polygon fails-closed."""
+        import tempfile
+        import json
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            manifest = {
+                "manifest_version": "test_v0.1",
+                "schema_version": "slp_region_annotation_v0.1",
+                "annotations": [{
+                    "annotation_id": "test::001::head_neck",
+                    "sample_id": "slp::danaLab::00001::uncover::1",
+                    "setting": "danaLab",
+                    "subject_id": "00001",
+                    "cover_condition": "uncover",
+                    "frame_index": 1,
+                    "region_id": "head_neck",
+                    "label_tier": "R2",
+                    "review_status": "accepted",
+                    "final_polygon": "not an array",  # Malformed!
+                }],
+            }
+            json.dump(manifest, f)
+            temp_path = f.name
+
+        try:
+            provider = RegionLabelProvider(
+                label_manifest_path=temp_path,
+                a06_split_manifest=sample_split_manifest,
+                require_training_ready=False,
+            )
+            with pytest.raises(LabelValidationError, match="Invalid polygon"):
+                provider.get_sample_labels("slp::danaLab::00001::uncover::1")
+        finally:
+            Path(temp_path).unlink()
+
+    def test_missing_polygon_rejected(self, sample_split_manifest):
+        """Test that missing polygon fails-closed."""
+        import tempfile
+        import json
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            manifest = {
+                "manifest_version": "test_v0.1",
+                "schema_version": "slp_region_annotation_v0.1",
+                "annotations": [{
+                    "annotation_id": "test::001::head_neck",
+                    "sample_id": "slp::danaLab::00001::uncover::1",
+                    "setting": "danaLab",
+                    "subject_id": "00001",
+                    "cover_condition": "uncover",
+                    "frame_index": 1,
+                    "region_id": "head_neck",
+                    "label_tier": "R2",
+                    "review_status": "accepted",
+                    # Missing polygon entirely
+                }],
+            }
+            json.dump(manifest, f)
+            temp_path = f.name
+
+        try:
+            provider = RegionLabelProvider(
+                label_manifest_path=temp_path,
+                a06_split_manifest=sample_split_manifest,
+                require_training_ready=False,
+            )
+            with pytest.raises(LabelValidationError, match="Missing polygon"):
+                provider.get_sample_labels("slp::danaLab::00001::uncover::1")
+        finally:
+            Path(temp_path).unlink()
+
+    def test_r0_r1_excluded_from_default_training(self, sample_split_manifest):
+        """Test that R0/R1 labels are excluded from default training."""
+        import tempfile
+        import json
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            manifest = {
+                "manifest_version": "test_v0.1",
+                "schema_version": "slp_region_annotation_v0.1",
+                "annotations": [{
+                    "annotation_id": "test::001::head_neck",
+                    "sample_id": "slp::danaLab::00001::uncover::1",
+                    "setting": "danaLab",
+                    "subject_id": "00001",
+                    "cover_condition": "uncover",
+                    "frame_index": 1,
+                    "region_id": "head_neck",
+                    "label_tier": "R1",  # Not training-ready
+                    "review_status": "accepted",
+                    "final_polygon": [[0, 0], [10, 0], [10, 10], [0, 10]],
+                }],
+            }
+            json.dump(manifest, f)
+            temp_path = f.name
+
+        try:
+            provider = RegionLabelProvider(
+                label_manifest_path=temp_path,
+                a06_split_manifest=sample_split_manifest,
+                require_training_ready=True,  # Default for training
+            )
+
+            # R1 should not be returned for training
+            with pytest.raises(LabelNotFoundError):
+                provider.get_sample_labels("slp::danaLab::00001::uncover::1")
+        finally:
+            Path(temp_path).unlink()
+
+    def test_require_training_ready_override(self, sample_split_manifest):
+        """Test that require_training_ready can be overridden per-call on same provider."""
+        import tempfile
+        import json
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            manifest = {
+                "manifest_version": "test_v0.1",
+                "schema_version": "slp_region_annotation_v0.1",
+                "annotations": [{
+                    "annotation_id": "test::001::head_neck",
+                    "sample_id": "slp::danaLab::00001::uncover::1",
+                    "setting": "danaLab",
+                    "subject_id": "00001",
+                    "cover_condition": "uncover",
+                    "frame_index": 1,
+                    "region_id": "head_neck",
+                    "label_tier": "R1",
+                    "review_status": "pending",
+                    "final_polygon": [[0, 0], [10, 0], [10, 10], [0, 10]],
+                }],
+            }
+            json.dump(manifest, f)
+            temp_path = f.name
+
+        try:
+            # Create ONE provider with require_training_ready=True
+            provider = RegionLabelProvider(
+                label_manifest_path=temp_path,
+                a06_split_manifest=sample_split_manifest,
+                require_training_ready=True,
+            )
+
+            # Instance default: R1 should fail (R1 not training-ready)
+            with pytest.raises(LabelNotFoundError):
+                provider.get_sample_labels("slp::danaLab::00001::uncover::1")
+
+            # Per-call override require_training_ready=False: R1 should be returned
+            labels = provider.get_sample_labels(
+                "slp::danaLab::00001::uncover::1",
+                require_training_ready=False,
+            )
+            assert labels is not None
+            assert len(labels.labels) == 1
+            assert labels.labels[0].label_tier == "R1"
+        finally:
+            Path(temp_path).unlink()

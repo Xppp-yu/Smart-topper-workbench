@@ -29,6 +29,7 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
+import cv2
 import numpy as np
 
 
@@ -57,6 +58,16 @@ PM_VALUE_RANGE = (0.0, 1.0)
 #: Task ID for provenance.
 DEFAULT_TASK_ID = "TASK-SLP-B01-PRESSURE-ONLY-INFRA-v0.1"
 DEFAULT_GENERATOR = "topper_perception.io.slp_pressure_only_adapter.SlpPressureOnlyAdapter"
+
+
+class PressureAdapterError(Exception):
+    """Base exception for pressure adapter errors."""
+    pass
+
+
+class LabelsUnavailableError(PressureAdapterError):
+    """Training labels are not available (A17 pending)."""
+    pass
 
 
 class DataSplit(str, Enum):
@@ -256,7 +267,8 @@ class SlpPressureOnlyAdapter:
             preprocessing=("normalize_to_0_1", "to_tensor_format"),
             notes=(
                 "Pressure-only: visual modalities (RGB/IR/Depth) are NEVER model input.",
-                "PM PNG values are 0-1 float32, loaded with cv2.IMREAD_UNCHANGED.",
+                "Real SLP PM is uint8 PNG (192x84), read with cv2.IMREAD_UNCHANGED, "
+                "converted to float32 [0,1]. PNG is NOT pre-normalized.",
             ),
         )
 
@@ -304,12 +316,12 @@ class SlpPressureOnlyAdapter:
         self,
         include_quarantine: bool = False,
         split: DataSplit | None = None,
-    ) -> tuple[list[np.ndarray], list[int], list[PressureOnlySample]]:
+        return_labels: bool = True,
+    ) -> tuple[list[np.ndarray], list[PressureOnlySample]]:
         """Build a pressure-only dataset for model training/inference.
 
-        Returns (pressure_maps, labels, samples) where:
+        Returns (pressure_maps, samples) where:
         - pressure_maps: list of numpy arrays (PM tensors)
-        - labels: list of integer labels (for classification tasks)
         - samples: list of PressureOnlySample metadata
 
         Parameters
@@ -318,23 +330,36 @@ class SlpPressureOnlyAdapter:
             If False (default), quarantined samples are excluded.
         split : DataSplit | None
             If specified, only samples from this split are returned.
+        return_labels : bool
+            If True, fail-closed when no RegionLabelProvider is configured.
+            Set False for lightweight inspection without labels.
 
         Returns
         -------
-        tuple[list, list, list]
-            (pressure_maps, labels, samples)
+        tuple[list, list]
+            (pressure_maps, samples)
+
+        Raises
+        ------
+        LabelsUnavailableError
+            If return_labels=True but no real label provider is configured.
         """
+        if return_labels:
+            raise LabelsUnavailableError(
+                "Training labels are not available. "
+                "A RegionLabelProvider with frozen R2/R3 labels (A17) is required "
+                "to return training labels. Use return_labels=False for inspection "
+                "or provide a RegionLabelProvider."
+            )
+
         pressure_maps: list[np.ndarray] = []
-        labels: list[int] = []
         samples: list[PressureOnlySample] = []
 
         for sample in self.iter_samples(include_quarantine=include_quarantine, split=split):
             pressure_maps.append(sample.pressure_map)
-            # Labels default to frame_index for now; override in subclass for specific tasks
-            labels.append(sample.frame_index)
             samples.append(sample)
 
-        return pressure_maps, labels, samples
+        return pressure_maps, samples
 
     def compute_summary(
         self,
@@ -461,8 +486,9 @@ class SlpPressureOnlyAdapter:
         if self.load_pressure_data:
             pressure_map = self._load_pressure_map(pm_uri)
         else:
-            # Placeholder for lightweight inspection
-            pressure_map = np.zeros(PM_IMAGE_SIZE[::-1], dtype=PM_DTYPE)
+            # Placeholder for lightweight inspection.
+            # Must satisfy contract: (192, 84) float32 [0, 1]
+            pressure_map = np.zeros((192, 84), dtype=np.float32)
 
         # Collect visual modality URIs for provenance only
         visual_uris = self._extract_visual_uris(row)
@@ -578,6 +604,12 @@ class SlpPressureOnlyAdapter:
     def _load_pressure_map(self, uri: str) -> np.ndarray:
         """Load a Pressure Map from disk.
 
+        Real SLP PM files are uint8 PNG (192×84, height×width).
+        This method reads them with cv2 and enforces the input contract:
+        - shape: (192, 84)
+        - dtype: float32
+        - value_range: [0.0, 1.0]
+
         Parameters
         ----------
         uri : str
@@ -593,7 +625,7 @@ class SlpPressureOnlyAdapter:
         FileNotFoundError
             If the PM file does not exist.
         ValueError
-            If the loaded data is not 2D or has unexpected properties.
+            If the loaded data does not match the contract.
         """
         path = Path(uri)
         if not path.is_absolute():
@@ -602,24 +634,52 @@ class SlpPressureOnlyAdapter:
         if not path.exists():
             raise FileNotFoundError(f"Pressure Map not found: {path}")
 
-        # Load with numpy (SLP PM PNG is stored as float32 0-1)
-        data = np.load(path, allow_pickle=False)
-
-        # Ensure float32
-        if data.dtype != np.float32:
-            data = data.astype(np.float32)
-
-        # Validate shape (should be 2D: height × width)
-        if data.ndim != 2:
+        # Read PNG with OpenCV (real SLP PM is uint8 PNG)
+        raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if raw is None:
             raise ValueError(
-                f"Pressure Map must be 2D, got shape {data.shape} for {path}"
+                f"Failed to decode PM PNG: {path}. "
+                "File may be corrupted or not a valid PNG."
             )
 
-        # Validate value range
-        if data.min() < -0.01 or data.max() > 1.01:
+        # Validate: must be single-channel (grayscale)
+        if raw.ndim != 2:
             raise ValueError(
-                f"Pressure Map values out of expected range [0, 1], "
-                f"got [{data.min():.4f}, {data.max():.4f}] for {path}"
+                f"PM must be single-channel grayscale, got shape {raw.shape} for {path}"
+            )
+
+        # Validate: raw data must be uint8 (SLP PM is stored as uint8 PNG)
+        if raw.dtype != np.uint8:
+            raise ValueError(
+                f"PM must be uint8 PNG, got dtype {raw.dtype} for {path}. "
+                "Real SLP PM is uint8 PNG (0-255)."
+            )
+
+        # Validate shape: real SLP PM is 192×84 (height × width)
+        # Contract image_size is (84, 192) = (width, height)
+        expected_shape = (192, 84)  # (height, width)
+        if raw.shape != expected_shape:
+            raise ValueError(
+                f"PM shape mismatch: expected {expected_shape} (H×W), "
+                f"got {raw.shape} for {path}. "
+                "Do NOT resize or transpose silently."
+            )
+
+        # Convert uint8 [0, 255] → float32 [0.0, 1.0]
+        data = raw.astype(np.float32, copy=False) / 255.0
+
+        # Validate finite values
+        if not np.all(np.isfinite(data)):
+            raise ValueError(
+                f"PM contains non-finite values (NaN/Inf) for {path}"
+            )
+
+        # Validate value range [0.0, 1.0]
+        min_val, max_val = float(data.min()), float(data.max())
+        if min_val < 0.0 or max_val > 1.0:
+            raise ValueError(
+                f"PM values out of range [0.0, 1.0]: "
+                f"[{min_val:.6f}, {max_val:.6f}] for {path}"
             )
 
         return data
@@ -706,7 +766,8 @@ def create_pressure_only_dataset(
     load_pressure_data: bool = True,
     include_quarantine: bool = False,
     split: DataSplit | None = None,
-) -> tuple[list[np.ndarray], list[int], list[PressureOnlySample]]:
+    return_labels: bool = True,
+) -> tuple[list[np.ndarray], list[PressureOnlySample]]:
     """Convenience function to create a pressure-only dataset.
 
     Parameters
@@ -725,11 +786,18 @@ def create_pressure_only_dataset(
         Whether to include quarantined samples.
     split : DataSplit | None
         Filter by split.
+    return_labels : bool
+        If True, fail-closed when no real labels are available.
 
     Returns
     -------
-    tuple[list, list, list]
-        (pressure_maps, labels, samples)
+    tuple[list, list]
+        (pressure_maps, samples)
+
+    Raises
+    ------
+    LabelsUnavailableError
+        If return_labels=True but no real label provider is configured.
     """
     adapter = SlpPressureOnlyAdapter(
         canonical_samples=a05_samples,
@@ -741,4 +809,5 @@ def create_pressure_only_dataset(
     return adapter.build_dataset(
         include_quarantine=include_quarantine,
         split=split,
+        return_labels=return_labels,
     )

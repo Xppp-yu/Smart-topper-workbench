@@ -32,6 +32,15 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 
+def _compute_file_sha256(path: Path) -> str:
+    """Compute SHA256 of a file."""
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -92,6 +101,11 @@ class ExpIdError(ExperimentConfigError):
 
 class LabelManifestError(ExperimentConfigError):
     """Label manifest validation failed."""
+    pass
+
+
+class SplitManifestError(ExperimentConfigError):
+    """Split manifest validation failed."""
     pass
 
 
@@ -392,7 +406,7 @@ def validate_experiment_config(
     data : Mapping[str, Any]
         Raw config dict.
     strict_label_check : bool
-        If True, require valid region_label_manifest path.
+        If True (default), require valid region_label_manifest for Mini/Full.
 
     Returns
     -------
@@ -403,6 +417,10 @@ def validate_experiment_config(
     ------
     ConfigValidationError
         If validation fails.
+    SplitManifestError
+        If split_manifest.path is empty or invalid.
+    LabelManifestError
+        If labels are required but not available.
     """
     if not isinstance(data, Mapping):
         raise ConfigValidationError("Config must be a JSON object.")
@@ -437,17 +455,87 @@ def validate_experiment_config(
     if not isinstance(sm, Mapping):
         raise ConfigValidationError("split_manifest must be an object.")
     if "path" not in sm:
-        raise ConfigValidationError("split_manifest must have 'path' field.")
+        raise SplitManifestError(
+            "split_manifest must have 'path' field."
+        )
+    if not sm["path"] or not isinstance(sm["path"], str):
+        raise SplitManifestError(
+            "split_manifest.path must be a non-empty string."
+        )
 
-    # Validate region_label_manifest
+    # Check split_manifest file existence (uniform for absolute and relative paths)
+    split_path = Path(sm["path"])
+    if not split_path.is_file():
+        raise SplitManifestError(
+            f"split_manifest.path does not exist or is not a file: {split_path}. "
+            "Please verify the path is correct."
+        )
+    # Validate split_manifest version if provided
+    if sm.get("version") is not None and not sm.get("version"):
+        raise SplitManifestError(
+            "split_manifest.version must be non-empty if provided."
+        )
+
+    # Validate region_label_manifest requirements for Mini/Full
+    # Mini/Full ALWAYS require frozen R2/R3 manifest unconditionally.
+    # The caller cannot bypass this requirement.
     rlm = data.get("region_label_manifest")
-    if strict_label_check and rlm is not None:
+
+    if scope in ("mini", "full"):
+        if rlm is None:
+            raise LabelManifestError(
+                f"scope={scope} requires region_label_manifest. "
+                "Ground truth has not been frozen yet (A17 pending). "
+                "Use scope=smoke instead."
+            )
         if isinstance(rlm, Mapping):
-            required = rlm.get("label_manifest_required", True)
-            if required and not rlm.get("path"):
+            if not rlm.get("path"):
                 raise LabelManifestError(
-                    "region_label_manifest path is required but not provided. "
+                    f"scope={scope} requires a non-empty region_label_manifest.path. "
                     "Ground truth has not been frozen yet (A17 pending)."
+                )
+            # Check label manifest file existence (uniform for absolute and relative paths)
+            label_path = Path(rlm["path"])
+            if not label_path.is_file():
+                raise LabelManifestError(
+                    f"region_label_manifest.path does not exist or is not a file: {label_path}. "
+                    "Please verify the path is correct."
+                )
+            # Require is_frozen=true for Mini/Full
+            if not rlm.get("is_frozen", False):
+                raise LabelManifestError(
+                    f"scope={scope} requires is_frozen=True for region_label_manifest. "
+                    "R2/R3 labels must be frozen before Mini/Full (A17 Gate)."
+                )
+            # Require version and sha256 for frozen manifest
+            if not rlm.get("version"):
+                raise LabelManifestError(
+                    f"scope={scope} requires version in region_label_manifest. "
+                    "A17 manifest version must be specified."
+                )
+            if not rlm.get("sha256"):
+                raise LabelManifestError(
+                    f"scope={scope} requires sha256 in region_label_manifest. "
+                    "A17 manifest content hash must be specified."
+                )
+            # Verify SHA256 if both declared and file exists
+            declared_sha = rlm.get("sha256", "")
+            if declared_sha and label_path.is_file():
+                actual_sha = _compute_file_sha256(label_path)
+                if actual_sha != declared_sha:
+                    raise LabelManifestError(
+                        f"SHA256 mismatch for region_label_manifest: "
+                        f"declared={declared_sha}, actual={actual_sha}. "
+                        "The manifest file may have been modified."
+                    )
+    elif scope == "smoke":
+        # Smoke can run without labels, but must explicitly set scope=smoke
+        if rlm is not None and isinstance(rlm, Mapping):
+            if rlm.get("label_manifest_required", False) and not rlm.get("path"):
+                raise LabelManifestError(
+                    "Smoke config has label_manifest_required=True but no path. "
+                    "Use scope=smoke with label_manifest_required=False, "
+                    "or provide a valid label manifest path."
                 )
 
     # Validate runtime_device
@@ -457,7 +545,7 @@ def validate_experiment_config(
             f"runtime_device must be one of {VALID_DEVICES}, got {device!r}"
         )
 
-    # Create config
+    # Create config through proper validation
     return PressureExperimentConfig.from_dict(data)
 
 
@@ -490,6 +578,7 @@ def create_default_config(
     """Create a default pressure-only experiment config.
 
     This is a convenience function for common configurations.
+    The returned config has already been validated.
 
     Parameters
     ----------
@@ -502,7 +591,8 @@ def create_default_config(
     split_manifest_path : str
         Path to A06 split manifest.
     region_label_manifest_path : str | None
-        Path to A17 label manifest (optional for smoke).
+        Path to A17 label manifest. REQUIRED for mini/full scope.
+        Smoke can run without labels.
     seed : int
         Random seed.
     model_name : str | None
@@ -513,7 +603,28 @@ def create_default_config(
     Returns
     -------
     PressureExperimentConfig
+        Validated frozen config.
+
+    Raises
+    ------
+    SplitManifestError
+        If split_manifest_path is empty.
+    LabelManifestError
+        If mini/full scope is used without region_label_manifest_path.
     """
+    if not split_manifest_path or not isinstance(split_manifest_path, str):
+        raise SplitManifestError(
+            "split_manifest_path must be a non-empty string."
+        )
+
+    # Mini/Full require labels unconditionally
+    if scope in ("mini", "full") and not region_label_manifest_path:
+        raise LabelManifestError(
+            f"scope={scope} requires region_label_manifest_path. "
+            "Ground truth has not been frozen yet (A17 pending). "
+            "Use scope=smoke instead."
+        )
+
     config_dict = {
         "experiment_id": experiment_id,
         "task_id": task_id,
@@ -526,7 +637,9 @@ def create_default_config(
         },
         "region_label_manifest": {
             "path": region_label_manifest_path,
-            "is_frozen": region_label_manifest_path is not None,
+            "is_frozen": False,  # Must be explicitly set to True after A17 freeze
+            "version": None,
+            "sha256": None,
         } if region_label_manifest_path else None,
         "preprocessing": {
             "normalize": True,
@@ -550,7 +663,8 @@ def create_default_config(
         "runtime_device": device,
     }
 
-    return PressureExperimentConfig.from_dict(config_dict)
+    # Go through proper validation (not bypassed)
+    return validate_experiment_config(config_dict, strict_label_check=True)
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +673,25 @@ def create_default_config(
 
 
 def load_experiment_config(path: Path | str) -> PressureExperimentConfig:
-    """Load experiment config from JSON file."""
+    """Load experiment config from JSON file.
+
+    The loaded config is validated through validate_experiment_config.
+
+    Parameters
+    ----------
+    path : Path | str
+        Path to JSON config file.
+
+    Returns
+    -------
+    PressureExperimentConfig
+        Validated frozen config.
+
+    Raises
+    ------
+    ConfigValidationError
+        If the config does not pass validation.
+    """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return validate_experiment_config(data)
 
