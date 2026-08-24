@@ -39,7 +39,9 @@ S0 Inventory
 → SLP 研究候选与自研数据合同
 ```
 
-关键更正：**OpenCV 自动输出不是 Ground Truth。只有通过人工接受/修改、双审抽检、版本冻结和质量报告的标签，才作为本项目的“操作性训练真值”，正式名称为 `SLP Region Reference v1.0`。它仍不是独立医学级解剖真值。**
+关键更正：**SLP 8-region pressure-only GT（`SLP_8Region_Pressure_VAL_v1.1`）是当前项目的 PROJECT_ACCEPTED_REFERENCE_GT。** 其 provenance = `V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，`source_review_status = NOT_REVIEWED`，**不是人工像素级标注，不是医学/皮肤界面应力/产品真值**。OpenCV 自动输出（R0/R1）仍不是 Ground Truth。
+
+历史说明：原 OpenCV+人工复核路线（`slp_region_annotation_v0.1`，R0–R3 10 区词表）已标记为 HOLD/SUPERSEDED，不作为当前训练合同。A09R（2026-08-24）已将 SLP8 GT 设为默认训练数据并完成 Reviewer 验收，B01 现为 READY。
 
 ## 2. 队长感知层清单与 SLP 的关系
 
@@ -48,7 +50,7 @@ S0 Inventory
 | Q1 在床/离床 | 弱，不是 SLP 主任务 | 仅检查是否存在可用 empty/transition 证据 | 自研连续压力数据 |
 | Q2 姿态 | 可做静态三类/节点几何 | 遮盖条件下姿态与方向辅助任务 | SLP + 自研数据 |
 | Q3 位置、方向、轮廓 | 强项 | 节点、人体轴、视觉/压力轮廓 | SLP |
-| Q4 肩、躯干、腰、骨盆、腿 | 可建立粗区域参考 | OpenCV+人工复核区域线 | SLP Reference + 自采独立真值 |
+| Q4 肩、躯干、腰、骨盆、腿 | 可建立粗区域参考 | **SLP_8Region_Pressure_VAL_v1.1**（默认）+ 原 OpenCV+人工复核路线（HOLD） | SLP8 Pressure GT + 自采独立真值 |
 | Q5 区域载荷、面积、集中 | 只能做部分空间 proxy | 不用单帧归一化 PM 图片宣称绝对载荷 | 自研已标定压力阵列 |
 | Q6 异常支撑状态 | 不足 | 只形成候选特征，不冻结诊断状态 | 自研人体/床垫实验 |
 | Q7 动作后变化 | 不支持 | 不在 SLP 上开发 | 自研同步气囊实验 |
@@ -82,7 +84,10 @@ S0 Inventory
 | R3 | Double-reviewed Consensus | 双审/仲裁后的高可信子集 | 是，优先评价 | 共识参考集 |
 | P0 | Product Ground Truth | 自采同步压力+独立人体/区域真值 | 是 | 产品外部验证真值 |
 
-任何文件必须携带 `label_tier`。训练代码默认只接受 R2/R3；若研究 R0/R1 弱监督，必须使用不同 EXP-ID 和明确标记。
+任何文件必须携带 `label_tier`。训练代码有两套并行路线：
+
+- **路线 A（SLP8 pressure-only GT）**：SLP_8Region_Pressure_VAL_v1.1 通过 adapter 接入，provenance=`V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，`NOT_REVIEWED`；由 A09R→B01 管道处理，不得混入 R2/R3 tier。
+- **路线 B（R2/R3 polygon，历史 HOLD）**：原 `slp_region_annotation_v0.1` 10 区词表，现改为 HOLD，不再作为当前训练入口；若研究 R0/R1 弱监督，必须使用不同 EXP-ID 和明确标记。
 
 ## 4. 阶段 I：Region Reference 形成前
 
@@ -299,12 +304,13 @@ Gate R1 必须同时满足：
 
 ### B0：冻结区域数据集
 
-- 输入仅 R2/R3；R0/R1 单独弱监督实验；
-- 固定 Train/VAL/Test subjects；
-- 生成 dataset card、类别/区域覆盖、遮盖分层和版本 hash；
-- 测试集标签在模型和规则冻结前保持不可见。
+**路线 A（SLP8 GT，A09R 管道）**：由 B01 任务执行；输入为 SLP_8Region_Pressure_VAL_v1.1（4,590 samples，102 danaLab），adapter 已就绪。
+
+**路线 B（R2/R3 polygon，原 HOLD 路线）**：A09R 后已改为 HOLD；如未来重新打开：输入仅 R2/R3；R0/R1 单独弱监督实验；固定 Train/VAL/Test subjects；生成 dataset card、类别/区域覆盖、遮盖分层和版本 hash；测试集标签在模型和规则冻结前保持不可见。
 
 ### B1：非学习基线
+
+当前路线 A 使用 SLP8 GT + A06 split 建立 pressure-only 非学习基线；以下 polygon/节点基线仅属于未来可选路线 B，不得混入当前训练合同。
 
 - 纯节点几何区域；
 - 人体轴分段区域；
@@ -313,7 +319,7 @@ Gate R1 必须同时满足：
 
 ### B2：单模态 Mini
 
-分别运行：
+当前路线 A 先运行 PM-only；Depth/IR/RGB 属于需要独立标签与对齐合同的可选路线，不阻塞 pressure-only 主线：
 
 - PM-only：产品相关主线；
 - Depth-only：几何性能上限；
@@ -329,7 +335,9 @@ Mini 只检查可学习性、吞吐、显存、checkpoint、resume、reload 和�
 - 指标：macro region IoU/Dice、中心误差、逐区域、逐遮盖、逐受试者、worst-subject；
 - 同时报告 inference p50/p95、模型大小和失败案例。
 
-### B4：遮盖压力测试
+### B4：遮盖压力测试（当前 HOLD）
+
+SLP8 GT 仅含 uncover；cover1/cover2 与 cross-cover 在获得对应参考 GT 前保持 HOLD。若未来重新打开：
 
 - uncover、cover1、cover2 分开报告；
 - uncover train → covered test；
