@@ -123,24 +123,28 @@ worktree/slp   -> SLP TASK-ID
 
 ## 8. SLP 当前执行顺序
 
-SLP 不重新设计路线，以现有 Backlog 为准：
+SLP 路线分为两条（见 Backlog）：
 
 ```text
-A01 License / Data Version
-A02 Content QA
-A03 Frame Master Index
-A09 Region Schema Review
-  -> A04 Homography Audit
-  -> A05 Adapter
-  -> A07/A08 Joint and Body Geometry
-  -> A10 R0 Geometry Seed
-  -> A11 OpenCV Refinement
-  -> A12 R1 Pseudo-label Export
-  -> A13-A17 Human Review and Region Reference Freeze
-  -> B01+ Frozen R2/R3 Dataset Training and Evaluation
+# 路线 A：SLP8 pressure-only GT（A09R 建立）
+A09R  SLP8 GT 合同校准（当前项目参考 GT）
+  -> B01  训练表冻结（READY）
+
+# 路线 B：OpenCV/人工复核（历史路线，已改为 HOLD）
+A09 Region Schema Review  [SUPERSEDED_BY_A09R]
+  -> A10 R0 Geometry Seed  [HOLD]
+  -> A11 OpenCV Refinement [HOLD]
+  -> A12 R1 Pseudo-label Export  [HOLD]
+  -> A13-A17 Human Review and Region Reference Freeze  [HOLD]
+  -> B01+ Frozen R2/R3 Dataset Training and Evaluation  [HOLD]
 ```
 
-真值边界保持不变：SLP 的 RGB/IR 14 关节点是 `J0`；homography 映射是派生 `J1`；几何/OpenCV 结果是 `R0/R1` 伪标签；只有人工复核并通过 QC 的 `R2/R3` 可作为默认区域训练参考。OpenCV 不是现在越过配对、坐标和人体几何合同直接开写的独立捷径。
+真值边界（A09R Owner 决策，2026-08-24）：
+
+- **SLP 8-region pressure-only GT**（`SLP_8Region_Pressure_VAL_v1.1`，4,590 samples，102 danaLab，uncover only）是当前 `PROJECT_ACCEPTED_REFERENCE_GT`，用于 SLP8 pressure-only 区域分割训练和评估。provenance=`V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，`source_review_status=NOT_REVIEWED`。**不是人工像素级语义 mask；不是医学/皮肤界面应力/产品 GT**；不得改写 provenance/review 字段；不得称为 kPa。
+- RGB/IR 14 关节点是 `J0`（原始人工关节真值）；homography 映射是派生 `J1`。
+- 10-region polygon 路线（`slp_region_annotation_v0.1`，R0–R3 tiers）是历史内部治理合同，**不是当前训练合同**，不得与 8-region 数据混用。
+- 仅 danaLab/uncover，不得外推到产品、硬件、舒适性、医疗或气囊控制。
 
 ## 9. 状态与结论口径
 

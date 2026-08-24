@@ -137,10 +137,15 @@ flowchart TD
 A0 数据与任务口径      已有基础
 A1 Inventory / Quality  已完成（P1、P2）
 A2 Mask / Geometry      P3.1 已完成，largest_component 已冻结供研究使用
-A1 区域标签对齐         P3.2 已完成；人体标注一对三歧义，区域监督 HOLD
+A1 区域标签对齐         P3.2 已完成；PoPu COCO 区域监督 HOLD；
+                         SLP8 GT 已集成（A09R）：SLP_8Region_Pressure_VAL_v1.1
+                        （4,590 samples，102 danaLab，8 区）确立为 pressure-only
+                         区域分割训练参考 GT，adapter + validator 就绪；
+                         历史 R2/R3 polygon 路线（A10–A17）改为 HOLD；
+                         TIP/PressurePose 仍 PRESENT_NOT_INTEGRATED
 A3 无标签特征           P4a 已完成（51,000 行 × 71 特征，首轮真实运行）
 A4 姿态 Baseline        P5 首轮基线已完成（logreg=历史首轮领先候选，未冻结）；P5.1 横向复核已完成（winner=calibrated_linear_svm，record macro-F1 0.9452），传统模型候选已冻结；P5.2 神经网络公平比较为下一步
-A5 区域候选             等待标签配对结论
+A5 区域候选             PoPu 继续 HOLD；SLP8 已有参考 GT，A09R 验收后进入 B01
 A6 鲁棒性/密度          P5.2 总体候选冻结后进入（P6/P7）
 B0-B5 自研硬件真值线    尚未启动，但现在应先冻结其协议
 ```
@@ -165,7 +170,7 @@ P5 首轮 Baseline（已完成，候选未冻结）
     ↓ PoPu 参考验证包（输入—真值—方法—结果—限制闭合）
 ```
 
-区域监督继续 HOLD，不等待区域真值即可推进 P5.2/P6/P7。
+PoPu 区域监督继续 HOLD，不等待 PoPu 区域真值即可推进其 P5.2/P6/P7；该 HOLD 不适用于已接入的 SLP8 pressure-only 路线。
 
 ## 7. 最后的交付包长什么样
 
@@ -192,7 +197,12 @@ validation_release/<candidate_id>/
 1. 接触 Mask 已冻结，但仍不是真值
 P3.1 已比较相对过滤、最大连通域和形态学闭运算，并冻结 `largest_component` 供 P4a 使用。它解决的是公开数据研究链路中的统一输入，不证明人体解剖轮廓或真实接触面积；独立真值到位后允许重新评估。
 2. 身体区域标签与压力帧无法唯一对应
-P3.2 已全量审计1,730份PoPu COCO标注：1,670份人体标注各对应3条Tactilus记录，60份一对一候选全部为空床。因此人体区域逐记录监督可用数为0；PoPu区域标注只能用于结构参考，区域监督训练继续 HOLD。
+P3.2 已全量审计1,730份PoPu COCO标注：1,670份人体标注各对应3条Tactilus记录，60份一对一候选全部为空床。因此PoPu区域标注只能用于结构参考，区域监督训练继续 HOLD。
+但 A09R 已通过 SLP8 GT（S1_A09R 合同校准）提供了 pressure-only 区域分割参考 GT：
+SLP_8Region_Pressure_VAL_v1.1（4,590 samples，102 danaLab，8 区，
+V221_CORRECTED_SUPPORT_AUTO_ACCEPTED，NOT_REVIEWED），
+adapter + schema + 全量 validator 就绪，可直接用于训练。
+历史 R2/R3 polygon 路线（A10–A17）已改为 HOLD，不得作为当前训练入口。
 3. “肩、腰、骨盆真值”本身还没完全定义
 需要先冻结标注合同，例如：
 肩是左右肩关键点的中点，还是肩部区域？
@@ -202,13 +212,13 @@ P3.2 已全量审计1,730份PoPu COCO标注：1,670份人体标注各对应3条T
 输出以传感器格点、归一化坐标还是厘米表示？
 允许误差是几个格点或多少厘米？
 不先定义这些，不同算法即使都输出一个数字，也无法公平比较。
-4. 独立真值数据已下载但尚未正式接入工作台
-目前运行链主要是PoPu。SLP2022 与 PressurePose 已下载到本地数据副本（状态为 `PRESENT_NOT_INTEGRATED`），TIP 尚未纳入本工作台副本；三者都还没有：
+4. SLP8 已接入，PressurePose/TIP 仍待接入
+SLP2022 已通过 A09R 完成 pressure-only GT 合同、Adapter、Manifest 和全量 Validator 接入。PressurePose、TIP 仍 `PRESENT_NOT_INTEGRATED`，它们还没有：
 建立版本记录；
 编写独立 Adapter；
 检查矩阵和人体坐标映射；
 生成统一 Manifest。
-SLP2022 与 PressurePose 的本地副本已存在但未适配；TIP 尚未纳入本工作台数据副本。
+PressurePose 的本地副本已存在但未适配；TIP 尚未纳入本工作台数据副本。
 后续合理分工是：
 TIP：肩、髋、人体轴、姿态和时间信息的主要候选真值；
 SLP：静态身体关节和跨模态对齐验证；
@@ -245,9 +255,10 @@ UNKNOWN和高置信错误统计。
 P4a 无标签特征表与 P5 首轮受试者隔离基线已完成（logreg=当前首轮领先候选，未冻结）；P5.1 横向比较已完成并冻结 `calibrated_linear_svm` 为传统模型候选（record macro-F1 0.9452）。
 PoPu 后续推进顺序：P5.2 神经网络公平比较（P5.2-A CNN 底座与 Smoke → P5.2-B Mini 筛选 → P5.2-C Full 公平比较）→ 冻结总体候选 → P6 UNKNOWN/REJECT → P7 软件鲁棒性（降密度、坏点、噪声）→ PoPu 参考验证包。
 P5.2 总体候选冻结前不正式冻结模型或 UNKNOWN 阈值。
-区域监督继续 HOLD，不等待区域真值即可继续 P5.2/P6/P7。
+PoPu 区域监督继续 HOLD，不影响 PoPu P5.2/P6/P7；SLP8 已转入 A09R 验收后的 B01 路线。
 同时冻结“肩—腰—骨盆”的真值与评价合同。
-SLP2022、PressurePose 已下载到本地数据副本（`PRESENT_NOT_INTEGRATED`），TIP 尚未纳入本工作台副本；三者都尚未建立各自的下载记录、Manifest 和 Adapter；它们是后续接力真值候选，不能与 PoPu 逐行拼接。
+SLP2022：已通过 A09R 集成（S1_A09R GT 合同校准）；SLP_8Region_Pressure_VAL_v1.1 的 adapter + schema + validator 已就绪；A06 split 兼容性已验证（102 主体，3645/450/495，0 overlap）。
+PressurePose、TIP 仍 `PRESENT_NOT_INTEGRATED`，尚未建立各自的 Adapter；各数据集必须分别评价，不能与 PoPu、PMD 或 SLP 逐行拼接。
 先做低成本 Baseline（已做 R1/R2/R3 与首轮 P5），再考虑 R4/R5 图像模型。
 按相同受试者切分和指标公平比较。
 冻结满足门槛且复杂度最低的候选，打包进入WSL。

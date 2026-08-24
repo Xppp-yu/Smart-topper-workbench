@@ -33,8 +33,10 @@ Before changing this repository, read:
 
 - RGB/IR 14-joint labels are original manual joint ground truth (`J0`).
 - Homography-mapped joints are derived references (`J1`), not unbiased ground truth.
-- Geometry/OpenCV region proposals (`R0/R1`) are pseudo-labels.
-- Only human-reviewed, QC-passed labels (`R2/R3`) may be used as the default SLP region training reference.
+- Geometry/OpenCV region proposals (`R0/R1`) are pseudo-labels. **They are NOT the project reference GT.**
+- **SLP 8-region pressure-only GT** (`SLP_8Region_Pressure_VAL_v1.1`, 4,590 samples, 102 danaLab subjects) is the **PROJECT_ACCEPTED_REFERENCE_GT** for SLP8 region segmentation. Its provenance is `V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`, `source_review_status=NOT_REVIEWED`. **Not human pixel-level semantic masks. Not medical, skin-interface stress, or product GT.**
+- The 10-region polygon+review ontology (`slp_region_annotation_v0.1`, `R0-R3` tiers) is **historical internal governance**; it is **NOT the current training contract** and must NOT be conflated with the 8-region dataset.
+- Only human-reviewed, QC-passed labels (`R2/R3`) may be used as the default polygon-route training reference. The SLP8 pressure GT is the current default training reference.
 - Keep posture, joints, coarse regions, pixel segmentation and product zones as separate tasks and metrics.
 
 ## Implementation and testing

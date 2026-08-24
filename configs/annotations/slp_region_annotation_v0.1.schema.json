@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://smart-topper.local/schemas/slp_region_annotation_v0.1.schema.json",
   "title": "SLP Region Annotation v0.1",
+  "description": "Machine-verifiable contract for SLP coarse body-region annotations. Default training labels are R2/R3 (QC-passed human-reviewed). R0/R1 are pseudo-labels only.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +20,6 @@
     "joint_gt_source",
     "review_status",
     "proposal_polygon",
-    "final_polygon",
     "algorithm_version",
     "parameter_hash",
     "homography_sha256",
@@ -83,15 +83,23 @@
         {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}
       ]
     },
-    "alignment_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-    "anatomical_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "alignment_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "anatomical_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
     "quality_flags": {
       "type": "array",
       "items": {"type": "string", "minLength": 1},
       "uniqueItems": true
     },
     "reviewer_id": {"type": ["string", "null"]},
-    "reviewed_at": {"type": ["string", "null"], "format": "date-time"},
+    "reviewed_at": {"type": ["string", "null"]},
     "reason_codes": {
       "type": "array",
       "items": {
@@ -120,19 +128,104 @@
           "uniqueItems": true
         },
         "generator": {"type": "string", "minLength": 1},
-        "created_at": {"type": "string", "format": "date-time"}
+        "created_at": {"type": "string"}
       }
     }
   },
   "allOf": [
     {
-      "if": {"properties": {"label_tier": {"enum": ["R2", "R3"]}}},
+      "comment": "R0: joint_geometry; pending/uncertain/rejected; final_polygon may be null",
+      "if": {"properties": {"label_tier": {"const": "R0"}}},
       "then": {
         "properties": {
-          "review_status": {"enum": ["accepted", "edited", "adjudicated"]},
+          "label_source": {"const": "joint_geometry"},
+          "review_status": {"enum": ["pending", "uncertain", "rejected"]},
+          "final_polygon": {
+            "oneOf": [
+              {"type": "null"},
+              {"$ref": "#/$defs/polygon"}
+            ]
+          }
+        },
+        "required": ["label_source"]
+      }
+    },
+    {
+      "comment": "R1: opencv_refined; pending/uncertain/rejected; final_polygon required",
+      "if": {"properties": {"label_tier": {"const": "R1"}}},
+      "then": {
+        "properties": {
+          "label_source": {"const": "opencv_refined"},
+          "review_status": {"enum": ["pending", "uncertain", "rejected"]},
+          "final_polygon": {"$ref": "#/$defs/polygon"}
+        },
+        "required": ["label_source", "final_polygon"]
+      }
+    },
+    {
+      "comment": "R2: human_accepted or human_edited; accepted/edited; final_polygon + reviewer required",
+      "if": {"properties": {"label_tier": {"const": "R2"}}},
+      "then": {
+        "properties": {
+          "label_source": {"enum": ["human_accepted", "human_edited"]},
+          "review_status": {"enum": ["accepted", "edited"]},
           "final_polygon": {"$ref": "#/$defs/polygon"},
           "reviewer_id": {"type": "string", "minLength": 1},
-          "reviewed_at": {"type": "string", "format": "date-time"}
+          "reviewed_at": {"type": "string"}
+        },
+        "required": ["label_source", "final_polygon", "reviewer_id", "reviewed_at"]
+      }
+    },
+    {
+      "comment": "R3: human_consensus; accepted/adjudicated; final_polygon + reviewer required",
+      "if": {"properties": {"label_tier": {"const": "R3"}}},
+      "then": {
+        "properties": {
+          "label_source": {"const": "human_consensus"},
+          "review_status": {"enum": ["accepted", "adjudicated"]},
+          "final_polygon": {"$ref": "#/$defs/polygon"},
+          "reviewer_id": {"type": "string", "minLength": 1},
+          "reviewed_at": {"type": "string"}
+        },
+        "required": ["label_source", "final_polygon", "reviewer_id", "reviewed_at"]
+      }
+    },
+    {
+      "comment": "Human conclusions (accepted/edited/rejected/adjudicated) require reviewer and time",
+      "if": {
+        "properties": {
+          "review_status": {
+            "enum": ["accepted", "edited", "rejected", "adjudicated"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reviewer_id": {"type": "string", "minLength": 1},
+          "reviewed_at": {"type": "string"}
+        },
+        "required": ["reviewer_id", "reviewed_at"]
+      }
+    },
+    {
+      "comment": "Numeric fields must be finite (reject NaN/Inf); Python NaN/±Inf serialized as float",
+      "if": {
+        "properties": {
+          "label_tier": {"enum": ["R0", "R1", "R2", "R3"]}
+        }
+      },
+      "then": {
+        "properties": {
+          "alignment_confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "anatomical_confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          }
         }
       }
     }

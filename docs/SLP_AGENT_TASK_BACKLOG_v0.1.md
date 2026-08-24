@@ -126,22 +126,27 @@ Reviewer checklist:
 
 ### TASK-SLP-A09：Region Ontology 与机器合同
 
-- 状态：`IMPLEMENTED_PENDING_REVIEW`。
-- 目标：冻结 coarse region 词表、label tier 和 review 字段。
-- 输出：`configs/annotations/slp_region_annotation_v0.1.schema.json`、说明和测试。
-- 验收：训练默认只接受 R2/R3；region、coordinate frame、来源和版本必填。
+- 状态：`SUPERSEDED_BY_A09R`（2026-08-24）。
+- **Owner 决策**：`SLP_8Region_Pressure_VAL_v1.1`（4,590 samples，102 danaLab，8 区）已接受为项目参考 GT。SLP8 区域训练使用该数据集，不依赖 A10–A17 OpenCV/人工复核路线。
+- 旧 `slp_region_annotation_v0.1`（10 区，R0–R3）标记为**历史内部治理合同**，不得作为当前训练入口。
+- 入口：`docs/stage_reports/S1_A09R_SLP8_GT_CONTRACT_REALIGN_v0.1.md`。
+- 验收：A09R 阶段报告已记录 Owner 决策、数据合同、A06 split 兼容性和禁止结论。
+
+### TASK-SLP-A09R：SLP8 GT 合同校准（当前任务）
+
+- 状态：`DONE_WITH_LIMITATIONS`（2026-08-24；Codex Reviewer 验收）。
+- 目标：使仓库治理文档、类别合同、adapter、测试与实际 SLP_8Region_Pressure_VAL_v1.1 一致。
+- 已有：8区 schema（`configs/annotations/slp_8region_pressure_gt_v1.1.schema.json`）、adapter（`src/topper_perception/io/slp_8region_pressure_dataset.py`）、validator（`scripts/validate_slp_8region_pressure_dataset.py`）、66 dataset tests + 221 regressions（1 skipped）、全量 validator（4590/4590，0 failures）、A06 split 兼容性（102 主体，3645/450/495，0 overlap）、统一 containment helper（`relative_to`）、全量 `allow_pickle=False`。
+- 入口：`docs/stage_reports/S1_A09R_SLP8_GT_CONTRACT_REALIGN_v0.1.md`。
 
 ### TASK-SLP-A10：几何 Region Seeder
 
-- 状态：`READY`（A08 DONE，A09 IMPLEMENTED_PENDING_REVIEW）。
-- 目标：用节点、人体轴和体型先验生成 R0 polygon。
-- 输出：head/shoulder/thorax/waist/pelvis/thigh/lower-leg 几何 proposal。
-- 验收：确定性、无自交、边界合法、左右一致；缺关键节点时 reject/uncertain。
-- 禁止：称为分割真值。
+- 状态：`HOLD / OPTIONAL_FUTURE`。
+- **不再是 B01 前置**。A09R 已通过 SLP8 GT 提供训练数据。若未来需要节点驱动的区域播种，再重新打开。
 
 ### TASK-SLP-A11：OpenCV Foreground Proposal
 
-- 状态：`BLOCKED_BY_A04_A10`。
+- 状态：`HOLD / OPTIONAL_FUTURE`。
 - 目标：分别实现 Depth、IR、RGB uncover 的身体/被褥前景候选。
 - 输出：可插拔 foreground backend、参数配置、overlay、测试。
 - 技术：depth threshold/background、connected components、morphology、GrabCut seed、IR 辅助轮廓。
@@ -151,47 +156,28 @@ Reviewer checklist:
 
 ### TASK-SLP-A12：Region Boundary Refiner
 
-- 状态：`BLOCKED_BY_A11`。
-- 目标：将 R0 与前景候选融合生成 R1。
-- 输出：refined polygon、topology validator、质量标志。
-- 验收：proposal/refined 均保留；面积突变、离开人体、区域重叠异常触发 fail/review。
+- 状态：`HOLD / OPTIONAL_FUTURE`。
 
 ### TASK-SLP-A13：人工复核工具
 
-- 状态：`BLOCKED_BY_A09_A12`。
-- 目标：四联图查看、polygon 编辑、accept/edit/reject/uncertain、reason code。
-- 输出：本地复核界面或可导入 CVAT/Label Studio 的包；导出符合 schema。
-- 验收：不可覆盖历史；reviewer/time/tool version 完整；断点续审。
-- 禁止：把受试者可识别图片上传公共服务。
+- 状态：`HOLD / OPTIONAL_FUTURE`。
 
 ### TASK-SLP-A14：Pilot 采样 Manifest
 
-- 状态：`READY`（A03 COMPLETE，A07 COMPLETE）。
-- 目标：选择12–20人 Pilot，覆盖 setting、cover、体型、方向、遮挡和区域。
-- 输出：冻结 manifest 和抽样理由。
-- 验收：抽样发生在看区域模型结果前；不以“容易标”替代代表性。
+- 状态：`HOLD / OPTIONAL_FUTURE`。
 
 ### TASK-SLP-A15：Pilot 自动预标注与参数冻结
 
-- 状态：`BLOCKED_BY_A12_A14`。
-- 目标：运行 R0→R1，不做全量。
-- 输出：R1 annotations、overlay、失败率、每帧耗时、参数 hash。
-- 验收：所有失败保留；不同 cover 分开统计。
+- 状态：`HOLD / OPTIONAL_FUTURE`。
 
 ### TASK-SLP-A16：Pilot 人工复核与一致性
 
-- 状态：`BLOCKED_BY_A13_A15`。
-- 目标：校准复核者并形成 R2/R3。
-- 输出：accept/edit/reject、IoU/边界差、耗时和争议报告。
-- 验收：双审阈值在 Pilot 后冻结；低一致区域可降级或合并词表。
+- 状态：`HOLD / OPTIONAL_FUTURE`。
 
 ### TASK-SLP-A17：Region Reference v1.0 Freeze
 
-- 状态：`BLOCKED_BY_A16`。
-- 目标：冻结操作性训练真值。
-- 输出：manifest、schema version、SHA-256、dataset card、QC 报告。
-- Gate：Reviewer 接受后，阶段 II 才可启动区域模型。
-- 禁止：把 R1 未审标签混入默认 TEST。
+- 状态：`SUPERSEDED_FOR_CURRENT_SLP8_GT`。
+- **已由 A09R 的 SLP_8Region_Pressure_VAL_v1.1 替代**。原路线（A10–A16）的区域真值不再是当前训练前置。
 
 ### TASK-SLP-A18：节点定位轻量基线
 
@@ -204,21 +190,21 @@ Reviewer checklist:
 
 ### TASK-SLP-B01：冻结区域训练表
 
-- 状态：`BLOCKED_BY_A17`。
-- 输入：R2/R3 + A06 split。
-- 输出：训练/验证/测试 manifest、类别覆盖、数据卡。
-- 验收：TEST reference 不被开发代码读取；R0/R1 单独标记。
+- 状态：`READY`（A09R DONE_WITH_LIMITATIONS，A06 split COMPATIBLE）。
+- 输入：SLP_8Region_Pressure_VAL_v1.1 + A06 split。
+- 输出：训练/验证/测试 manifest（基于 A06 split）、类别覆盖、数据卡。
+- 验收：TEST reference 不被开发代码读取；数据只从相对路径加载；normalization 仅在 TRAIN subjects 上 fit。
 
 ### TASK-SLP-B02：非学习区域基线
 
 - 状态：`BLOCKED_BY_B01`。
 - 目标：节点几何、人体轴分段、PM contact-intersection 三种基线。
-- 验收：使用同一 R2/R3 和同一 split；保留失败案例。
+- 验收：使用同一 SLP8 GT 合同和 A06 split；保留失败案例。
 
 ### TASK-SLP-B03：单模态 Region Smoke
 
 - 状态：`BLOCKED_BY_B01`。
-- 模态：PM、Depth、IR、RGB。
+- 当前模态：PM-only；Depth/IR/RGB 属于独立对齐合同后的可选路线。
 - 目标：验证数据吞吐、loss、输出、checkpoint/resume/reload。
 - 禁止：Smoke 分数排名。
 
@@ -226,24 +212,24 @@ Reviewer checklist:
 
 - 状态：`BLOCKED_BY_B02_B03`。
 - 目标：每模态保留最多1–2个可行候选。
-- 指标：region IoU/Dice、中心误差、逐区域、逐 cover、worst subject。
+- 指标：region IoU/Dice、中心误差、逐区域、逐 posture、worst subject；当前仅 uncover。
 - Gate：只淘汰不可行候选，不用小样本宣布冠军。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 
-- 状态：`BLOCKED_BY_B04`。
+- 状态：`HOLD_BY_MISSING_COVER_GT`。
 - 比较：uncover、cover1、cover2、cross-cover。
 - 输出：区域性能下降、拒识率和错误案例。
 
 ### TASK-SLP-B06：有限融合 Mini
 
-- 状态：`BLOCKED_BY_B04_B05`。
+- 状态：`HOLD / DIFFERENT_TRACK`。
 - 候选：PM+Depth、PM+IR；三模态需额外理由。
 - Gate：增益小于冻结 margin 时保留简单模型。
 
 ### TASK-SLP-B07：Full 协议冻结
 
-- 状态：`BLOCKED_BY_B04_B06`。
+- 状态：`BLOCKED_BY_B04`；B05/B06 为可选独立路线，不阻塞 pressure-only Full 协议。
 - 目标：冻结 folds、候选、预算、指标、选择规则、资源和停止条件。
 - 禁止：协议与 Full 运行同一任务完成。
 
