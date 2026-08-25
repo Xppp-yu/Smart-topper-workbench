@@ -1,0 +1,130 @@
+{
+  "config_version": "slp8_non_learning_v0.1",
+  "task_id": "TASK-SLP-B02-NON-LEARNING-REGION-BASELINE-v0.1",
+  "stage": "S2_B02",
+  "freeze_version": "slp8_training_tables_v0.1",
+  "b01_freeze_dir": "B01_FREEZE_DIR_PLACEHOLDER",
+  "b01_a06_split_sha256_expected": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+  "b01_task_id": "TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1",
+  "dataset_root": "DATASET_ROOT_PLACEHOLDER",
+  "raw_semantics": "raw_pmarray_response",
+  "fit_split": "train",
+  "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+  "source_review_status": "NOT_REVIEWED",
+  "prohibited_conclusions": [
+    "Not human pixel-level semantic masks",
+    "Not medical, skin-interface stress, or product ground truth",
+    "Not kPa; pressure values are raw PMarray response semantics",
+    "danaLab only, uncover only",
+    "TRAIN/VAL results are NOT final TEST or Full experiment conclusions",
+    "Joint-geometry baseline is NOT implemented in B02 v0.1 (insufficient input contract)"
+  ],
+  "region_ids": [1, 2, 3, 4, 5, 6, 7, 8],
+  "region_names": [
+    "HEAD_NECK",
+    "SHOULDER",
+    "THORAX_BACK",
+    "LUMBAR_WAIST",
+    "PELVIS_HIP",
+    "ARM",
+    "THIGH",
+    "LOWER_LEG_FOOT"
+  ],
+  "baselines": [
+    {
+      "name": "all_background",
+      "kind": "sanity_floor",
+      "description": "Every pixel is BACKGROUND.  Metric sanity floor only; never a candidate."
+    },
+    {
+      "name": "train_spatial_prior",
+      "kind": "candidate",
+      "description": "Per-pixel class probability template fitted on TRAIN labels; frozen before VAL evaluation; argmax at predict time.  Pressure is NOT used as input.",
+      "fit_split": "train"
+    },
+    {
+      "name": "pressure_body_axis_partition",
+      "kind": "candidate",
+      "description": "Body axis + longitudinal partition built only from pressure (contact mask, centroid, PCA, segment fractions).  No region label input.  All ratios and thresholds are versioned config; any TRAIN-derived quantity is recorded as fit_split=train.",
+      "contact_fraction": 0.05,
+      "contact_smooth_iters": 1,
+      "segment_fractions": [0.18, 0.07, 0.13, 0.12, 0.10, 0.10, 0.15, 0.15],
+      "lateral_half_width": 0.40,
+      "region_priority": [2, 5, 4, 3, 1, 7, 8, 6],
+      "fit_split": "train"
+    },
+    {
+      "name": "pressure_axis_contact_intersection",
+      "kind": "candidate",
+      "description": "Intersect frozen train_spatial_prior template with pressure contact evidence; deterministic conflict resolution via region_priority.  Empty contact or degenerate PCA falls back to template.",
+      "contact_fraction": 0.05,
+      "contact_smooth_iters": 1,
+      "segment_fractions": [0.18, 0.07, 0.13, 0.12, 0.10, 0.10, 0.15, 0.15],
+      "lateral_half_width": 0.40,
+      "region_priority": [2, 5, 4, 3, 1, 7, 8, 6],
+      "fit_split": "train"
+    }
+  ],
+  "metrics": {
+    "primary": [
+      "fixed_foreground_macro_iou",
+      "fixed_foreground_macro_dice",
+      "pixel_accuracy",
+      "per_region_iou",
+      "per_region_dice",
+      "per_region_precision",
+      "per_region_recall",
+      "background_iou",
+      "per_posture_macro_iou",
+      "per_subject_macro_iou",
+      "worst_subject_macro_iou",
+      "centroid_error_px_per_region"
+    ],
+    "fixed_foreground_class_ids": [1, 2, 3, 4, 5, 6, 7, 8],
+    "fixed_foreground_macro_does_not_skip_empty_classes": true,
+    "background_id": 0,
+    "n_classes": 9
+  },
+  "inputs_allowed_as_predictor_input": [
+    "pressure.npy",
+    "pressure shape",
+    "B01 TRAIN-only normalization (raw_pmarray_response, NOT kPa)",
+    "non-label structural metadata"
+  ],
+  "inputs_forbidden_as_predictor_input": [
+    "region_label.npy",
+    "region_onehot.npy",
+    "points.csv region_id field",
+    "class_ids_present",
+    "background_pixel_count",
+    "body_pixel_count",
+    "TEST labels / onehot / per-sample fields",
+    "A08 joints / body geometry (independent alignment contract not yet approved)"
+  ],
+  "test_access_policy": {
+    "load_test_default": false,
+    "enable_test_access_purpose_allowed": ["final_evaluation"],
+    "this_run_loads_test": false
+  },
+  "not_implemented": [
+    {
+      "baseline": "joint_geometry_baseline",
+      "reason": "B01 freeze does not provide joint features as a predictor input.  A08 body-geometry features require an independent, approved data alignment contract that is not part of B01; this baseline is OUT OF SCOPE for B02 v0.1."
+    }
+  ],
+  "expected_artifacts": [
+    "status.json",
+    "resolved_config.json",
+    "input_manifest_hashes.json",
+    "metrics_summary.json",
+    "metrics_by_baseline.csv",
+    "metrics_by_region.csv",
+    "metrics_by_subject.csv",
+    "metrics_by_posture.csv",
+    "predictions_manifest.csv",
+    "failure_cases.csv",
+    "failure_reason_counts.json",
+    "runtime.json",
+    "DONE.json"
+  ]
+}

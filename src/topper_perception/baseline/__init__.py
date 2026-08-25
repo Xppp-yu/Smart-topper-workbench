@@ -1,4 +1,11 @@
-"""Subject-isolated posture baseline evaluation for PoPu (P5/R5)."""
+"""Non-learning baseline models for SLP8 and PoPu.
+
+* :mod:`topper_perception.baseline.popu` — P5/R5 subject-isolated posture
+  baseline (PoPu only; preserved for backward compatibility).
+* :mod:`topper_perception.baseline.slp8_non_learning` — B02 v0.1
+  non-learning region segmentation baselines for the SLP8 pressure-only
+  dataset.
+"""
 
 from topper_perception.baseline.popu import (
     DEFAULT_RANDOM_STATE,
@@ -15,8 +22,39 @@ from topper_perception.baseline.popu import (
     sort_subjects_numeric,
     split_subjects,
 )
+from topper_perception.baseline.slp8_non_learning import (
+    BACKGROUND_ID,
+    BASELINE_VERSION,
+    DEFAULT_CONFIG_VERSION,
+    DEFAULT_CONTACT_FRACTION,
+    DEFAULT_CONTACT_SMOOTH_ITERS,
+    DEFAULT_LATERAL_HALF_WIDTH,
+    DEFAULT_REGION_PRIORITY,
+    DEFAULT_SEGMENT_FRACTIONS,
+    AllBackgroundBaseline,
+    AxisPartitionConfig,
+    AxisPartitionState,
+    BaselineContractError,
+    DtypeContractError,
+    LabelRangeError,
+    NonFinitePressureError,
+    PRESSURE_SHAPE,
+    PressureAxisContactIntersectionBaseline,
+    PressureBodyAxisPartitionBaseline,
+    REGION_IDS,
+    REGION_ID_TO_NAME,
+    REGION_NAMES,
+    REGION_NAME_TO_ID,
+    ShapeContractError,
+    TrainSpatialPriorBaseline,
+    TrainSpatialPriorState,
+    TrainTemplateFittedError,
+    fit_axis_partition_config,
+    list_baselines,
+)
 
 __all__ = [
+    # PoPu
     "DEFAULT_RANDOM_STATE",
     "POSTURE_LABELS",
     "SUPPORTED_MODELS",
@@ -30,4 +68,33 @@ __all__ = [
     "select_best_model",
     "sort_subjects_numeric",
     "split_subjects",
+    # B02 v0.1 SLP8
+    "BACKGROUND_ID",
+    "BASELINE_VERSION",
+    "DEFAULT_CONFIG_VERSION",
+    "DEFAULT_CONTACT_FRACTION",
+    "DEFAULT_CONTACT_SMOOTH_ITERS",
+    "DEFAULT_LATERAL_HALF_WIDTH",
+    "DEFAULT_REGION_PRIORITY",
+    "DEFAULT_SEGMENT_FRACTIONS",
+    "AllBackgroundBaseline",
+    "AxisPartitionConfig",
+    "AxisPartitionState",
+    "BaselineContractError",
+    "DtypeContractError",
+    "LabelRangeError",
+    "NonFinitePressureError",
+    "PRESSURE_SHAPE",
+    "PressureAxisContactIntersectionBaseline",
+    "PressureBodyAxisPartitionBaseline",
+    "REGION_IDS",
+    "REGION_ID_TO_NAME",
+    "REGION_NAMES",
+    "REGION_NAME_TO_ID",
+    "ShapeContractError",
+    "TrainSpatialPriorBaseline",
+    "TrainSpatialPriorState",
+    "TrainTemplateFittedError",
+    "fit_axis_partition_config",
+    "list_baselines",
 ]
