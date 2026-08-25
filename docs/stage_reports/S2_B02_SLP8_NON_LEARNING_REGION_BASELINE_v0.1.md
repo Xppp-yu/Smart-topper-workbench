@@ -213,15 +213,19 @@ asserts the same property against the legacy macro.
 
 ## 6. Commands actually run
 
-> Note: paths prefixed with `E:\TeamProjects\` are local machine
-> paths passed to the CLI.  They are **not** written into any
-> committed artefact.  The `resolved_config.json` records only the
-> file-existence flag and the freeze manifest SHA; no absolute path
-> is written into any CSV / JSON output.
+> Note: the following commands use the placeholder variables below.
+> They must be replaced with real paths before running on a new machine.
+> The `resolved_config.json` records only the file-existence flag and the
+> freeze manifest SHA; no absolute path is written into any CSV / JSON output.
 
 ```powershell
+# Placeholders (substitute before running):
+#   <B02_WORKTREE>        = path to this repository
+#   <B01_FREEZE_DIR>      = path to B01 freeze output (slp8_training_tables_v0.1/)
+#   <SLP8_DATASET_ROOT>   = path to SLP_8Region_Pressure_VAL_v1.1/
+
 # 0. Confirm worktree / branch / baseline
-cd E:\TeamProjects\smarttopper-slp-b02-non-learning-region-baseline
+cd <B02_WORKTREE>
 git status --short --branch
 git rev-parse HEAD
 git rev-list --left-right --count origin/main...HEAD
@@ -242,8 +246,8 @@ uv run pytest -q tests/test_slp8_training_table_freeze.py
 uv run python scripts/run_slp8_non_learning_region_baseline.py `
   --config configs/experiments/slp8_non_learning_region_baseline_v0.1.json `
   --output-dir outputs/experiments/EXP-SLP-B02-NONLEARNING-DEV-20260825-R01 `
-  --b01-freeze-dir "E:\TeamProjects\smarttopper-slp-b01-training-table-freeze\data\processed\slp8_training_tables_v0.1" `
-  --dataset-root "E:\TeamProjects\datasets\smart-topper\SLP2022\SLP\SLP_8Region_Pressure_VAL_v1.1"
+  --b01-freeze-dir "<B01_FREEZE_DIR>" `
+  --dataset-root "<SLP8_DATASET_ROOT>"
 # DONE.json written; wall_clock_seconds=396.18
 
 # 5. Whitespace check
@@ -362,7 +366,7 @@ zeroed.
 
 The A06 split SHA matches the canonical value recorded in B01's
 freeze manifest.  The B01 freeze directory was opened read-only
-(`E:\TeamProjects\smarttopper-slp-b01-training-table-freeze\data\processed\slp8_training_tables_v0.1`).
+(`<B01_FREEZE_DIR>`).
 No file in that directory was modified.
 
 ### 7.8 Per-run timing

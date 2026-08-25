@@ -383,14 +383,21 @@ def _aggregate_metrics(
     records: list[_SampleRecord],
     baseline_name: str,
     ml_split: str,
+    n_samples_attempted: int,
 ) -> dict[str, Any]:
     """Aggregate per-sample records into one per-(baseline, ml_split)
     metric record.  Returns a dict compatible with the CSV / summary
-    schema."""
+    schema.
+
+    ``n_samples_attempted`` is the total number of samples the runner
+    attempted to evaluate for this (baseline, split) pair, including
+    those that failed due to contract errors (e.g. FileNotFoundError).
+    This ensures ``n_samples_failed`` is accurate even when all
+    successful samples are in ``records`` and all failed samples were
+    caught before ``_predict_with_failure_capture`` was reached."""
     good_records = [r for r in records if r.failure_reason is None]
-    failed_records = [r for r in records if r.failure_reason is not None]
     n_eval = len(good_records)
-    n_failed = len(failed_records)
+    n_failed = n_samples_attempted - n_eval
     if n_eval > 0:
         all_preds = [r.pred for r in good_records]
         all_gts = [r.gt for r in good_records]
@@ -702,8 +709,14 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
                 "train": [],
                 "val": [],
             }
+            # Track attempted vs succeeded per (ml_split) so that
+            # _aggregate_metrics can report accurate n_samples_failed even
+            # when all failures occurred during adapter.load_sample (i.e.
+            # before _predict_with_failure_capture was reached).
+            n_split_attempted: dict[str, int] = {"train": 0, "val": 0}
             for ml_split, split_rows in rows_by_split.items():
                 for r in split_rows:
+                    n_split_attempted[ml_split] += 1
                     try:
                         loaded = adapter.load_sample(r.sample_id)
                     except Exception as exc:  # noqa: BLE001
@@ -797,7 +810,10 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
 
             # Aggregate per (baseline, ml_split).
             for ml_split, records in per_split_records.items():
-                agg = _aggregate_metrics(records, bl_name, ml_split)
+                agg = _aggregate_metrics(
+                    records, bl_name, ml_split,
+                    n_samples_attempted=n_split_attempted[ml_split],
+                )
                 agg["runtime_seconds"] = float(time.perf_counter() - t_bl0)
                 per_baseline_records.append(agg)
 
@@ -1006,24 +1022,65 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             },
         )
 
-        # A contract failure (n_failed > 0) does NOT block DONE; the
-        # metrics on the unaffected samples are still valid.  But any
-        # unexpected exception in the runner itself (caught below)
-        # will write FAILED.json instead.
-        status["status"] = "DONE"
-        status["finished_at_utc"] = _now_iso()
-        status["wall_clock_seconds"] = time.perf_counter() - t_start
-        _write_json(output_dir / "status.json", status)
-        _write_json(
-            output_dir / "DONE.json",
-            {
-                "task_id": TASK_ID,
-                "status": "DONE",
-                "finished_at_utc": _now_iso(),
-                "wall_clock_seconds": time.perf_counter() - t_start,
-            },
+        # Compute total contract-failure count across all splits and baselines.
+        n_failed_total = sum(
+            r["n_samples_failed"]
+            for r in per_baseline_records
         )
-        return 0
+        wall_seconds = time.perf_counter() - t_start
+        status["finished_at_utc"] = _now_iso()
+        status["wall_clock_seconds"] = wall_seconds
+
+        if n_failed_total > 0:
+            # Fail-closed: at least one contract failure occurred → the run
+            # is FAILED.  All artefacts (failure_cases.csv, metrics CSVs,
+            # etc.) are preserved for audit, but they belong to a partial /
+            # incomplete run and must not be treated as valid results.
+            status["status"] = "FAILED"
+            status["n_samples_failed"] = n_failed_total
+            _write_json(output_dir / "status.json", status)
+            _write_json(
+                output_dir / "FAILED.json",
+                {
+                    "task_id": TASK_ID,
+                    "status": "FAILED",
+                    "n_samples_failed": n_failed_total,
+                    "failure_reason_counts": {
+                        "total": int(sum(failure_counts.values())),
+                        "by_reason": {
+                            r: int(failure_counts.get(r, 0))
+                            for r in FAILURE_REASONS
+                        },
+                        "extra": {
+                            k: int(v)
+                            for k, v in failure_counts.items()
+                            if k not in FAILURE_REASONS
+                        },
+                    },
+                    "finished_at_utc": _now_iso(),
+                    "wall_clock_seconds": wall_seconds,
+                    "note": (
+                        "This run produced partial artefacts.  The metrics "
+                        "CSVs / summary describe only the successfully evaluated "
+                        "samples and must NOT be treated as the authoritative "
+                        "result for this experiment."
+                    ),
+                },
+            )
+            return 1
+        else:
+            status["status"] = "DONE"
+            _write_json(output_dir / "status.json", status)
+            _write_json(
+                output_dir / "DONE.json",
+                {
+                    "task_id": TASK_ID,
+                    "status": "DONE",
+                    "finished_at_utc": _now_iso(),
+                    "wall_clock_seconds": wall_seconds,
+                },
+            )
+            return 0
 
     except OutputDirCollisionError as exc:
         # The output-dir collision is a user-facing error, not a run

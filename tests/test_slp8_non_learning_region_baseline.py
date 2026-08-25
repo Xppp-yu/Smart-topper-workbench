@@ -1016,6 +1016,224 @@ class TestOutputDirCollision:
         runner._check_output_dir_safety(tmp_path / "DOES_NOT_EXIST")  # does not raise
 
 
+class TestRunnerFailClosed:
+    """Runner must be fail-closed: n_failed > 0 → FAILED.json + non-zero.
+
+    These tests exercise the runner at the integration level using real
+    temporary directories and minimal B01 freeze + SLP8 dataset fixtures
+    so the runner's path-validation logic is also exercised.
+    """
+
+    def _make_b01_dir(
+        self,
+        tmp_path: Path,
+        sample_ids_splits: list[tuple[str, str]],
+    ) -> tuple[Path, Path]:
+        """Create a real B01 freeze dir and SLP8 dataset root.
+
+        Returns (b01_dir, ds_root).  Both are real paths on disk so that
+        the runner's path-validation checks pass.
+        """
+        import hashlib
+        from topper_perception.io.slp8_training_table_freeze import (
+            A06_SPLIT_SHA256_EXPECTED,
+        )
+
+        b01 = tmp_path / "b01_freeze"
+        b01.mkdir()
+
+        def _csv_row(sid: str, split: str) -> str:
+            # Values in FreezeRow field order.
+            return (
+                f"{sid},{split},VAL,danaLab,uncover,00001,0,SUPINE,"
+                f"pressure/{sid}.npy,labels/{sid}_region.npy,labels/{sid}_onehot.npy,"
+                f"points/{sid}.csv,192,84,1|2|3|4|5|6|7|8,"
+                f"V221_CORRECTED_SUPPORT_AUTO_ACCEPTED,NOT_REVIEWED,1.1.0,EXPORTED,"
+                f"da39a3ee5e6b4b0d3255bfef95601890afd80709,16128,3072,0.0,True,True"
+            )
+
+        # Build CSV content with header matching FreezeRow field order.
+        train_rows_list = [s for s, sp in sample_ids_splits if sp == "train"]
+        val_rows_list   = [s for s, sp in sample_ids_splits if sp == "val"]
+        header = (
+            "sample_id,ml_split,source_split,setting,subject_id,cover,"
+            "frame_id,posture,pressure_npy,region_label_npy,region_onehot_npy,"
+            "points_csv,height,width,class_ids_present,annotation_provenance,"
+            "source_review_status,export_version,export_status,"
+            "source_pmarray_sha256,background_pixel_count,body_pixel_count,"
+            "clipped_ratio,onehot_valid,onehot_roundtrip"
+        )
+
+        train_csv = b01 / "train_manifest.csv"
+        train_csv.write_text(
+            header + "\n" + "\n".join(_csv_row(s, "train") for s in train_rows_list) + "\n",
+            encoding="utf-8",
+        )
+        val_csv = b01 / "val_manifest.csv"
+        val_csv.write_text(
+            header + "\n" + "\n".join(_csv_row(s, "val") for s in val_rows_list) + "\n",
+            encoding="utf-8",
+        )
+        test_csv = b01 / "test_manifest.csv"
+        test_csv.write_text(header + "\n" + _csv_row("SYNTH_TEST_0", "test") + "\n", encoding="utf-8")
+
+        def _sha256(path: Path) -> str:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        manifest = {
+            "core": {
+                "task_id": "TASK-SLP-A01-SLP8-FREEZE-TRAINING-TABLES-v0.1",
+                "freeze_version": "slp8_training_tables_v0.1",
+                "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+                "raw_semantics": "raw_pmarray_response",
+                "a06_split_sha256": A06_SPLIT_SHA256_EXPECTED,
+                "splits": {
+                    "train": {"manifest_sha256": _sha256(train_csv)},
+                    "val":   {"manifest_sha256": _sha256(val_csv)},
+                },
+            }
+        }
+        (b01 / "freeze_manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
+
+        ds = tmp_path / "dataset"
+        ds.mkdir()
+        manifest_dir = ds / "manifest"
+        manifest_dir.mkdir()
+        # Dataset manifest: ALL sample IDs so get_sample() finds them.
+        # FAIL samples have no pressure files → FileNotFoundError caught by runner.
+        ds_header = "sample_id,subject_id,posture,ml_split\n"
+        ds_rows = "\n".join(f"{sid},00001,SUPINE,{split_}" for sid, split_ in sample_ids_splits)
+        (manifest_dir / "val_manifest.csv").write_text(ds_header + ds_rows + "\n", encoding="utf-8")
+        return b01, ds
+
+    def _config(self, b01_dir: Path, ds_root: Path, out_dir: Path) -> dict:
+        return {
+            "config_version": "1",
+            "task_id": "TASK-SLP-B02-NON-LEARNING-REGION-BASELINE-v0.1",
+            "freeze_version": "slp8_training_tables_v0.1",
+            "b01_freeze_dir": str(b01_dir),
+            "dataset_root": str(ds_root),
+            "baselines": [{"name": "all_background"}],
+            "metrics": {"fixed_iou": True, "fixed_dice": True},
+            "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "raw_semantics": "raw_pmarray_response",
+            "fit_split": "train",
+        }
+
+    def test_n_failed_gt_0_writes_failed_json_not_done(
+        self, tmp_path: Path
+    ) -> None:
+        """When at least one contract failure occurs, the runner must
+        write FAILED.json, must NOT write DONE.json, and must return 1."""
+        runner = _load_runner_module()
+
+        # Provide FAIL and SUCC sample IDs.  We create real pressure
+        # files for SUCC samples (so they succeed) and leave FAIL files
+        # absent (so np.load raises FileNotFoundError, caught by the runner).
+        b01, ds = self._make_b01_dir(tmp_path, [
+            ("SYNTH_FAIL_0", "train"),
+            ("SYNTH_SUCC_0", "train"),
+            ("SYNTH_FAIL_1", "val"),
+            ("SYNTH_SUCC_1", "val"),
+        ])
+
+        # Create real pressure + label + onehot arrays for SUCC samples.
+        # FAIL samples have no files on disk → FileNotFoundError.
+        ds_pressure = ds / "pressure"
+        ds_labels   = ds / "labels"
+        ds_pressure.mkdir(exist_ok=True)
+        ds_labels.mkdir(exist_ok=True)
+        for sid, split in [("SYNTH_SUCC_0", "train"), ("SYNTH_SUCC_1", "val")]:
+            np.save(ds_pressure / f"{sid}.npy", np.zeros(PRESSURE_SHAPE, dtype=np.float64))
+            np.save(ds_labels   / f"{sid}_region.npy",  np.zeros(PRESSURE_SHAPE, dtype=np.uint8))
+            np.save(ds_labels  / f"{sid}_onehot.npy",  np.zeros((9, *PRESSURE_SHAPE), dtype=np.uint8))
+
+        out_dir = tmp_path / "EXP_FAIL_CLOSED"
+
+        rc = runner.run(self._config(b01, ds, out_dir), out_dir)
+
+        has_done = (out_dir / "DONE.json").is_file()
+        has_failed = (out_dir / "FAILED.json").is_file()
+        status_info = {}
+        if (out_dir / "status.json").is_file():
+            status_info = json.loads((out_dir / "status.json").read_text(encoding="utf-8"))
+
+        if not has_failed and not has_done:
+            assert False, f"No DONE/FAILED written. status={status_info}"
+        if has_done and not has_failed:
+            assert False, f"DONE.json written (n_failed_total must be 0). rc={rc}, status={status_info}"
+
+        assert (out_dir / "FAILED.json").is_file()
+        assert not (out_dir / "DONE.json").is_file()
+        assert rc == 1
+
+        status = json.loads((out_dir / "status.json").read_text(encoding="utf-8"))
+        assert status["status"] == "FAILED"
+        assert status.get("n_samples_failed", 0) > 0
+
+        failed_json = json.loads((out_dir / "FAILED.json").read_text(encoding="utf-8"))
+        assert failed_json["status"] == "FAILED"
+        assert failed_json["n_samples_failed"] > 0
+        assert "failure_reason_counts" in failed_json
+
+    def test_n_failed_eq_0_writes_done_json(
+        self, tmp_path: Path
+    ) -> None:
+        """When no contract failures occur the runner writes DONE.json
+        and returns 0."""
+        from topper_perception.io import slp_8region_pressure_dataset as _ds_mod
+
+        runner = _load_runner_module()
+
+        b01, ds = self._make_b01_dir(tmp_path, [
+            ("SYNTH_OK_0", "train"),
+            ("SYNTH_OK_1", "train"),
+            ("SYNTH_OK_2", "val"),
+            ("SYNTH_OK_3", "val"),
+        ])
+        out_dir = tmp_path / "EXP_SUCCESS"
+
+        _original = _ds_mod.Slp8RegionDatasetAdapter.load_sample
+
+        def _patched(self, sample_id: str):
+            p = np.zeros(PRESSURE_SHAPE, dtype=np.float64)
+
+            class FakeSample:
+                pressure: np.ndarray
+                region_label: np.ndarray
+
+            s = FakeSample()
+            s.pressure = p
+            s.region_label = np.zeros(PRESSURE_SHAPE, dtype=np.uint8)
+            return s
+
+        _ds_mod.Slp8RegionDatasetAdapter.load_sample = _patched  # type: ignore[method-assign]
+        try:
+            rc = runner.run(self._config(b01, ds, out_dir), out_dir)
+        finally:
+            _ds_mod.Slp8RegionDatasetAdapter.load_sample = _original  # type: ignore[method-assign]
+
+        assert rc == 0
+        assert (out_dir / "DONE.json").is_file()
+        assert not (out_dir / "FAILED.json").is_file()
+        status = json.loads((out_dir / "status.json").read_text(encoding="utf-8"))
+        assert status["status"] == "DONE"
+
+    def test_output_collision_still_protected_after_fail_closed_change(
+        self, tmp_path: Path
+    ) -> None:
+        """The fail-closed change must not break the output-dir collision
+        guard.  A pre-existing FAILED.json must still raise."""
+        runner = _load_runner_module()
+        out = tmp_path / "EXP_COLLISION"
+        out.mkdir()
+        (out / "FAILED.json").write_text('{"task_id": "old"}', encoding="utf-8")
+        with pytest.raises(runner.OutputDirCollisionError):
+            runner._check_output_dir_safety(out)
+
+
 class TestResolvedConfigNoAbsolutePaths:
     """The runner must not write any absolute path into the resolved
     config or any other committed artefact."""
