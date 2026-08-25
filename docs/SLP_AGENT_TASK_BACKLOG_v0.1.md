@@ -102,7 +102,7 @@ Reviewer checklist:
 
 - 状态：`DONE`。
 - 目标：在任何模型分数出现前冻结 subject-level split/folds。
-- 已有：split manifest JSON、SHA-256 `024f5abe`、19 单元测试、6 isolation tests PASS、62 回归测试 PASS；109 subjects split 81/10/18（danaLab 80/10/10，simLab 0/0/100 TEST held-out）；90 quarantined frames 单独统计，不混入 train/val；确定性复现验证通过。
+- 已有：split manifest JSON、SHA-256 `024f5abe`、19 单元测试、6 isolation tests PASS、62 回归测试 PASS；109 subjects split 81/10/18（danaLab 81/10/11，simLab 0/0/7 TEST held-out）；90 quarantined frames 单独统计，不混入 train/val；确定性复现验证通过。
 - 入口：`docs/stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md`。
 - 要求：danaLab/simLab 分层；同一受试者所有模态、遮盖、帧不可跨 split。
 - 禁止：根据后续 TEST 分数调整受试者。
@@ -190,23 +190,25 @@ Reviewer checklist:
 
 ### TASK-SLP-B01：冻结区域训练表
 
-- 状态：`READY`（A09R DONE_WITH_LIMITATIONS，A06 split COMPATIBLE）。
-- 输入：SLP_8Region_Pressure_VAL_v1.1 + A06 split。
-- 输出：训练/验证/测试 manifest（基于 A06 split）、类别覆盖、数据卡。
-- 验收：TEST reference 不被开发代码读取；数据只从相对路径加载；normalization 仅在 TRAIN subjects 上 fit。
+- 状态：`DONE_WITH_LIMITATIONS`（2026-08-25；Codex Reviewer 已验收；82 项 B01 单元/集成测试 + 287 项 A09R/schema/adapter/infra/split 回归测试全绿，联合套件共 369 passed（1 skipped：A05 CSV 不存在）；真实数据 build 3645/450/495；full validator 含 deterministic rebuild `ALL CHECKS PASSED in 56.0s`；TEST 合同：默认不读取 TEST rows，`enable_test_access` 后必须显式 `load_test=True` 重新加载才返回）。
+- 输入：SLP_8Region_Pressure_VAL_v1.1 + A06 split (`slp_subject_split_v0.1.json`, SHA `024f5abe...`)。
+- 输出：`data/processed/slp8_training_tables_v0.1/{train,val,test}_manifest.{csv,jsonl}`、`freeze_manifest.json`（顶层，content-addressed）、`normalization_stats.json`（TRAIN-only fit）、`{train,val}_class_stats.json`（TEST 仅结构性计数）、`dataset_card.md`。
+- 模块：`src/topper_perception/io/slp8_training_table_freeze.py`（A06/source loaders、freeze row builder、TEST 访问守卫、TRAIN-only normalization、freeze manifest、dataset card、`Slp8TrainingTableFreezer`）；CLI `scripts/build_slp8_training_tables.py` 与 `scripts/validate_slp8_training_tables.py`；测试 `tests/test_slp8_training_table_freeze.py`。
+- 验收：TEST reference 不被开发代码读取（`TestLeakageError` 除非 `enable_test_access(purpose="final_evaluation")`）；数据只从相对路径加载（无绝对路径 / `..` / 同前缀 sibling 逃逸）；normalization 仅在 TRAIN subjects 上 fit；subject overlap = 0；3645/450/495 与 A06 完全一致；A06 SHA 与 source manifest SHA 校验通过；deterministic rebuild 产生相同的 freeze manifest core SHA。
+- 入口：[S2_B01 阶段报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)。
 
 ### TASK-SLP-B02：非学习区域基线
 
-- 状态：`BLOCKED_BY_B01`。
+- 状态：`READY`（B01 已以 `DONE_WITH_LIMITATIONS` 验收；尚未启动）。
 - 目标：节点几何、人体轴分段、PM contact-intersection 三种基线。
-- 验收：使用同一 SLP8 GT 合同和 A06 split；保留失败案例。
+- 验收：使用同一 SLP8 GT 合同和 B01 冻结的训练表（`data/processed/slp8_training_tables_v0.1/`）；保留失败案例；不得读取 TEST label/onehot 除非显式 `enable_test_access(purpose="final_evaluation")`。
 
 ### TASK-SLP-B03：单模态 Region Smoke
 
-- 状态：`BLOCKED_BY_B01`。
+- 状态：`READY`（B01 已以 `DONE_WITH_LIMITATIONS` 验收；尚未启动）。
 - 当前模态：PM-only；Depth/IR/RGB 属于独立对齐合同后的可选路线。
 - 目标：验证数据吞吐、loss、输出、checkpoint/resume/reload。
-- 禁止：Smoke 分数排名。
+- 禁止：Smoke 分数排名；不得读取 TEST label/onehot 除非显式 `enable_test_access(purpose="final_evaluation")`。
 
 ### TASK-SLP-B04：单模态 Region Mini
 

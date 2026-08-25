@@ -1,11 +1,11 @@
 # Smart Topper Windows Research Workbench — 项目状态
 
-最后更新：2026-08-24（A09R COMPLETE_WITH_LIMITATIONS）
+最后更新：2026-08-25（B01 SLP8 训练表冻结 `DONE_WITH_LIMITATIONS`）
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成；验收前保持 `READY_FOR_REVIEW`。
 
 ## 当前一句话状态
 
-P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族。P6/P6.1 已完成 UNKNOWN/REJECT、原始重点案例复核、温度校准与三模型一致性模拟；P7 真实 checkpoint 扰动推理仍待运行。SLP A09R 已以 `COMPLETE_WITH_LIMITATIONS` 验收：`SLP_8Region_Pressure_VAL_v1.1`（4,590 samples，102 danaLab，8 区）确立为当前项目 SLP8 pressure-only 区域分割参考 GT，8 区 schema + adapter（66 tests）+ 全量 validator（4590/4590，0 failures）和 A06 split 兼容性（3645/450/495，0 overlap）均经 Reviewer 复核；A10–A17 OpenCV/人工复核路线为 HOLD/SUPERSEDED；B01 训练表冻结现为 READY。
+P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族。P6/P6.1 已完成 UNKNOWN/REJECT、原始重点案例复核、温度校准与三模型一致性模拟；P7 真实 checkpoint 扰动推理仍待运行。SLP A09R 已以 `COMPLETE_WITH_LIMITATIONS` 验收：`SLP_8Region_Pressure_VAL_v1.1`（4,590 samples，102 danaLab，8 区）确立为当前项目 SLP8 pressure-only 区域分割参考 GT，8 区 schema + adapter（66 tests）+ 全量 validator（4590/4590，0 failures）和 A06 split 兼容性（3645/450/495，0 overlap）均经 Reviewer 复核；A10–A17 OpenCV/人工复核路线为 HOLD/SUPERSEDED。SLP B01 已以 `DONE_WITH_LIMITATIONS` 验收：pressure-only 8-region 训练/验证/测试数据入口（`slp8_training_tables_v0.1`）包含 3645/450/495 manifests、TRAIN-only normalization（`raw_pmarray_response`，NOT kPa）、TEST 防泄漏合同（默认不读取 TEST；授权后需显式 `load_test=True` 重新加载）、数据集卡与顶层 freeze manifest；full validator（含 deterministic rebuild）`ALL CHECKS PASSED in 56.0s`；82 B01 tests + 287 A09R/schema/adapter/infra/split regressions 全部通过，联合套件共 369 passed（1 skipped：A05 CSV 不存在）。B02/B03 已释放为 `READY`，但尚未启动。
 
 ## 阶段看板
 
@@ -35,7 +35,8 @@ P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选
 | S0 | 全量目录、模态与标注边界审计 | COMPLETE_WITH_QUARANTINE | [S0 结果](stage_reports/S0_SLP_FULL_INVENTORY_AND_ANNOTATION_BOUNDARY_v0.1.md)、1,941 组 Inventory、109 人标注表和摘要；2 组 depthRaw 缺失 | 精确 quarantine；进入 S1 配对与坐标审计 |
 | S1 | 跨模态配对、homography 与 overlay 审计 | IN_PROGRESS_WITH_A05_A06_A07_A08_DELIVERED | [A03 Frame Master Index](stage_reports/S1_1_SLP_FRAME_MASTER_INDEX_v0.1.md)、[A04 Homography 审计](stage_reports/S1_2_SLP_HOMOGRAPHY_AUDIT_v0.1.md)、[A05 Canonical Adapter](stage_reports/S1_3_SLP_CANONICAL_ADAPTER_v0.1.md)、[A06 Subject Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、[A07 Joint Occlusion EDA](stage_reports/S1_5_SLP_JOINT_EDA_v0.1.md)、[A08 Body Axis Geometry](stage_reports/S1_8_SLP_BODY_AXIS_GEOMETRY_v0.1.md)、[A09R GT Contract Realign](stage_reports/S1_A09R_SLP8_GT_CONTRACT_REALIGN_v0.1.md)、[Examples](stage_reports/SLP_CANONICAL_SAMPLE_EXAMPLES_v0.1.md)、[SLP 两阶段总计划](SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md)、[Agent 任务清单](SLP_AGENT_TASK_BACKLOG_v0.1.md) | A09R 完成：SLP_8Region_Pressure_VAL_v1.1 已接受为项目参考 GT（4,590 samples，102 danaLab，8 区）；A10–A17 路线改为 HOLD/SUPERSEDED；B01 现为 READY_AFTER_A09R |
 | S1_A09R | SLP8 GT 合同校准 | COMPLETE_WITH_LIMITATIONS | [A09R 报告](stage_reports/S1_A09R_SLP8_GT_CONTRACT_REALIGN_v0.1.md)；8区 schema；adapter；66 dataset tests + 221 regressions（1 skipped）；全量 validator 4590/4590、0 failures；A06 split 兼容性（102 主体，3645/450/495，0 overlap） | B01 训练表冻结 READY；严格保留 NOT_REVIEWED、uncover-only 和非产品 GT 边界 |
-| S2 | Canonical Sample 与受试者拆分冻结 | COMPLETE_WITH_A06_SPLIT_FROZEN | [A06 Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、manifest JSON、SHA-256 `024f5abe`；109 subjects split 81/10/18 (danaLab 80/10/10, simLab 0/0/100 TEST held-out)；quarantine 90 frames 单独统计；6 isolation tests PASS；A06 split 与 SLP8 GT 完全兼容（102 主体，0 overlap） | A18 节点基线使用此 split；B01 使用 A06 split 作为训练基础；fold 设计由 B07 Full 协议另行冻结 |
+| S2_B01 | SLP8 训练表冻结 | DONE_WITH_LIMITATIONS | [S2_B01 报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)；`slp8_training_table_freeze_v0.1` 模块；`build_slp8_training_tables.py` + `validate_slp8_training_tables.py`；`tests/test_slp8_training_table_freeze.py`（82 passed）；真实数据 build 输出 3,645/450/495；full validator（含 deterministic rebuild）`ALL CHECKS PASSED in 56.0s`；287 regression tests passed，联合套件共 369 passed（1 skipped：A05 CSV 不存在）；TRAIN-only normalization（`raw_pmarray_response`、NOT kPa）；TEST 防泄漏合同（默认不读取 TEST；`enable_test_access(purpose="final_evaluation")` 后必须显式 `load_test=True` 重新加载才返回 TEST rows）；data card；gitignored 输出目录 | B02/B03 已释放为 `READY`；继续保留 NOT_REVIEWED、uncover-only 和非产品 GT 边界 |
+| S2 | Canonical Sample 与受试者拆分冻结 | COMPLETE_WITH_A06_SPLIT_FROZEN | [A06 Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、manifest JSON、SHA-256 `024f5abe`；109 subjects split 81/10/18 (danaLab 81/10/11，simLab 0/0/7 TEST held-out)；quarantine 90 frames 单独统计；6 isolation tests PASS；A06 split 与 SLP8 GT 完全兼容（102 主体，0 overlap） | A18 节点基线使用此 split；B01 使用 A06 split 作为训练基础；fold 设计由 B07 Full 协议另行冻结 |
 | S3 | RGB/IR/Depth/PM 单模态关节基线 | BLOCKED_BY_S2 | 尚未开始 | 每模态保留 1–2 个候选，分开报告原始与映射标签 |
 | S4 | 身体区域伪标签 Pilot 与人工复核 | HOLD / OPTIONAL_FUTURE / SUPERSEDED_FOR_CURRENT_SLP8_GT | A09R 已将 SLP8 GT 设为默认训练合同；原 A10–A17 OpenCV/人工复核路线已改 HOLD | 不再以 A17 R2/R3 为前置；SLP8 区域训练使用已冻结 GT |
 | S5–S7 | 遮盖压力测试、有限融合、Full 比较 | HOLD / DIFFERENT_TRACK | 尚未开始；RGB/IR/Depth/PM 模态路线独立于 SLP8 GT | 固定候选、拆分、预算和受试者级评价；SLP8 GT 训练（B01）不依赖此路线 |
@@ -44,7 +45,7 @@ P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选
 
 - 固定姿态有标签集：`5,100` 条 JSON 记录；其中四类卧姿各 `1,260` 条，空床 `60` 条。
 - `others.json`：每位受试者一条、共 `60` 条，缺少姿态与 variation 标签；保留给后续转身、过渡或 `UNKNOWN` 研究，不伪造为固定姿态训练样本。
-- **SLP 8-region pressure-only GT**（`SLP_8Region_Pressure_VAL_v1.1`，4,590 samples，102 danaLab，uncover only）：`V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，`source_review_status=NOT_REVIEWED`；是当前 SLP8 区域分割的 PROJECT_ACCEPTED_REFERENCE_GT；**不是人工像素级标注；不是医学/皮肤界面应力/产品真值**；压力保持 raw PMarray response semantics，不得称为 kPa；仅 danaLab/uncover，不得外推到产品、硬件、舒适性、医疗或气囊控制。
+- **SLP 8-region pressure-only GT**（`SLP_8Region_Pressure_VAL_v1.1`，4,590 samples，102 danaLab，uncover only）：`V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，`source_review_status=NOT_REVIEWED`；是当前 SLP8 区域分割的 PROJECT_ACCEPTED_REFERENCE_GT；**不是人工像素级标注；不是医学/皮肤界面应力/产品真值**；压力保持 raw PMarray response semantics，不得称为 kPa；仅 danaLab/uncover，不得外推到产品、硬件、舒适性、医疗或气囊控制。B01 已基于此 GT + A06 split 冻结 pressure-only 8-region 训练/验证/测试数据入口（`slp8_training_tables_v0.1`），详见 [S2_B01 阶段报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)；TEST 访问受 `allow_test + purpose=final_evaluation` 合同约束。
 - **SLP 10-region polygon 路线**（`slp_region_annotation_v0.1`，R0–R3 tier）：历史内部治理合同，**不再是当前训练合同**，不得与 8-region 数据混用。
 - PoPu 与 PMD 是独立公开数据集，不能逐行配对。
 - 所有公开数据结果仅证明研究数据链路或算法候选，不证明自研传感器、气囊闭环、整夜稳定性、舒适性或产品效果。

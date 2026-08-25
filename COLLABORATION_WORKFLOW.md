@@ -128,7 +128,7 @@ SLP 路线分为两条（见 Backlog）：
 ```text
 # 路线 A：SLP8 pressure-only GT（A09R 建立）
 A09R  SLP8 GT 合同校准（当前项目参考 GT）
-  -> B01  训练表冻结（READY）
+  -> B01  训练表冻结（DONE_WITH_LIMITATIONS）
 
 # 路线 B：OpenCV/人工复核（历史路线，已改为 HOLD）
 A09 Region Schema Review  [SUPERSEDED_BY_A09R]
@@ -139,9 +139,10 @@ A09 Region Schema Review  [SUPERSEDED_BY_A09R]
   -> B01+ Frozen R2/R3 Dataset Training and Evaluation  [HOLD]
 ```
 
-真值边界（A09R Owner 决策，2026-08-24）：
+真值边界（A09R Owner 决策，2026-08-24；B01 数据合同补充，2026-08-24）：
 
 - **SLP 8-region pressure-only GT**（`SLP_8Region_Pressure_VAL_v1.1`，4,590 samples，102 danaLab，uncover only）是当前 `PROJECT_ACCEPTED_REFERENCE_GT`，用于 SLP8 pressure-only 区域分割训练和评估。provenance=`V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，`source_review_status=NOT_REVIEWED`。**不是人工像素级语义 mask；不是医学/皮肤界面应力/产品 GT**；不得改写 provenance/review 字段；不得称为 kPa。
+- **B01（`TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1`）** 基于 A09R 合同和 A06 subject split 冻结了 pressure-only 8-region 训练/验证/测试数据入口（`slp8_training_tables_v0.1`，3645/450/495，subject overlap = 0）。B01 模块 `src/topper_perception/io/slp8_training_table_freeze.py` 提供 TEST 防泄漏合同：开发态下 `compute_class_stats(ml_split="test")` 直接抛 `TestLeakageError`；只有 `enable_test_access(purpose="final_evaluation")` 显式开启才允许读取 TEST label/onehot 或计算 TEST 类别统计；任何其它 purpose 名称均被拒绝。 数据卡与顶层 freeze manifest 均记录该合同。
 - RGB/IR 14 关节点是 `J0`（原始人工关节真值）；homography 映射是派生 `J1`。
 - 10-region polygon 路线（`slp_region_annotation_v0.1`，R0–R3 tiers）是历史内部治理合同，**不是当前训练合同**，不得与 8-region 数据混用。
 - 仅 danaLab/uncover，不得外推到产品、硬件、舒适性、医疗或气囊控制。
