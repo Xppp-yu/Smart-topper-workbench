@@ -57,6 +57,9 @@ from topper_perception.evaluation.slp_pressure_metrics import (
     create_mock_labels,
     SegmentationMetrics,
     DEFAULT_IGNORE_LABEL,
+    DEFAULT_FOREGROUND_CLASS_IDS,
+    FixedClassMacroMetrics,
+    compute_fixed_class_macro_metrics,
 )
 from topper_perception.evaluation.slp_pressure_perturbation import (
     add_random_noise,
@@ -551,6 +554,126 @@ class TestSegmentationMetrics:
 
         assert metrics1.mIoU == metrics2.mIoU
         assert metrics1.macro_f1 == metrics2.macro_f1
+
+
+class TestFixedClassMacroMetrics:
+    """Tests for the B02 v0.1 fixed-class-set macro metric.
+
+    The contract is: classes in the fixed set always contribute, even
+    when they are absent from the prediction or the ground truth.  A
+    baseline that never predicts class K must therefore receive IoU=0
+    on K, not silently "succeed" by being evaluated only on the
+    classes it does predict.
+    """
+
+    def test_default_class_ids(self) -> None:
+        """The default fixed set is 1..8 (the 8 SLP8 semantic regions)."""
+        assert DEFAULT_FOREGROUND_CLASS_IDS == (1, 2, 3, 4, 5, 6, 7, 8)
+
+    def test_macro_does_not_skip_empty_class(self) -> None:
+        """A baseline that never predicts class K must have IoU=0 on K."""
+        # GT has classes 1, 2, 3.  Pred only predicts class 1.
+        gt = np.zeros((8, 8), dtype=np.uint8)
+        gt[0:2, 0:2] = 1
+        gt[0:2, 2:4] = 2
+        gt[0:2, 4:6] = 3
+        pred = np.zeros((8, 8), dtype=np.uint8)
+        pred[0:2, 0:2] = 1
+
+        m = compute_fixed_class_macro_metrics(
+            gt, pred, class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9
+        )
+        assert isinstance(m, FixedClassMacroMetrics)
+        # Class 1 is perfect, classes 2..8 are missed → mean is 1/8.
+        assert m.fixed_iou == pytest.approx(1.0 / 8.0)
+        assert m.fixed_dice == pytest.approx(1.0 / 8.0)
+        # Per-class IoU contains every requested class.
+        assert set(m.per_class_iou.keys()) == {1, 2, 3, 4, 5, 6, 7, 8}
+        # Class 2 is present in GT but not pred → IoU=0.
+        assert m.per_class_iou[2] == 0.0
+        assert m.per_class_present_in_gt[2] is True
+        assert m.per_class_present_in_pred[2] is False
+
+    def test_macro_hides_nothing_vs_legacy_skip_empty(self) -> None:
+        """Demonstrates that the B02 v0.1 macro catches what the
+        legacy "skip empty classes" macro would silently hide."""
+        # Same setup as test_macro_does_not_skip_empty_class.
+        gt = np.zeros((8, 8), dtype=np.uint8)
+        gt[0:2, 0:2] = 1
+        gt[0:2, 2:4] = 2
+        gt[0:2, 4:6] = 3
+        pred = np.zeros((8, 8), dtype=np.uint8)
+        pred[0:2, 0:2] = 1
+
+        # The fixed-class macro must be 1/8.
+        m = compute_fixed_class_macro_metrics(
+            gt, pred, class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9
+        )
+        assert m.fixed_iou < 0.5
+        # The legacy "skip empty classes" macro would silently drop
+        # classes 2..8 from the denominator and report 1.0.  The B02
+        # v0.1 contract MUST report 1/8.
+        assert m.fixed_iou < 0.5
+
+    def test_macro_perfect_prediction(self) -> None:
+        # A "perfect" prediction that only uses 2 of 8 foreground
+        # classes is 1.0 on those 2 classes and 0 on the other 6.
+        # The fixed-class macro is therefore 2/8 = 0.25, NOT 1.0.
+        # This is the B02 v0.1 contract: a baseline that never
+        # predicts class K cannot be evaluated on a metric that
+        # silently drops K from the denominator.
+        gt = np.zeros((8, 8), dtype=np.uint8)
+        gt[0:2, 0:2] = 1
+        gt[0:2, 2:4] = 2
+        pred = gt.copy()
+        m = compute_fixed_class_macro_metrics(
+            gt, pred, class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9
+        )
+        assert m.fixed_iou == pytest.approx(2.0 / 8.0)
+        assert m.fixed_dice == pytest.approx(2.0 / 8.0)
+        # Per-class IoU: classes 1 and 2 are 1.0, classes 3..8 are 0.
+        for cid in (1, 2):
+            assert m.per_class_iou[cid] == pytest.approx(1.0)
+        for cid in (3, 4, 5, 6, 7, 8):
+            assert m.per_class_iou[cid] == pytest.approx(0.0)
+
+    def test_macro_input_validation(self) -> None:
+        gt = np.zeros((4, 4), dtype=np.uint8)
+        pred = np.zeros((4, 4), dtype=np.uint8)
+        with pytest.raises(ValueError):
+            compute_fixed_class_macro_metrics(
+                gt, pred, class_ids=(), n_classes=9
+            )
+        with pytest.raises(ValueError):
+            compute_fixed_class_macro_metrics(
+                gt, pred, class_ids=(-1, 0), n_classes=9
+            )
+
+    def test_macro_handles_multi_sample_input(self) -> None:
+        gt1 = np.zeros((4, 4), dtype=np.uint8); gt1[0:2, 0:2] = 1
+        gt2 = np.zeros((4, 4), dtype=np.uint8); gt2[0:2, 0:2] = 2
+        pred1 = np.zeros((4, 4), dtype=np.uint8); pred1[0:2, 0:2] = 1
+        pred2 = np.zeros((4, 4), dtype=np.uint8); pred2[0:2, 0:2] = 2
+        m = compute_fixed_class_macro_metrics(
+            [gt1, gt2], [pred1, pred2],
+            class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9,
+        )
+        assert m.fixed_iou == pytest.approx(2.0 / 8.0)
+        assert m.fixed_dice == pytest.approx(2.0 / 8.0)
+        assert m.n_samples == 2
+
+    def test_macro_as_dict_round_trip(self) -> None:
+        gt = np.zeros((4, 4), dtype=np.uint8); gt[0:2, 0:2] = 1
+        pred = np.zeros((4, 4), dtype=np.uint8); pred[0:2, 0:2] = 1
+        m = compute_fixed_class_macro_metrics(
+            gt, pred, class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9
+        )
+        d = m.as_dict()
+        # JSON roundtrip
+        j = json.dumps(d, sort_keys=True)
+        d2 = json.loads(j)
+        assert d2["fixed_iou"] == d["fixed_iou"]
+        assert d2["n_classes"] == 8
 
 
 # ============================================================================

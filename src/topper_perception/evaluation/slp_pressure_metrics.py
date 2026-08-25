@@ -8,6 +8,7 @@ This module provides metrics for evaluating region segmentation models:
 - Confusion matrix
 - Ignore/uncertain label handling
 - Empty/missing class handling
+- Fixed foreground macro (B02 v0.1; does NOT skip empty classes)
 
 Pure NumPy implementation, no torch dependency for unit testing.
 
@@ -17,12 +18,15 @@ Design rules:
 * Uncertain labels are flagged but may be included or excluded based on config.
 * Empty classes (no predictions or no ground truth) are handled gracefully.
 * Zero-division returns 0, not NaN.
+* Fixed foreground macro metrics always include the requested set of
+  classes; missing / empty classes count as 0 instead of being silently
+  dropped.  This is the B02 v0.1 contract.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Sequence
+from typing import Any, Final, Sequence
 
 import numpy as np
 
@@ -787,3 +791,374 @@ def rasterize_polygons(
         label_map[mask > 0] = class_idx
 
     return label_map
+
+
+# ---------------------------------------------------------------------------
+# B02 v0.1 fixed-class macro metrics
+# ---------------------------------------------------------------------------
+#
+# The B02 v0.1 contract requires that the "macro" indicator MUST be computed
+# over a *fixed* set of class IDs (1..8 for the SLP8 GT) and MUST include
+# every class in the set, even if it never appears in the prediction or in
+# the ground truth for a given baseline.  This avoids the silent-bias
+# failure mode in which a baseline that simply never predicts class K gets
+# K removed from the macro denominator and therefore appears to score
+# higher than a baseline that honestly predicts K and scores ~0 on it.
+#
+# These functions are the only macro-level metrics the B02 v0.1 stage
+# report and runner will cite as the "macro IoU" / "macro Dice" for any
+# non-learning baseline.  The legacy ``compute_segmentation_metrics``
+# behaviour (which excludes empty classes) remains available for other
+# callers but is NOT the B02 v0.1 macro indicator.
+
+#: Default foreground class IDs for the B02 v0.1 macro indicator.
+#: 1..8 = the 8 SLP8 semantic regions (BACKGROUND=0 is reported separately).
+DEFAULT_FOREGROUND_CLASS_IDS: Final[tuple[int, ...]] = (1, 2, 3, 4, 5, 6, 7, 8)
+
+
+@dataclass(frozen=True, slots=True)
+class FixedClassMacroMetrics:
+    """Result of a fixed-class-set macro evaluation.
+
+    Every requested class contributes to the macro indicator even when it
+    is absent from the prediction or the ground truth.  Missing classes
+    contribute a score of 0; the macro indicator is therefore the simple
+    mean over the fixed set.
+
+    Fields
+    ------
+    fixed_iou : float
+        Mean of per-class IoU over the fixed class set.  Unobserved
+        classes contribute 0.
+    fixed_dice : float
+        Mean of per-class Dice over the fixed class set.  Unobserved
+        classes contribute 0.
+    per_class_iou : dict[int, float]
+        Per-class IoU keyed by class ID; always contains every ID in
+        ``class_ids``.
+    per_class_dice : dict[int, float]
+        Per-class Dice keyed by class ID.
+    per_class_precision : dict[int, float]
+        Per-class precision (TP / (TP + FP)) computed from the
+        confusion matrix.  ``0.0`` when the class never appears in
+        the prediction (no TP and no FP).
+    per_class_recall : dict[int, float]
+        Per-class recall (TP / (TP + FN)) computed from the
+        confusion matrix.  ``0.0`` when the class never appears in
+        the ground truth (no TP and no FN).
+    per_class_tp : dict[int, int]
+        Per-class true-positive pixel count.
+    per_class_fp : dict[int, int]
+        Per-class false-positive pixel count.
+    per_class_fn : dict[int, int]
+        Per-class false-negative pixel count.
+    per_class_pred_count : dict[int, int]
+        Per-class prediction pixel count.
+    per_class_gt_count : dict[int, int]
+        Per-class ground-truth pixel count.
+    per_class_present_in_pred : dict[int, bool]
+        Whether the class appears in the prediction (pred_count > 0).
+    per_class_present_in_gt : dict[int, bool]
+        Whether the class appears in the ground truth (gt_count > 0).
+    class_ids : tuple[int, ...]
+        The fixed class set that was scored.
+    n_classes : int
+        Length of ``class_ids``.
+    n_classes_present_in_pred : int
+        Number of classes in the fixed set that appear in the prediction.
+    n_classes_present_in_gt : int
+        Number of classes in the fixed set that appear in the GT.
+    pixel_accuracy : float
+        Per-pixel accuracy on the union of all input samples, ignoring
+        ignore / uncertain labels.
+    n_samples : int
+        Number of input samples.
+    n_pixels : int
+        Total number of pixels (before ignore / uncertain filtering).
+    """
+
+    fixed_iou: float
+    fixed_dice: float
+    per_class_iou: dict[int, float]
+    per_class_dice: dict[int, float]
+    per_class_precision: dict[int, float]
+    per_class_recall: dict[int, float]
+    per_class_tp: dict[int, int]
+    per_class_fp: dict[int, int]
+    per_class_fn: dict[int, int]
+    per_class_pred_count: dict[int, int]
+    per_class_gt_count: dict[int, int]
+    per_class_present_in_pred: dict[int, bool]
+    per_class_present_in_gt: dict[int, bool]
+    class_ids: tuple[int, ...]
+    n_classes: int
+    n_classes_present_in_pred: int
+    n_classes_present_in_gt: int
+    pixel_accuracy: float
+    n_samples: int
+    n_pixels: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "fixed_iou": self.fixed_iou,
+            "fixed_dice": self.fixed_dice,
+            "per_class_iou": {int(k): float(v) for k, v in self.per_class_iou.items()},
+            "per_class_dice": {int(k): float(v) for k, v in self.per_class_dice.items()},
+            "per_class_precision": {int(k): float(v) for k, v in self.per_class_precision.items()},
+            "per_class_recall": {int(k): float(v) for k, v in self.per_class_recall.items()},
+            "per_class_tp": {int(k): int(v) for k, v in self.per_class_tp.items()},
+            "per_class_fp": {int(k): int(v) for k, v in self.per_class_fp.items()},
+            "per_class_fn": {int(k): int(v) for k, v in self.per_class_fn.items()},
+            "per_class_pred_count": {int(k): int(v) for k, v in self.per_class_pred_count.items()},
+            "per_class_gt_count": {int(k): int(v) for k, v in self.per_class_gt_count.items()},
+            "per_class_present_in_pred": {int(k): bool(v) for k, v in self.per_class_present_in_pred.items()},
+            "per_class_present_in_gt": {int(k): bool(v) for k, v in self.per_class_present_in_gt.items()},
+            "class_ids": list(self.class_ids),
+            "n_classes": self.n_classes,
+            "n_classes_present_in_pred": self.n_classes_present_in_pred,
+            "n_classes_present_in_gt": self.n_classes_present_in_gt,
+            "pixel_accuracy": self.pixel_accuracy,
+            "n_samples": self.n_samples,
+            "n_pixels": self.n_pixels,
+        }
+
+
+def _build_confusion_matrix(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    n_classes: int,
+    ignore_label: int = DEFAULT_IGNORE_LABEL,
+    uncertain_label: int = DEFAULT_UNCERTAIN_LABEL,
+) -> np.ndarray:
+    """Confusion matrix helper that respects ignore / uncertain labels.
+
+    Parameters
+    ----------
+    y_true, y_pred : np.ndarray
+        Label maps (H, W) or 1-D arrays of equal length.
+    n_classes : int
+        Number of classes (rows/cols of the returned matrix).
+    ignore_label, uncertain_label : int
+        Sentinel values; pixels where either ground-truth or prediction
+        equals one of these sentinels are excluded from the matrix.
+    """
+    true_flat = np.asarray(y_true).ravel()
+    pred_flat = np.asarray(y_pred).ravel()
+    valid = (
+        (true_flat != ignore_label)
+        & (pred_flat != ignore_label)
+        & (true_flat != uncertain_label)
+        & (pred_flat != uncertain_label)
+    )
+    cm = np.bincount(
+        true_flat[valid].astype(np.int64) * n_classes
+        + pred_flat[valid].astype(np.int64),
+        minlength=n_classes * n_classes,
+    ).reshape(n_classes, n_classes)
+    return cm.astype(np.int64)
+
+
+def compute_fixed_class_macro_metrics(
+    y_true: np.ndarray | Sequence[np.ndarray],
+    y_pred: np.ndarray | Sequence[np.ndarray],
+    class_ids: Sequence[int] = DEFAULT_FOREGROUND_CLASS_IDS,
+    *,
+    n_classes: int | None = None,
+    ignore_label: int = DEFAULT_IGNORE_LABEL,
+    uncertain_label: int = DEFAULT_UNCERTAIN_LABEL,
+) -> FixedClassMacroMetrics:
+    """Compute a fixed-class-set macro metric (B02 v0.1 contract).
+
+    The macro IoU and macro Dice are averaged over ``class_ids`` *with
+    no exclusions*.  Classes that are absent from the prediction or the
+    ground truth contribute a score of 0.  This guarantees that a
+    baseline which never predicts class K cannot silently inflate its
+    macro score by being "evaluated only on what it predicts".
+
+    Parameters
+    ----------
+    y_true, y_pred : np.ndarray or Sequence[np.ndarray]
+        Ground-truth / predicted label maps.  Each entry must be a 2-D
+        array of equal shape.  Integer dtype.
+    class_ids : Sequence[int]
+        Fixed set of class IDs to score.  Defaults to
+        :data:`DEFAULT_FOREGROUND_CLASS_IDS` (1..8 for SLP8).
+    n_classes : int | None
+        Total number of classes (rows/cols of the confusion matrix).  If
+        None, derived from the data and ``class_ids`` (always at least
+        ``max(class_ids) + 1``).
+    ignore_label, uncertain_label : int
+        Sentinel values excluded from scoring.
+
+    Returns
+    -------
+    FixedClassMacroMetrics
+    """
+    if isinstance(y_true, np.ndarray):
+        y_true = [y_true]
+    if isinstance(y_pred, np.ndarray):
+        y_pred = [y_pred]
+    if len(y_true) != len(y_pred):
+        raise ValueError(
+            f"y_true and y_pred must have the same length, "
+            f"got {len(y_true)} and {len(y_pred)}"
+        )
+    if len(y_true) == 0:
+        raise ValueError("compute_fixed_class_macro_metrics: at least one sample required")
+
+    if not class_ids:
+        raise ValueError("compute_fixed_class_macro_metrics: class_ids must be non-empty")
+
+    # Build a dense, ordered, deduplicated tuple of class IDs.
+    fixed_ids: tuple[int, ...] = tuple(dict.fromkeys(int(c) for c in class_ids))
+    if any(c < 0 for c in fixed_ids):
+        raise ValueError(
+            f"compute_fixed_class_macro_metrics: class_ids must be non-negative: {fixed_ids}"
+        )
+
+    # Derive n_classes if not given: large enough to cover both fixed
+    # class IDs and the maximum label value observed in the inputs.
+    if n_classes is None:
+        max_label = 0
+        for arr in (y_true, y_pred):
+            for a in arr:
+                amax = int(np.asarray(a).max()) if a.size > 0 else 0
+                if amax > max_label:
+                    max_label = amax
+        n_classes = max(max_label + 1, max(fixed_ids) + 1)
+    n_classes = int(n_classes)
+
+    cm = np.zeros((n_classes, n_classes), dtype=np.int64)
+    n_pixels = 0
+    correct_pixels = 0
+
+    for gt, pred in zip(y_true, y_pred):
+        gt_arr = np.asarray(gt)
+        pred_arr = np.asarray(pred)
+        if gt_arr.shape != pred_arr.shape:
+            raise ValueError(
+                f"compute_fixed_class_macro_metrics: shape mismatch "
+                f"({gt_arr.shape} vs {pred_arr.shape})"
+            )
+        sample_cm = _build_confusion_matrix(
+            gt_arr, pred_arr, n_classes,
+            ignore_label=ignore_label,
+            uncertain_label=uncertain_label,
+        )
+        cm += sample_cm
+
+        valid = (
+            (gt_arr != ignore_label)
+            & (pred_arr != ignore_label)
+            & (gt_arr != uncertain_label)
+            & (pred_arr != uncertain_label)
+        )
+        n_pixels += int(gt_arr.size)
+        correct_pixels += int(np.sum(valid & (gt_arr == pred_arr)))
+
+    per_class_iou: dict[int, float] = {}
+    per_class_dice: dict[int, float] = {}
+    per_class_precision: dict[int, float] = {}
+    per_class_recall: dict[int, float] = {}
+    per_class_tp: dict[int, int] = {}
+    per_class_fp: dict[int, int] = {}
+    per_class_fn: dict[int, int] = {}
+    per_class_pred_count: dict[int, int] = {}
+    per_class_gt_count: dict[int, int] = {}
+    per_class_present_in_pred: dict[int, bool] = {}
+    per_class_present_in_gt: dict[int, bool] = {}
+    n_present_pred = 0
+    n_present_gt = 0
+    iou_acc: list[float] = []
+    dice_acc: list[float] = []
+
+    for cid in fixed_ids:
+        if cid >= n_classes:
+            # Class never appears in the confusion matrix ⇒ both pred
+            # and gt counts are 0; IoU/Dice/Precision/Recall defined as 0.
+            per_class_iou[cid] = 0.0
+            per_class_dice[cid] = 0.0
+            per_class_precision[cid] = 0.0
+            per_class_recall[cid] = 0.0
+            per_class_tp[cid] = 0
+            per_class_fp[cid] = 0
+            per_class_fn[cid] = 0
+            per_class_pred_count[cid] = 0
+            per_class_gt_count[cid] = 0
+            per_class_present_in_pred[cid] = False
+            per_class_present_in_gt[cid] = False
+            iou_acc.append(0.0)
+            dice_acc.append(0.0)
+            continue
+
+        tp = int(cm[cid, cid])
+        pred_count = int(cm[:, cid].sum())
+        gt_count = int(cm[cid, :].sum())
+        fp = pred_count - tp
+        fn = gt_count - tp
+        union = pred_count + gt_count - tp
+        if union > 0:
+            iou = tp / union
+        else:
+            iou = 0.0
+
+        dice_denom = pred_count + gt_count
+        if dice_denom > 0:
+            dice = 2.0 * tp / dice_denom
+        else:
+            dice = 0.0
+
+        # Precision = TP / (TP + FP); 0 when no predictions at all.
+        if (tp + fp) > 0:
+            precision = tp / (tp + fp)
+        else:
+            precision = 0.0
+        # Recall = TP / (TP + FN); 0 when no GT pixels at all.
+        if (tp + fn) > 0:
+            recall = tp / (tp + fn)
+        else:
+            recall = 0.0
+
+        per_class_iou[cid] = float(iou)
+        per_class_dice[cid] = float(dice)
+        per_class_precision[cid] = float(precision)
+        per_class_recall[cid] = float(recall)
+        per_class_tp[cid] = int(tp)
+        per_class_fp[cid] = int(fp)
+        per_class_fn[cid] = int(fn)
+        per_class_pred_count[cid] = int(pred_count)
+        per_class_gt_count[cid] = int(gt_count)
+        per_class_present_in_pred[cid] = bool(pred_count > 0)
+        per_class_present_in_gt[cid] = bool(gt_count > 0)
+        if pred_count > 0:
+            n_present_pred += 1
+        if gt_count > 0:
+            n_present_gt += 1
+        iou_acc.append(float(iou))
+        dice_acc.append(float(dice))
+
+    fixed_iou = float(np.mean(iou_acc)) if iou_acc else 0.0
+    fixed_dice = float(np.mean(dice_acc)) if dice_acc else 0.0
+
+    return FixedClassMacroMetrics(
+        fixed_iou=fixed_iou,
+        fixed_dice=fixed_dice,
+        per_class_iou=per_class_iou,
+        per_class_dice=per_class_dice,
+        per_class_precision=per_class_precision,
+        per_class_recall=per_class_recall,
+        per_class_tp=per_class_tp,
+        per_class_fp=per_class_fp,
+        per_class_fn=per_class_fn,
+        per_class_pred_count=per_class_pred_count,
+        per_class_gt_count=per_class_gt_count,
+        per_class_present_in_pred=per_class_present_in_pred,
+        per_class_present_in_gt=per_class_present_in_gt,
+        class_ids=fixed_ids,
+        n_classes=len(fixed_ids),
+        n_classes_present_in_pred=n_present_pred,
+        n_classes_present_in_gt=n_present_gt,
+        pixel_accuracy=(correct_pixels / n_pixels) if n_pixels > 0 else 0.0,
+        n_samples=len(y_true),
+        n_pixels=int(n_pixels),
+    )
