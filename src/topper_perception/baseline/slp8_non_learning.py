@@ -119,11 +119,12 @@ DEFAULT_SEED: int = 20260825
 #: contact area on a typical SLP8 sample.
 DEFAULT_CONTACT_FRACTION: float = 0.05
 
-#: Default smoothing iterations used to denoise the contact mask.
-#: Kept small (1) — additional smoothing is intentionally avoided so
-#: that the contact mask remains a faithful representation of the raw
-#: pressure geometry, not a pre-segmented region.
-DEFAULT_CONTACT_SMOOTH_ITERS: int = 1
+#: Default morphological padding iterations used to denoise the contact
+#: mask.  Kept at 0 by default — the contact mask is intended to remain
+#: a faithful representation of the raw pressure geometry, not a
+#: pre-segmented region.  The value is exposed in the config so that
+#: future B03 / B04 audits can change it without code changes.
+DEFAULT_CONTACT_SMOOTH_ITERS: int = 0
 
 #: Default longitudinal segment fractions along the body axis.  These
 #: are the deterministic proportions used by
@@ -376,6 +377,25 @@ class AllBackgroundBaseline:
         _validate_pressure(pressure)
         return np.zeros(PRESSURE_SHAPE, dtype=np.uint8)
 
+    def predict_with_info(
+        self, pressure: np.ndarray
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Same as :meth:`predict` plus a diagnostic info dict.
+
+        The all-background baseline has no body-axis; the info dict
+        always reports ``fallback = "none"`` and the constant empty
+        diagnostic.  The dict is returned for symmetry with the
+        body-axis baselines.
+        """
+        labels = self.predict(pressure)
+        info: dict[str, Any] = {
+            "fallback": "none",
+            "no_contact": False,
+            "degenerate_pca": False,
+            "smoothed": False,
+        }
+        return labels, info
+
     def to_state(self) -> dict[str, Any]:
         return {
             "baseline": self.NAME,
@@ -535,6 +555,27 @@ class TrainSpatialPriorBaseline:
         # masking is applied.
         return _validate_label_map(argmax)
 
+    def predict_with_info(
+        self, pressure: np.ndarray
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Same as :meth:`predict` plus a diagnostic info dict.
+
+        The spatial-prior template has no fallback paths; the info
+        dict always reports ``fallback = "none"`` and the train count
+        that produced the template.  The dict is returned for symmetry
+        with the body-axis baselines.
+        """
+        labels = self.predict(pressure)
+        info: dict[str, Any] = {
+            "fallback": "none",
+            "no_contact": False,
+            "degenerate_pca": False,
+            "smoothed": False,
+        }
+        if self._state is not None:
+            info["train_count"] = int(self._state.train_count)
+        return labels, info
+
     @property
     def state(self) -> TrainSpatialPriorState:
         if self._state is None:
@@ -657,6 +698,25 @@ def _build_axis_partition_labels(
         info["fallback"] = "all_background"
         return labels, info
 
+    # Optional morphological padding of the contact mask.  0 (default)
+    # is a no-op; larger values smooth the contact boundary via
+    # binary dilation followed by binary erosion.  This is the only
+    # step that consumes ``cfg.contact_smooth_iters``; the parameter
+    # is exposed for audit only and never tuned using VAL/TEST.
+    n_iters = int(getattr(cfg, "contact_smooth_iters", 0) or 0)
+    if n_iters > 0:
+        from scipy.ndimage import binary_dilation, binary_erosion
+
+        contact = binary_dilation(contact, iterations=n_iters)
+        contact = binary_erosion(contact, iterations=n_iters)
+        # Recompute centroid / axis on the smoothed mask.
+        cx, cy, ux, uy, degenerate = _body_axis_from_contact(contact)
+        info["smoothed"] = True
+        if degenerate or contact.sum() < 5:
+            labels = np.full(PRESSURE_SHAPE, cfg.background_id, dtype=np.uint8)
+            info["fallback"] = "all_background_after_smoothing"
+            return labels, info
+
     t_min, t_max, _ = _project_axis_lengths(contact, cx, cy, ux, uy)
     axis_length = t_max - t_min
     info["t_min"] = t_min
@@ -673,8 +733,16 @@ def _build_axis_partition_labels(
     cols = np.arange(W, dtype=np.float64)[None, :]
     # Project every pixel onto the principal axis (relative to centroid).
     t = (cols - cx) * ux + (rows - cy) * uy
-    # Normalise to [0, 1] along the contact axis range.  Clamp to [0, 1].
-    t_norm = (t - t_min) / max(axis_length, 1e-12)
+    # Normalise to [0, 1] so that 0 corresponds to the HEAD (top of the
+    # image, small y; corresponds to t_max because the head-up rule
+    # forces uy <= 0, so increasing y → decreasing t) and 1 corresponds
+    # to the FEET (bottom, large y; corresponds to t_min).
+    #
+    # This is the deterministic convention used by
+    # :data:`DEFAULT_SEGMENT_FRACTIONS` (segment 0 = HEAD_NECK,
+    # segment 7 = LOWER_LEG_FOOT) and by the test
+    # :func:`TestAxisContactIntersection::test_vertical_body_top_is_head_feet_is_lower_leg`.
+    t_norm = (t_max - t) / max(axis_length, 1e-12)
     t_norm = np.clip(t_norm, 0.0, 1.0)
 
     # Determine the per-pixel longitudinal segment.
@@ -777,6 +845,36 @@ class PressureBodyAxisPartitionBaseline:
         labels, _info = _build_axis_partition_labels(pressure, self._state)
         return _validate_label_map(labels)
 
+    def predict_with_info(
+        self, pressure: np.ndarray
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Same as :meth:`predict` plus the underlying diagnostic info.
+
+        The info dict contains the centroid, axis vector, contact
+        pixel count, fallback reason (if any), and the boolean
+        ``no_contact`` / ``degenerate_pca`` flags that the runner
+        uses for the diagnostic histogram.
+        """
+        _validate_pressure(pressure)
+        if self._state is None:
+            raise BaselineContractError(
+                "PressureBodyAxisPartitionBaseline.predict_with_info: not fitted"
+            )
+        labels, info = _build_axis_partition_labels(pressure, self._state)
+        # Always include ``fallback``; default to ``"none"`` if the
+        # predictor ran without falling back.
+        info = dict(info)
+        info.setdefault("fallback", "none")
+        info.setdefault("smoothed", False)
+        info.setdefault("degenerate", False)
+        info["no_contact"] = info["fallback"] in {
+            "all_background",
+            "all_background_after_smoothing",
+            "zero_axis_length",
+        }
+        info["degenerate_pca"] = bool(info["degenerate"])
+        return _validate_label_map(labels), info
+
     @property
     def state(self) -> AxisPartitionState:
         if self._state is None:
@@ -862,6 +960,25 @@ class PressureAxisContactIntersectionBaseline:
             raise BaselineContractError(
                 "PressureAxisContactIntersectionBaseline.predict: not fitted"
             )
+        labels, _info = self._predict_with_diag(pressure)
+        return _validate_label_map(labels)
+
+    def predict_with_info(
+        self, pressure: np.ndarray
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Same as :meth:`predict` plus the underlying diagnostic info."""
+        _validate_pressure(pressure)
+        if self._template_state is None or self._axis_state is None:
+            raise BaselineContractError(
+                "PressureAxisContactIntersectionBaseline.predict_with_info: not fitted"
+            )
+        labels, info = self._predict_with_diag(pressure)
+        return _validate_label_map(labels), info
+
+    def _predict_with_diag(
+        self, pressure: np.ndarray
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Internal: run the intersection, return (labels, info)."""
         # Spatial prior argmax (pressure never used here).
         template_argmax = np.argmax(self._template_state.template, axis=0).astype(np.uint8)
         template_argmax = _validate_label_map(template_argmax)
@@ -903,10 +1020,20 @@ class PressureAxisContactIntersectionBaseline:
         labels = np.where(disagree, chosen, labels)
 
         # Step 4: empty / degenerate contact → fall back to template.
+        fallback_used = False
         if axis_info.get("fallback") is not None or int(contact.sum()) < 5:
             labels = np.where(contact, template_argmax, np.uint8(0))
+            fallback_used = True
 
-        return _validate_label_map(labels.astype(np.uint8))
+        info: dict[str, Any] = dict(axis_info)
+        info.setdefault("fallback", "none")
+        info["fallback_used_by_intersection"] = bool(fallback_used)
+        info["no_contact"] = bool(info.get("fallback") in {
+            "all_background", "all_background_after_smoothing", "zero_axis_length",
+        })
+        info["degenerate_pca"] = bool(info.get("degenerate", False))
+        info["smoothed"] = bool(info.get("smoothed", False))
+        return labels.astype(np.uint8), info
 
     def to_state(self) -> dict[str, Any]:
         if self._template_state is None or self._axis_state is None:

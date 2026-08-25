@@ -838,6 +838,20 @@ class FixedClassMacroMetrics:
         ``class_ids``.
     per_class_dice : dict[int, float]
         Per-class Dice keyed by class ID.
+    per_class_precision : dict[int, float]
+        Per-class precision (TP / (TP + FP)) computed from the
+        confusion matrix.  ``0.0`` when the class never appears in
+        the prediction (no TP and no FP).
+    per_class_recall : dict[int, float]
+        Per-class recall (TP / (TP + FN)) computed from the
+        confusion matrix.  ``0.0`` when the class never appears in
+        the ground truth (no TP and no FN).
+    per_class_tp : dict[int, int]
+        Per-class true-positive pixel count.
+    per_class_fp : dict[int, int]
+        Per-class false-positive pixel count.
+    per_class_fn : dict[int, int]
+        Per-class false-negative pixel count.
     per_class_pred_count : dict[int, int]
         Per-class prediction pixel count.
     per_class_gt_count : dict[int, int]
@@ -867,6 +881,11 @@ class FixedClassMacroMetrics:
     fixed_dice: float
     per_class_iou: dict[int, float]
     per_class_dice: dict[int, float]
+    per_class_precision: dict[int, float]
+    per_class_recall: dict[int, float]
+    per_class_tp: dict[int, int]
+    per_class_fp: dict[int, int]
+    per_class_fn: dict[int, int]
     per_class_pred_count: dict[int, int]
     per_class_gt_count: dict[int, int]
     per_class_present_in_pred: dict[int, bool]
@@ -885,6 +904,11 @@ class FixedClassMacroMetrics:
             "fixed_dice": self.fixed_dice,
             "per_class_iou": {int(k): float(v) for k, v in self.per_class_iou.items()},
             "per_class_dice": {int(k): float(v) for k, v in self.per_class_dice.items()},
+            "per_class_precision": {int(k): float(v) for k, v in self.per_class_precision.items()},
+            "per_class_recall": {int(k): float(v) for k, v in self.per_class_recall.items()},
+            "per_class_tp": {int(k): int(v) for k, v in self.per_class_tp.items()},
+            "per_class_fp": {int(k): int(v) for k, v in self.per_class_fp.items()},
+            "per_class_fn": {int(k): int(v) for k, v in self.per_class_fn.items()},
             "per_class_pred_count": {int(k): int(v) for k, v in self.per_class_pred_count.items()},
             "per_class_gt_count": {int(k): int(v) for k, v in self.per_class_gt_count.items()},
             "per_class_present_in_pred": {int(k): bool(v) for k, v in self.per_class_present_in_pred.items()},
@@ -1034,6 +1058,11 @@ def compute_fixed_class_macro_metrics(
 
     per_class_iou: dict[int, float] = {}
     per_class_dice: dict[int, float] = {}
+    per_class_precision: dict[int, float] = {}
+    per_class_recall: dict[int, float] = {}
+    per_class_tp: dict[int, int] = {}
+    per_class_fp: dict[int, int] = {}
+    per_class_fn: dict[int, int] = {}
     per_class_pred_count: dict[int, int] = {}
     per_class_gt_count: dict[int, int] = {}
     per_class_present_in_pred: dict[int, bool] = {}
@@ -1046,9 +1075,14 @@ def compute_fixed_class_macro_metrics(
     for cid in fixed_ids:
         if cid >= n_classes:
             # Class never appears in the confusion matrix ⇒ both pred
-            # and gt counts are 0; IoU/Dice defined as 0.
+            # and gt counts are 0; IoU/Dice/Precision/Recall defined as 0.
             per_class_iou[cid] = 0.0
             per_class_dice[cid] = 0.0
+            per_class_precision[cid] = 0.0
+            per_class_recall[cid] = 0.0
+            per_class_tp[cid] = 0
+            per_class_fp[cid] = 0
+            per_class_fn[cid] = 0
             per_class_pred_count[cid] = 0
             per_class_gt_count[cid] = 0
             per_class_present_in_pred[cid] = False
@@ -1057,23 +1091,41 @@ def compute_fixed_class_macro_metrics(
             dice_acc.append(0.0)
             continue
 
-        intersection = int(cm[cid, cid])
+        tp = int(cm[cid, cid])
         pred_count = int(cm[:, cid].sum())
         gt_count = int(cm[cid, :].sum())
-        union = pred_count + gt_count - intersection
+        fp = pred_count - tp
+        fn = gt_count - tp
+        union = pred_count + gt_count - tp
         if union > 0:
-            iou = intersection / union
+            iou = tp / union
         else:
             iou = 0.0
 
         dice_denom = pred_count + gt_count
         if dice_denom > 0:
-            dice = 2.0 * intersection / dice_denom
+            dice = 2.0 * tp / dice_denom
         else:
             dice = 0.0
 
+        # Precision = TP / (TP + FP); 0 when no predictions at all.
+        if (tp + fp) > 0:
+            precision = tp / (tp + fp)
+        else:
+            precision = 0.0
+        # Recall = TP / (TP + FN); 0 when no GT pixels at all.
+        if (tp + fn) > 0:
+            recall = tp / (tp + fn)
+        else:
+            recall = 0.0
+
         per_class_iou[cid] = float(iou)
         per_class_dice[cid] = float(dice)
+        per_class_precision[cid] = float(precision)
+        per_class_recall[cid] = float(recall)
+        per_class_tp[cid] = int(tp)
+        per_class_fp[cid] = int(fp)
+        per_class_fn[cid] = int(fn)
         per_class_pred_count[cid] = int(pred_count)
         per_class_gt_count[cid] = int(gt_count)
         per_class_present_in_pred[cid] = bool(pred_count > 0)
@@ -1093,6 +1145,11 @@ def compute_fixed_class_macro_metrics(
         fixed_dice=fixed_dice,
         per_class_iou=per_class_iou,
         per_class_dice=per_class_dice,
+        per_class_precision=per_class_precision,
+        per_class_recall=per_class_recall,
+        per_class_tp=per_class_tp,
+        per_class_fp=per_class_fp,
+        per_class_fn=per_class_fn,
         per_class_pred_count=per_class_pred_count,
         per_class_gt_count=per_class_gt_count,
         per_class_present_in_pred=per_class_present_in_pred,

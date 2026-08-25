@@ -1,5 +1,14 @@
 # S2_B02_SLP8_NON_LEARNING_REGION_BASELINE_v0.1
 
+> **SUPERSEDED by `S2_B02_SLP8_NON_LEARNING_REGION_BASELINE_v0.2.md`.**
+> R01 was rejected by the Reviewer with verdict `ITERATE`.  R02
+> addresses the 8 issues called out (head→toe axis direction,
+> TP/FP/FN from confusion matrix, TRAIN/VAL split, no output-dir
+> overwrites, no absolute paths in artefacts, diagnostic audit,
+> `contact_smooth_iters`, and Next Gate).  R01 artefacts under
+> `EXP-SLP-B02-NONLEARNING-DEV-20260825-R01` are preserved as a
+> reference of the pre-iteration state.
+
 **TASK-ID**: `TASK-SLP-B02-NON-LEARNING-REGION-BASELINE-v0.1`
 **Branch**: `codex/task-slp-b02-non-learning-region-baseline-v0.1`
 **HEAD (B02 implementation)**: pending commit (will be reported in the handoff)

@@ -3,14 +3,16 @@
   "task_id": "TASK-SLP-B02-NON-LEARNING-REGION-BASELINE-v0.1",
   "stage": "S2_B02",
   "freeze_version": "slp8_training_tables_v0.1",
-  "b01_freeze_dir": "B01_FREEZE_DIR_PLACEHOLDER",
   "b01_a06_split_sha256_expected": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
   "b01_task_id": "TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1",
-  "dataset_root": "DATASET_ROOT_PLACEHOLDER",
   "raw_semantics": "raw_pmarray_response",
   "fit_split": "train",
   "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
   "source_review_status": "NOT_REVIEWED",
+  "_cli_overrides": {
+    "b01_freeze_dir": "MUST be passed via --b01-freeze-dir (absolute path, recorded only as REDACTED_LOCAL_PATH in committed artefacts)",
+    "dataset_root": "MUST be passed via --dataset-root (absolute path, recorded only as REDACTED_LOCAL_PATH in committed artefacts)"
+  },
   "prohibited_conclusions": [
     "Not human pixel-level semantic masks",
     "Not medical, skin-interface stress, or product ground truth",
@@ -47,7 +49,7 @@
       "kind": "candidate",
       "description": "Body axis + longitudinal partition built only from pressure (contact mask, centroid, PCA, segment fractions).  No region label input.  All ratios and thresholds are versioned config; any TRAIN-derived quantity is recorded as fit_split=train.",
       "contact_fraction": 0.05,
-      "contact_smooth_iters": 1,
+      "contact_smooth_iters": 0,
       "segment_fractions": [0.18, 0.07, 0.13, 0.12, 0.10, 0.10, 0.15, 0.15],
       "lateral_half_width": 0.40,
       "region_priority": [2, 5, 4, 3, 1, 7, 8, 6],
@@ -58,7 +60,7 @@
       "kind": "candidate",
       "description": "Intersect frozen train_spatial_prior template with pressure contact evidence; deterministic conflict resolution via region_priority.  Empty contact or degenerate PCA falls back to template.",
       "contact_fraction": 0.05,
-      "contact_smooth_iters": 1,
+      "contact_smooth_iters": 0,
       "segment_fractions": [0.18, 0.07, 0.13, 0.12, 0.10, 0.10, 0.15, 0.15],
       "lateral_half_width": 0.40,
       "region_priority": [2, 5, 4, 3, 1, 7, 8, 6],
@@ -104,7 +106,8 @@
   "test_access_policy": {
     "load_test_default": false,
     "enable_test_access_purpose_allowed": ["final_evaluation"],
-    "this_run_loads_test": false
+    "this_run_loads_test": false,
+    "test_access_in_this_run": "denied; verified by TestTestAccessPolicy unit tests"
   },
   "not_implemented": [
     {
@@ -123,6 +126,7 @@
     "metrics_by_posture.csv",
     "predictions_manifest.csv",
     "failure_cases.csv",
+    "diagnostic_counts.json",
     "failure_reason_counts.json",
     "runtime.json",
     "DONE.json"

@@ -11,17 +11,24 @@ Usage
 
     uv run python scripts/run_slp8_non_learning_region_baseline.py \\
         --config configs/experiments/slp8_non_learning_region_baseline_v0.1.json \\
-        --output-dir outputs/experiments/EXP-SLP-B02-NONLEARNING-DEV-20260825-R01
+        --output-dir outputs/experiments/<EXP-ID> \\
+        --b01-freeze-dir <B01_FREEZE_DIR> \\
+        --dataset-root <SLP8_DATASET_ROOT>
+
+The CLI flags for ``--b01-freeze-dir`` and ``--dataset-root`` are
+required and are recorded into the run only as logical names; the
+absolute paths are NOT written into any committed artefact.
 
 Inputs
 ------
 * ``--config`` — path to a JSON config (see
-  ``configs/experiments/slp8_non_learning_region_baseline_v0.1.json``)
-* ``--output-dir`` — directory where the run artefacts will be written
-* ``--b01-freeze-dir`` — optional override for the B01 freeze directory;
-  defaults to the value in the config
-* ``--dataset-root`` — optional override for the SLP8 dataset root
-  (must be a real path; never written into the config)
+  ``configs/experiments/slp8_non_learning_region_baseline_v0.1.json``).
+* ``--output-dir`` — directory where the run artefacts will be written.
+  Must be empty (the runner refuses to overwrite an existing non-empty
+  output directory, especially one containing ``DONE.json`` or
+  ``FAILED.json``).
+* ``--b01-freeze-dir`` — the B01 freeze directory.
+* ``--dataset-root`` — the SLP8 dataset root.
 
 Outputs
 -------
@@ -31,14 +38,16 @@ The runner writes the following artefacts to ``--output-dir``:
 * ``resolved_config.json`` — config as actually used (no absolute paths)
 * ``input_manifest_hashes.json`` — SHA-256 of the B01 freeze manifest
   and the source manifest
-* ``metrics_summary.json`` — overall metric summary
-* ``metrics_by_baseline.csv`` — per-baseline metrics
-* ``metrics_by_region.csv`` — per-region metrics
-* ``metrics_by_subject.csv`` — per-subject metrics
-* ``metrics_by_posture.csv`` — per-posture metrics
+* ``metrics_summary.json`` — overall metric summary (TRAIN + VAL
+  per-baseline records; VAL-only headline)
+* ``metrics_by_baseline.csv`` — per-(baseline, ml_split) metrics
+* ``metrics_by_region.csv`` — per-(baseline, ml_split, region) metrics
+* ``metrics_by_subject.csv`` — per-(baseline, ml_split, subject) metrics
+* ``metrics_by_posture.csv`` — per-(baseline, ml_split, posture) metrics
 * ``predictions_manifest.csv`` — per-prediction summary
-* ``failure_cases.csv`` — list of failure cases (if any)
-* ``failure_reason_counts.json`` — counts of failure reasons
+* ``failure_cases.csv`` — list of contract-failure cases
+* ``diagnostic_counts.json`` — fallback / diagnostic counts
+* ``failure_reason_counts.json`` — counts of contract failures
 * ``runtime.json`` — wall-clock timing info
 * ``DONE.json`` or ``FAILED.json``
 
@@ -88,7 +97,6 @@ from topper_perception.baseline.slp8_non_learning import (  # noqa: E402
     PressureBodyAxisPartitionBaseline,
     REGION_IDS,
     REGION_ID_TO_NAME,
-    REGION_NAMES,
     TrainSpatialPriorBaseline,
     fit_axis_partition_config,
 )
@@ -101,9 +109,6 @@ from topper_perception.io.slp8_training_table_freeze import (  # noqa: E402
     FREEZE_VERSION,
     TASK_ID as B01_TASK_ID,
     A06_SPLIT_SHA256_EXPECTED,
-    B01FreezeTables,
-    FreezeRow,
-    ML_SPLITS,
     load_b01_freeze_tables,
     sha256_hex,
 )
@@ -115,13 +120,16 @@ from topper_perception.io.slp8_training_table_freeze import (  # noqa: E402
 
 TASK_ID: str = "TASK-SLP-B02-NON-LEARNING-REGION-BASELINE-v0.1"
 
-#: Default config version recorded in every artefact.
-DEFAULT_CONFIG_VERSION: str = "slp8_non_learning_v0.1"
+#: Sentinel value used in ``resolved_config.json`` and other artefacts
+#: to indicate that an absolute path is intentionally omitted.  The
+#: corresponding logical key (``b01_freeze_dir`` / ``dataset_root``)
+#: is replaced by this string.
+REDACTED_LOCAL_PATH: str = "REDACTED_LOCAL_PATH"
 
-#: Maximum predictions to keep on disk per baseline (gitignored).
-MAX_PREDICTIONS_PER_BASELINE: int = 1024
-
-#: Failure reason taxonomy (stable strings; used in CSV and counts).
+#: Failure reason taxonomy for contract failures (stable strings; used
+#: in CSV and counts).  These are *contract* failures, distinct from
+#: the *fallback* diagnostics (which are normal outcomes on some samples
+#: and are counted in ``diagnostic_counts.json``).
 FAILURE_REASONS: tuple[str, ...] = (
     "shape_mismatch",
     "non_finite_pressure",
@@ -130,15 +138,32 @@ FAILURE_REASONS: tuple[str, ...] = (
     "wrong_provenance",
     "wrong_review_status",
     "wrong_subject_split",
+    "internal_exception",
+)
+
+#: Diagnostic (non-failure) counters.  These are normal outcomes on
+#: some samples and are not contract failures.
+DIAGNOSTIC_REASONS: tuple[str, ...] = (
     "no_contact",
     "degenerate_pca",
-    "internal_exception",
+    "zero_axis_length",
+    "all_background_fallback",
+    "all_background_after_smoothing",
+    "smoothed",
 )
 
 
 # ---------------------------------------------------------------------------
-# Config schema (lightweight; we keep the JSON config explicit and
-# versioned, and we validate it field-by-field).
+# Errors
+# ---------------------------------------------------------------------------
+
+
+class OutputDirCollisionError(RuntimeError):
+    """Raised when the output directory already contains run artefacts."""
+
+
+# ---------------------------------------------------------------------------
+# Config schema
 # ---------------------------------------------------------------------------
 
 
@@ -146,8 +171,6 @@ REQUIRED_CONFIG_FIELDS: tuple[str, ...] = (
     "config_version",
     "task_id",
     "freeze_version",
-    "b01_freeze_dir",
-    "b01_a06_split_sha256_expected",
     "baselines",
     "metrics",
     "provenance",
@@ -231,7 +254,7 @@ def _per_class_pixel_counts(label: np.ndarray) -> list[int]:
     return [int(c) for c in counts]
 
 
-def _region_centroid_xy(label: np.ndarray, class_id: int) -> tuple[float | None, int]:
+def _region_centroid_xy(label: np.ndarray, class_id: int) -> tuple[tuple[float, float] | None, int]:
     """Return (centroid_xy_in_pixels, n_pixels) for a single class.
 
     If the class is absent, return (None, 0)."""
@@ -245,58 +268,220 @@ def _region_centroid_xy(label: np.ndarray, class_id: int) -> tuple[float | None,
     return (cx, cy), n
 
 
+def _classify_failure_reason(exc: BaseException) -> str:
+    """Map an exception to a stable failure-reason string."""
+    msg = str(exc).lower()
+    if "non-finite" in msg or "non_finite" in msg:
+        return "non_finite_pressure"
+    if "shape" in msg:
+        return "shape_mismatch"
+    if "label_map values" in msg or "label range" in msg:
+        return "label_out_of_range"
+    if "provenance" in msg:
+        return "wrong_provenance"
+    if "review" in msg:
+        return "wrong_review_status"
+    if "subject" in msg and "split" in msg:
+        return "wrong_subject_split"
+    return "internal_exception"
+
+
+def _classify_diagnostic(info: dict[str, Any]) -> str | None:
+    """Map a baseline's diagnostic info dict to a stable diagnostic
+    string, or None if the baseline ran cleanly with no fallback."""
+    if not info:
+        return None
+    fallback = info.get("fallback", "none")
+    if fallback == "none":
+        return None
+    if fallback in {"all_background", "all_background_after_smoothing"}:
+        return fallback
+    if fallback == "zero_axis_length":
+        return "zero_axis_length"
+    return str(fallback)
+
+
 # ---------------------------------------------------------------------------
-# Runner
+# Output directory safety
+# ---------------------------------------------------------------------------
+
+
+def _check_output_dir_safety(output_dir: Path) -> None:
+    """Refuse to run if the output directory already contains artefacts.
+
+    Raises
+    ------
+    OutputDirCollisionError
+        If the directory already exists and contains files (especially
+        DONE.json or FAILED.json) that would be overwritten.
+    """
+    output_dir = Path(output_dir)
+    if not output_dir.exists():
+        return
+    if not output_dir.is_dir():
+        raise OutputDirCollisionError(
+            f"output path exists but is not a directory: {output_dir}"
+        )
+    sentinel_files = ("DONE.json", "FAILED.json")
+    for sentinel in sentinel_files:
+        if (output_dir / sentinel).is_file():
+            raise OutputDirCollisionError(
+                f"output directory already contains {sentinel}; refusing to "
+                f"overwrite.  Choose a fresh --output-dir or remove the "
+                f"existing one manually.  ({output_dir})"
+            )
+    # Any other existing files / sub-directories also block the run.
+    contents = list(output_dir.iterdir())
+    if contents:
+        # Allow the .gitkeep file in fresh sub-directories of the
+        # outputs tree, but anything else is a collision.
+        non_keep = [p for p in contents if p.name != ".gitkeep"]
+        if non_keep:
+            raise OutputDirCollisionError(
+                f"output directory is not empty ({len(non_keep)} entries); "
+                f"refusing to overwrite.  ({output_dir})"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Per-baseline evaluation
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class SamplePrediction:
-    """One prediction for one sample by one baseline."""
+class _SampleRecord:
+    """Accumulator for per-sample metrics within one (baseline, ml_split)."""
 
-    sample_id: str
-    ml_split: str
+    pred: np.ndarray
+    gt: np.ndarray
+    info: dict[str, Any]
     subject_id: str
     posture: str
-    baseline: str
-    pred_label_path: str
-    pred_label_sha256: str
-    pred_class_pixel_counts: list[int]
-    pred_class_present: list[bool]
+    sample_id: str
     failure_reason: str | None
+    diagnostic: str | None
     runtime_ms: float
 
 
 def _predict_with_failure_capture(
     *,
     baseline_obj: Any,
-    baseline_name: str,
     pressure: np.ndarray,
-) -> tuple[np.ndarray, str | None, float]:
-    """Call baseline.predict(pressure); on any contract error, return
-    a zero label map and a failure reason.  Any unexpected exception
-    is captured with a generic reason."""
+) -> tuple[np.ndarray, dict[str, Any] | None, str | None, float]:
+    """Call ``baseline_obj.predict_with_info(pressure)``; on any
+    contract error, return a zero label map and a failure reason."""
     t0 = time.perf_counter()
     try:
-        pred = baseline_obj.predict(pressure)
-        return pred, None, (time.perf_counter() - t0) * 1000.0
-    except Exception as exc:  # noqa: BLE001 - we want to capture any
-        # contract violation; the failure must be auditable.
+        pred, info = baseline_obj.predict_with_info(pressure)
+    except Exception as exc:  # noqa: BLE001 - capture all contract errors
         label = np.zeros(PRESSURE_SHAPE, dtype=np.uint8)
-        if isinstance(exc, (TypeError, ValueError)) and "shape" in str(exc).lower():
-            reason = "shape_mismatch"
-        elif "non-finite" in str(exc).lower() or "non_finite" in str(exc).lower():
-            reason = "non_finite_pressure"
-        elif "label range" in str(exc).lower() or "label_map values" in str(exc).lower():
-            reason = "label_out_of_range"
-        else:
-            reason = "internal_exception"
-        return label, reason, (time.perf_counter() - t0) * 1000.0
+        return label, None, _classify_failure_reason(exc), (time.perf_counter() - t0) * 1000.0
+    return pred, info, None, (time.perf_counter() - t0) * 1000.0
+
+
+def _aggregate_metrics(
+    records: list[_SampleRecord],
+    baseline_name: str,
+    ml_split: str,
+) -> dict[str, Any]:
+    """Aggregate per-sample records into one per-(baseline, ml_split)
+    metric record.  Returns a dict compatible with the CSV / summary
+    schema."""
+    good_records = [r for r in records if r.failure_reason is None]
+    failed_records = [r for r in records if r.failure_reason is not None]
+    n_eval = len(good_records)
+    n_failed = len(failed_records)
+    if n_eval > 0:
+        all_preds = [r.pred for r in good_records]
+        all_gts = [r.gt for r in good_records]
+        m = compute_fixed_class_macro_metrics(
+            all_gts, all_preds,
+            class_ids=REGION_IDS, n_classes=9,
+        )
+        # Centroid error per region (only when both GT and pred have ≥1 pixel).
+        centroid_errors: dict[str, float | None] = {}
+        for cid in REGION_IDS:
+            errs: list[float] = []
+            for r in good_records:
+                gt_c, gt_n = _region_centroid_xy(r.gt, cid)
+                pr_c, pr_n = _region_centroid_xy(r.pred, cid)
+                if gt_n == 0 or pr_n == 0:
+                    continue
+                dx = float(gt_c[0] - pr_c[0])  # type: ignore[index]
+                dy = float(gt_c[1] - pr_c[1])  # type: ignore[index]
+                errs.append(float(np.sqrt(dx * dx + dy * dy)))
+            centroid_errors[str(cid)] = float(np.mean(errs)) if errs else None
+        coverage_per_region = {
+            str(cid): int(sum(1 for r in good_records if (r.gt == cid).any()))
+            for cid in REGION_IDS
+        }
+        pred_coverage_per_region = {
+            str(cid): int(sum(1 for r in good_records if (r.pred == cid).any()))
+            for cid in REGION_IDS
+        }
+        record = {
+            "baseline": baseline_name,
+            "ml_split": ml_split,
+            "n_samples_evaluated": n_eval,
+            "n_samples_failed": n_failed,
+            "fixed_iou": m.fixed_iou,
+            "fixed_dice": m.fixed_dice,
+            "pixel_accuracy": m.pixel_accuracy,
+            "n_classes_present_in_pred": m.n_classes_present_in_pred,
+            "n_classes_present_in_gt": m.n_classes_present_in_gt,
+            "per_class_iou": {str(k): v for k, v in m.per_class_iou.items()},
+            "per_class_dice": {str(k): v for k, v in m.per_class_dice.items()},
+            "per_class_precision": {str(k): v for k, v in m.per_class_precision.items()},
+            "per_class_recall": {str(k): v for k, v in m.per_class_recall.items()},
+            "per_class_tp": {str(k): v for k, v in m.per_class_tp.items()},
+            "per_class_fp": {str(k): v for k, v in m.per_class_fp.items()},
+            "per_class_fn": {str(k): v for k, v in m.per_class_fn.items()},
+            "per_class_pred_count": {str(k): v for k, v in m.per_class_pred_count.items()},
+            "per_class_gt_count": {str(k): v for k, v in m.per_class_gt_count.items()},
+            "per_class_present_in_gt": {str(k): v for k, v in m.per_class_present_in_gt.items()},
+            "per_class_present_in_pred": {str(k): v for k, v in m.per_class_present_in_pred.items()},
+            "centroid_error_px": centroid_errors,
+            "region_coverage_gt": coverage_per_region,
+            "region_coverage_pred": pred_coverage_per_region,
+        }
+    else:
+        record = {
+            "baseline": baseline_name,
+            "ml_split": ml_split,
+            "n_samples_evaluated": 0,
+            "n_samples_failed": n_failed,
+            "fixed_iou": 0.0,
+            "fixed_dice": 0.0,
+            "pixel_accuracy": 0.0,
+            "n_classes_present_in_pred": 0,
+            "n_classes_present_in_gt": 0,
+            "per_class_iou": {str(k): 0.0 for k in REGION_IDS},
+            "per_class_dice": {str(k): 0.0 for k in REGION_IDS},
+            "per_class_precision": {str(k): 0.0 for k in REGION_IDS},
+            "per_class_recall": {str(k): 0.0 for k in REGION_IDS},
+            "per_class_tp": {str(k): 0 for k in REGION_IDS},
+            "per_class_fp": {str(k): 0 for k in REGION_IDS},
+            "per_class_fn": {str(k): 0 for k in REGION_IDS},
+            "per_class_pred_count": {str(k): 0 for k in REGION_IDS},
+            "per_class_gt_count": {str(k): 0 for k in REGION_IDS},
+            "per_class_present_in_gt": {str(k): False for k in REGION_IDS},
+            "per_class_present_in_pred": {str(k): False for k in REGION_IDS},
+            "centroid_error_px": {str(k): None for k in REGION_IDS},
+            "region_coverage_gt": {str(k): 0 for k in REGION_IDS},
+            "region_coverage_pred": {str(k): 0 for k in REGION_IDS},
+        }
+    return record
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
 
 
 def run(config: dict[str, Any], output_dir: Path) -> int:
     """Execute the run; return 0 on success, 1 on failure."""
     output_dir = Path(output_dir).resolve()
+    _check_output_dir_safety(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     predictions_dir = output_dir / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
@@ -313,10 +498,11 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
 
     t_start = time.perf_counter()
     failure_counts: Counter[str] = Counter()
+    diagnostic_counts: Counter[str] = Counter()
     failure_cases: list[dict[str, Any]] = []
     predictions_manifest: list[dict[str, Any]] = []
-    per_region_records: list[dict[str, Any]] = []
     per_baseline_records: list[dict[str, Any]] = []
+    per_region_records: list[dict[str, Any]] = []
     per_subject_records: list[dict[str, Any]] = []
     per_posture_records: list[dict[str, Any]] = []
 
@@ -341,11 +527,19 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
                 f"A06 split SHA mismatch: freeze manifest has "
                 f"{a06_sha_recorded!r}, expected {A06_SPLIT_SHA256_EXPECTED!r}"
             )
-        # Source manifest SHA
+        # Source manifest SHAs (file bytes) and content-addressed SHAs
+        # (from the freeze manifest core).
         source_manifest_path = b01_dir / "train_manifest.csv"
-        source_manifest_sha = sha256_hex(source_manifest_path.read_bytes()) if source_manifest_path.is_file() else None
-        # Also check val manifest exists.
-        val_manifest_sha = sha256_hex((b01_dir / "val_manifest.csv").read_bytes()) if (b01_dir / "val_manifest.csv").is_file() else None
+        source_manifest_sha = (
+            sha256_hex(source_manifest_path.read_bytes())
+            if source_manifest_path.is_file()
+            else None
+        )
+        val_manifest_sha = (
+            sha256_hex((b01_dir / "val_manifest.csv").read_bytes())
+            if (b01_dir / "val_manifest.csv").is_file()
+            else None
+        )
 
         _write_json(
             output_dir / "input_manifest_hashes.json",
@@ -368,14 +562,25 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             },
         )
 
-        # Resolved config (no absolute paths; record only file existence).
+        # Resolved config — NEVER include absolute paths.  Replace
+        # dataset_root and b01_freeze_dir with the REDACTED_LOCAL_PATH
+        # sentinel so the committed artefacts do not leak any local
+        # machine layout.
         resolved_config = {
-            **config,
-            "b01_freeze_dir_exists": True,
-            "b01_freeze_dir_freeze_manifest_sha256": fm_sha,
-            "resolved_at_utc": _now_iso(),
-            "absolute_paths_recorded": False,
+            k: v
+            for k, v in config.items()
+            if k not in {"b01_freeze_dir", "dataset_root"}
         }
+        resolved_config["b01_freeze_dir"] = REDACTED_LOCAL_PATH
+        resolved_config["dataset_root"] = REDACTED_LOCAL_PATH
+        resolved_config["b01_freeze_dir_freeze_manifest_sha256"] = fm_sha
+        resolved_config["resolved_at_utc"] = _now_iso()
+        # ``absolute_paths_recorded`` is True iff every potentially
+        # path-like field is either REDACTED or non-path.  The check
+        # is exhaustive: it fails fast if any absolute-path string
+        # sneaks through.
+        _check_resolved_config_no_absolute_paths(resolved_config)
+        resolved_config["absolute_paths_recorded"] = False
         _write_json(output_dir / "resolved_config.json", resolved_config)
 
         # Load B01 freeze tables (TRAIN + VAL only; default load_test=False).
@@ -384,20 +589,9 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
         val_rows = list(tables.val_rows)
         all_dev_rows = train_rows + val_rows
 
-        # Fit the baselines on TRAIN only.
-        # Iterate once to compute the contact threshold / template
-        # state; we need actual pressure + label arrays.
-        from topper_perception.io.slp_8region_pressure_dataset import (
-            Slp8RegionDatasetAdapter,
-        )
-        # We use the raw A09R adapter to read individual samples.  The
-        # B01 freeze row already contains the relative paths.  We
-        # resolve them through the dataset root, which the runner gets
-        # from the freeze manifest's ``source_dataset_id`` (no absolute
-        # path is recorded).
-
         # We don't have the dataset root as an absolute path; it must
-        # be passed via the config or inferred from the manifest.
+        # be passed via the config.  We open the SLP8 dataset via the
+        # A09R adapter, which reads manifest/val_manifest.csv.
         dataset_root_str = config.get("dataset_root")
         if dataset_root_str is None:
             raise ValueError(
@@ -409,12 +603,14 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
                 f"SLP8 dataset_root missing manifest/val_manifest.csv: {dataset_root}"
             )
 
+        from topper_perception.io.slp_8region_pressure_dataset import (
+            Slp8RegionDatasetAdapter,
+        )
+
         adapter = Slp8RegionDatasetAdapter(dataset_root, validate_on_load=True)
 
-        # Map sample_id → loaded arrays (TRAIN only — kept in memory
-        # because the template fit needs the entire TRAIN set).
-        # The TRAIN set is 3645 samples × 192 × 84 × 8 bytes = ~470 MB;
-        # this is acceptable for a CPU-only dev run.
+        # Load TRAIN pressure + label once; the template fit needs the
+        # entire TRAIN set.
         t_load0 = time.perf_counter()
         train_pressures: list[np.ndarray] = []
         train_labels: list[np.ndarray] = []
@@ -445,7 +641,7 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             train_sids.append(r.sample_id)
         t_load = time.perf_counter() - t_load0
 
-        # Fit the baselines.
+        # Fit the baselines on TRAIN only.
         baselines_state: dict[str, Any] = {}
         for bl_cfg in config["baselines"]:
             name = bl_cfg["name"]
@@ -494,256 +690,209 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             else:
                 raise ValueError(f"unknown baseline: {name!r}")
 
-        # Per-baseline evaluation: TRAIN + VAL.
+        # Per-baseline evaluation: TRAIN + VAL, separately.
+        rows_by_split: dict[str, list[Any]] = {
+            "train": list(train_rows),
+            "val": list(val_rows),
+        }
+
         for bl_name, bl_obj in baselines_state.items():
             t_bl0 = time.perf_counter()
-            all_preds: list[np.ndarray] = []
-            all_gts: list[np.ndarray] = []
-            per_subj_metrics: dict[str, dict[str, list[float]]] = {}
-            per_posture_metrics: dict[str, dict[str, list[float]]] = {}
-            for r in all_dev_rows:
-                try:
-                    loaded = adapter.load_sample(r.sample_id)
-                except Exception as exc:  # noqa: BLE001
-                    failure_counts["file_not_found"] += 1
-                    failure_cases.append(
+            per_split_records: dict[str, list[_SampleRecord]] = {
+                "train": [],
+                "val": [],
+            }
+            for ml_split, split_rows in rows_by_split.items():
+                for r in split_rows:
+                    try:
+                        loaded = adapter.load_sample(r.sample_id)
+                    except Exception as exc:  # noqa: BLE001
+                        failure_counts["file_not_found"] += 1
+                        failure_cases.append(
+                            {
+                                "sample_id": r.sample_id,
+                                "ml_split": ml_split,
+                                "subject_id": r.subject_id,
+                                "posture": r.posture,
+                                "baseline": bl_name,
+                                "reason": "file_not_found",
+                                "detail": str(exc),
+                            }
+                        )
+                        continue
+                    pred, info, failure_reason, rt_ms = _predict_with_failure_capture(
+                        baseline_obj=bl_obj,
+                        pressure=loaded.pressure,
+                    )
+                    diagnostic = _classify_diagnostic(info or {})
+                    if diagnostic is not None:
+                        diagnostic_counts[diagnostic] += 1
+                    if info and info.get("smoothed"):
+                        diagnostic_counts["smoothed"] += 1
+                    if failure_reason is not None:
+                        failure_counts[failure_reason] += 1
+                        failure_cases.append(
+                            {
+                                "sample_id": r.sample_id,
+                                "ml_split": ml_split,
+                                "subject_id": r.subject_id,
+                                "posture": r.posture,
+                                "baseline": bl_name,
+                                "reason": failure_reason,
+                                "detail": "see exception log",
+                            }
+                        )
+                    # Persist prediction (gzip-compressed npz).
+                    pred_label_path = (
+                        predictions_dir
+                        / f"{_safe_filename(r.sample_id)}__{_safe_filename(bl_name)}__split_{ml_split}.npz"
+                    )
+                    np.savez_compressed(
+                        pred_label_path,
+                        pred=pred,
+                        sample_id=np.array(r.sample_id),
+                        baseline=np.array(bl_name),
+                        ml_split=np.array(ml_split),
+                        subject_id=np.array(r.subject_id),
+                        posture=np.array(r.posture),
+                        diagnostic=np.array(diagnostic or "none"),
+                    )
+                    pred_sha = sha256_hex(pred_label_path.read_bytes())
+
+                    # Manifest
+                    predictions_manifest.append(
                         {
                             "sample_id": r.sample_id,
-                            "ml_split": r.ml_split,
+                            "ml_split": ml_split,
                             "subject_id": r.subject_id,
                             "posture": r.posture,
                             "baseline": bl_name,
-                            "reason": "file_not_found",
-                            "detail": str(exc),
+                            "pred_label_path": str(pred_label_path.relative_to(output_dir)),
+                            "pred_label_sha256": pred_sha,
+                            "pred_class_pixel_counts": _per_class_pixel_counts(pred),
+                            "pred_class_present": [
+                                int(_per_class_pixel_counts(pred)[c]) > 0
+                                for c in range(9)
+                            ],
+                            "diagnostic": diagnostic,
+                            "failure_reason": failure_reason,
+                            "runtime_ms": rt_ms,
                         }
                     )
-                    continue
-                pred, reason, rt_ms = _predict_with_failure_capture(
-                    baseline_obj=bl_obj,
-                    baseline_name=bl_name,
-                    pressure=loaded.pressure,
-                )
-                if reason is not None:
-                    failure_counts[reason] += 1
-                    failure_cases.append(
-                        {
-                            "sample_id": r.sample_id,
-                            "ml_split": r.ml_split,
-                            "subject_id": r.subject_id,
-                            "posture": r.posture,
-                            "baseline": bl_name,
-                            "reason": reason,
-                            "detail": "see exception log",
-                        }
-                    )
-                # Persist prediction (gzip-compressed npz).
-                pred_label_path = predictions_dir / f"{_safe_filename(r.sample_id)}__{_safe_filename(bl_name)}.npz"
-                np.savez_compressed(
-                    pred_label_path,
-                    pred=pred,
-                    sample_id=np.array(r.sample_id),
-                    baseline=np.array(bl_name),
-                    ml_split=np.array(r.ml_split),
-                    subject_id=np.array(r.subject_id),
-                    posture=np.array(r.posture),
-                )
-                pred_sha = sha256_hex(pred_label_path.read_bytes())
 
-                # Manifest
-                predictions_manifest.append(
-                    {
-                        "sample_id": r.sample_id,
-                        "ml_split": r.ml_split,
-                        "subject_id": r.subject_id,
-                        "posture": r.posture,
-                        "baseline": bl_name,
-                        "pred_label_path": str(pred_label_path.relative_to(output_dir)),
-                        "pred_label_sha256": pred_sha,
-                        "pred_class_pixel_counts": _per_class_pixel_counts(pred),
-                        "pred_class_present": [
-                            int(_per_class_pixel_counts(pred)[c]) > 0
-                            for c in range(9)
-                        ],
-                        "failure_reason": reason,
-                        "runtime_ms": rt_ms,
-                    }
-                )
+                    if failure_reason is None:
+                        per_split_records[ml_split].append(
+                            _SampleRecord(
+                                pred=pred,
+                                gt=loaded.region_label,
+                                info=info or {},
+                                subject_id=r.subject_id,
+                                posture=r.posture,
+                                sample_id=r.sample_id,
+                                failure_reason=None,
+                                diagnostic=diagnostic,
+                                runtime_ms=rt_ms,
+                            )
+                        )
 
-                if reason is None:
-                    all_preds.append(pred)
-                    all_gts.append(loaded.region_label)
+            # Aggregate per (baseline, ml_split).
+            for ml_split, records in per_split_records.items():
+                agg = _aggregate_metrics(records, bl_name, ml_split)
+                agg["runtime_seconds"] = float(time.perf_counter() - t_bl0)
+                per_baseline_records.append(agg)
 
-                    per_subj_metrics.setdefault(
-                        r.subject_id,
-                        {
-                            "fixed_iou": [],
-                            "fixed_dice": [],
-                            "pixel_accuracy": [],
-                        },
-                    )
-                    m1 = compute_fixed_class_macro_metrics(
-                        loaded.region_label, pred,
-                        class_ids=REGION_IDS, n_classes=9,
-                    )
-                    per_subj_metrics[r.subject_id]["fixed_iou"].append(m1.fixed_iou)
-                    per_subj_metrics[r.subject_id]["fixed_dice"].append(m1.fixed_dice)
-                    per_subj_metrics[r.subject_id]["pixel_accuracy"].append(m1.pixel_accuracy)
-
-                    per_posture_metrics.setdefault(
-                        r.posture,
-                        {
-                            "fixed_iou": [],
-                            "fixed_dice": [],
-                            "pixel_accuracy": [],
-                        },
-                    )
-                    per_posture_metrics[r.posture]["fixed_iou"].append(m1.fixed_iou)
-                    per_posture_metrics[r.posture]["fixed_dice"].append(m1.fixed_dice)
-                    per_posture_metrics[r.posture]["pixel_accuracy"].append(m1.pixel_accuracy)
-
-            # Aggregate per-baseline metrics.
-            if all_preds:
-                m = compute_fixed_class_macro_metrics(
-                    all_gts, all_preds,
-                    class_ids=REGION_IDS, n_classes=9,
-                )
-                # Centroid error (per region) vs GT centroid.
-                centroid_errors: dict[str, float | None] = {}
+                # Per-region CSV records.
                 for cid in REGION_IDS:
-                    errs: list[float] = []
-                    for gt, pr in zip(all_gts, all_preds):
-                        gt_c, gt_n = _region_centroid_xy(gt, cid)
-                        pr_c, pr_n = _region_centroid_xy(pr, cid)
-                        if gt_n == 0 or pr_n == 0:
-                            continue
-                        dx = float(gt_c[0] - pr_c[0])  # type: ignore[index]
-                        dy = float(gt_c[1] - pr_c[1])  # type: ignore[index]
-                        errs.append(float(np.sqrt(dx * dx + dy * dy)))
-                    if errs:
-                        centroid_errors[str(cid)] = float(np.mean(errs))
-                    else:
-                        centroid_errors[str(cid)] = None
-                # Region coverage: how many GT regions were predicted at all.
-                coverage_per_region = {
-                    str(cid): int(sum(1 for gt in all_gts if (gt == cid).any())) for cid in REGION_IDS
-                }
-                pred_coverage_per_region = {
-                    str(cid): int(sum(1 for pr in all_preds if (pr == cid).any())) for cid in REGION_IDS
-                }
-                record = {
-                    "baseline": bl_name,
-                    "n_samples_evaluated": len(all_preds),
-                    "n_samples_failed": sum(1 for p in predictions_manifest if p["baseline"] == bl_name and p["failure_reason"] is not None),
-                    "fixed_iou": m.fixed_iou,
-                    "fixed_dice": m.fixed_dice,
-                    "pixel_accuracy": m.pixel_accuracy,
-                    "n_classes_present_in_pred": m.n_classes_present_in_pred,
-                    "n_classes_present_in_gt": m.n_classes_present_in_gt,
-                    "per_class_iou": {str(k): v for k, v in m.per_class_iou.items()},
-                    "per_class_dice": {str(k): v for k, v in m.per_class_dice.items()},
-                    "per_class_pred_count": {str(k): v for k, v in m.per_class_pred_count.items()},
-                    "per_class_gt_count": {str(k): v for k, v in m.per_class_gt_count.items()},
-                    "per_class_present_in_gt": {str(k): v for k, v in m.per_class_present_in_gt.items()},
-                    "per_class_present_in_pred": {str(k): v for k, v in m.per_class_present_in_pred.items()},
-                    "centroid_error_px": centroid_errors,
-                    "region_coverage_gt": coverage_per_region,
-                    "region_coverage_pred": pred_coverage_per_region,
-                    "runtime_seconds": time.perf_counter() - t_bl0,
-                }
-            else:
-                record = {
-                    "baseline": bl_name,
-                    "n_samples_evaluated": 0,
-                    "n_samples_failed": len([p for p in predictions_manifest if p["baseline"] == bl_name]),
-                    "fixed_iou": 0.0,
-                    "fixed_dice": 0.0,
-                    "pixel_accuracy": 0.0,
-                    "n_classes_present_in_pred": 0,
-                    "n_classes_present_in_gt": 0,
-                    "per_class_iou": {str(k): 0.0 for k in REGION_IDS},
-                    "per_class_dice": {str(k): 0.0 for k in REGION_IDS},
-                    "per_class_pred_count": {str(k): 0 for k in REGION_IDS},
-                    "per_class_gt_count": {str(k): 0 for k in REGION_IDS},
-                    "per_class_present_in_gt": {str(k): False for k in REGION_IDS},
-                    "per_class_present_in_pred": {str(k): False for k in REGION_IDS},
-                    "centroid_error_px": {str(k): None for k in REGION_IDS},
-                    "region_coverage_gt": {str(k): 0 for k in REGION_IDS},
-                    "region_coverage_pred": {str(k): 0 for k in REGION_IDS},
-                    "runtime_seconds": time.perf_counter() - t_bl0,
-                }
-            per_baseline_records.append(record)
+                    per_region_records.append(
+                        {
+                            "baseline": bl_name,
+                            "ml_split": ml_split,
+                            "region_id": int(cid),
+                            "region_name": REGION_ID_TO_NAME[int(cid)],
+                            "iou": agg["per_class_iou"][str(cid)],
+                            "dice": agg["per_class_dice"][str(cid)],
+                            "precision": agg["per_class_precision"][str(cid)],
+                            "recall": agg["per_class_recall"][str(cid)],
+                            "tp": agg["per_class_tp"][str(cid)],
+                            "fp": agg["per_class_fp"][str(cid)],
+                            "fn": agg["per_class_fn"][str(cid)],
+                            "pred_count": agg["per_class_pred_count"][str(cid)],
+                            "gt_count": agg["per_class_gt_count"][str(cid)],
+                            "is_present_in_pred": agg["per_class_present_in_pred"][str(cid)],
+                            "is_present_in_gt": agg["per_class_present_in_gt"][str(cid)],
+                            "centroid_error_px": agg["centroid_error_px"][str(cid)],
+                        }
+                    )
 
-            # Per-region CSV records.
-            for cid in REGION_IDS:
-                per_region_records.append(
-                    {
-                        "baseline": bl_name,
-                        "region_id": int(cid),
-                        "region_name": REGION_ID_TO_NAME[int(cid)],
-                        "iou": record["per_class_iou"][str(cid)],
-                        "dice": record["per_class_dice"][str(cid)],
-                        "precision": float(
-                            record["per_class_iou"][str(cid)]
-                            / (2 * record["per_class_iou"][str(cid)] - record["per_class_dice"][str(cid)])
-                            if (2 * record["per_class_iou"][str(cid)] - record["per_class_dice"][str(cid)]) > 0
-                            else 0.0
-                        ),
-                        "recall": 0.0,
-                        "pred_count": record["per_class_pred_count"][str(cid)],
-                        "gt_count": record["per_class_gt_count"][str(cid)],
-                        "is_present_in_pred": record["per_class_present_in_pred"][str(cid)],
-                        "is_present_in_gt": record["per_class_present_in_gt"][str(cid)],
-                        "centroid_error_px": record["centroid_error_px"][str(cid)],
-                    }
-                )
+                # Per-subject records.
+                per_subject: dict[str, list[_SampleRecord]] = {}
+                for r in records:
+                    per_subject.setdefault(r.subject_id, []).append(r)
+                for subj, recs in per_subject.items():
+                    ifs = [
+                        compute_fixed_class_macro_metrics(
+                            [r.gt], [r.pred],
+                            class_ids=REGION_IDS, n_classes=9,
+                        )
+                        for r in recs
+                    ]
+                    per_subject_records.append(
+                        {
+                            "baseline": bl_name,
+                            "ml_split": ml_split,
+                            "subject_id": subj,
+                            "n_samples": len(recs),
+                            "mean_fixed_iou": float(np.mean([m.fixed_iou for m in ifs])),
+                            "mean_fixed_dice": float(np.mean([m.fixed_dice for m in ifs])),
+                            "mean_pixel_accuracy": float(np.mean([m.pixel_accuracy for m in ifs])),
+                        }
+                    )
 
-            # Per-subject records.
-            for subj, d in per_subj_metrics.items():
-                per_subject_records.append(
-                    {
-                        "baseline": bl_name,
-                        "subject_id": subj,
-                        "ml_split": next(
-                            (r.ml_split for r in all_dev_rows if r.subject_id == subj),
-                            "train",
-                        ),
-                        "n_samples": len(d["fixed_iou"]),
-                        "mean_fixed_iou": float(np.mean(d["fixed_iou"])),
-                        "mean_fixed_dice": float(np.mean(d["fixed_dice"])),
-                        "mean_pixel_accuracy": float(np.mean(d["pixel_accuracy"])),
-                    }
-                )
+                # Per-posture records.
+                per_posture: dict[str, list[_SampleRecord]] = {}
+                for r in records:
+                    per_posture.setdefault(r.posture, []).append(r)
+                for posture, recs in per_posture.items():
+                    ifs = [
+                        compute_fixed_class_macro_metrics(
+                            [r.gt], [r.pred],
+                            class_ids=REGION_IDS, n_classes=9,
+                        )
+                        for r in recs
+                    ]
+                    per_posture_records.append(
+                        {
+                            "baseline": bl_name,
+                            "ml_split": ml_split,
+                            "posture": posture,
+                            "n_samples": len(recs),
+                            "mean_fixed_iou": float(np.mean([m.fixed_iou for m in ifs])),
+                            "mean_fixed_dice": float(np.mean([m.fixed_dice for m in ifs])),
+                            "mean_pixel_accuracy": float(np.mean([m.pixel_accuracy for m in ifs])),
+                        }
+                    )
 
-            # Per-posture records.
-            for posture, d in per_posture_metrics.items():
-                per_posture_records.append(
-                    {
-                        "baseline": bl_name,
-                        "posture": posture,
-                        "n_samples": len(d["fixed_iou"]),
-                        "mean_fixed_iou": float(np.mean(d["fixed_iou"])),
-                        "mean_fixed_dice": float(np.mean(d["fixed_dice"])),
-                        "mean_pixel_accuracy": float(np.mean(d["pixel_accuracy"])),
-                    }
-                )
+        # Worst-subject: per baseline, per ml_split, top-3 (ascending by mean_fixed_iou).
+        worst_summary: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        for ml_split in ("val", "train"):
+            for bl_name in {r["baseline"] for r in per_subject_records if r["ml_split"] == ml_split}:
+                subjects_for_bl = [
+                    r for r in per_subject_records
+                    if r["baseline"] == bl_name and r["ml_split"] == ml_split
+                ]
+                subjects_for_bl.sort(key=lambda r: r["mean_fixed_iou"])
+                worst_summary.setdefault(ml_split, {})[bl_name] = subjects_for_bl[:3]
 
-        # Worst-subject identification (per baseline).
-        worst_subject_records: list[dict[str, Any]] = []
-        for subj_record in per_subject_records:
-            worst_subject_records.append(subj_record)
-        # Sort and write the worst-3 per baseline to the metrics summary.
-        worst_summary: dict[str, list[dict[str, Any]]] = {}
-        for bl_name in {r["baseline"] for r in worst_subject_records}:
-            subjects_for_bl = [r for r in worst_subject_records if r["baseline"] == bl_name]
-            subjects_for_bl.sort(key=lambda r: r["mean_fixed_iou"])
-            worst_summary[bl_name] = subjects_for_bl[:3]
+        # Headline: VAL-only per-baseline records.
+        val_baseline_records = [r for r in per_baseline_records if r["ml_split"] == "val"]
+        train_baseline_records = [r for r in per_baseline_records if r["ml_split"] == "train"]
 
         # Write all outputs.
         _write_csv(
             output_dir / "metrics_by_baseline.csv",
             per_baseline_records,
             fieldnames=(
-                "baseline", "n_samples_evaluated", "n_samples_failed",
+                "baseline", "ml_split", "n_samples_evaluated", "n_samples_failed",
                 "fixed_iou", "fixed_dice", "pixel_accuracy",
                 "n_classes_present_in_pred", "n_classes_present_in_gt",
                 "runtime_seconds",
@@ -753,8 +902,9 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             output_dir / "metrics_by_region.csv",
             per_region_records,
             fieldnames=(
-                "baseline", "region_id", "region_name",
+                "baseline", "ml_split", "region_id", "region_name",
                 "iou", "dice", "precision", "recall",
+                "tp", "fp", "fn",
                 "pred_count", "gt_count",
                 "is_present_in_pred", "is_present_in_gt",
                 "centroid_error_px",
@@ -764,7 +914,7 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             output_dir / "metrics_by_subject.csv",
             per_subject_records,
             fieldnames=(
-                "baseline", "subject_id", "ml_split", "n_samples",
+                "baseline", "ml_split", "subject_id", "n_samples",
                 "mean_fixed_iou", "mean_fixed_dice", "mean_pixel_accuracy",
             ),
         )
@@ -772,7 +922,7 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             output_dir / "metrics_by_posture.csv",
             per_posture_records,
             fieldnames=(
-                "baseline", "posture", "n_samples",
+                "baseline", "ml_split", "posture", "n_samples",
                 "mean_fixed_iou", "mean_fixed_dice", "mean_pixel_accuracy",
             ),
         )
@@ -783,7 +933,7 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
                 "sample_id", "ml_split", "subject_id", "posture", "baseline",
                 "pred_label_path", "pred_label_sha256",
                 "pred_class_pixel_counts", "pred_class_present",
-                "failure_reason", "runtime_ms",
+                "diagnostic", "failure_reason", "runtime_ms",
             ),
         )
         _write_csv(
@@ -793,6 +943,21 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
                 "sample_id", "ml_split", "subject_id", "posture", "baseline",
                 "reason", "detail",
             ),
+        )
+        _write_json(
+            output_dir / "diagnostic_counts.json",
+            {
+                "total": int(sum(diagnostic_counts.values())),
+                "by_reason": {r: int(diagnostic_counts.get(r, 0)) for r in DIAGNOSTIC_REASONS},
+                "extra": {k: int(v) for k, v in diagnostic_counts.items() if k not in DIAGNOSTIC_REASONS},
+                "notes": (
+                    "diagnostic counts are NOT contract failures.  They "
+                    "are normal outcomes on some samples (e.g. an SLP8 "
+                    "frame may have only one or two contact pixels, "
+                    "which is expected for some postures and is not a "
+                    "test failure)."
+                ),
+            },
         )
         _write_json(
             output_dir / "failure_reason_counts.json",
@@ -813,8 +978,11 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
                 "fit_split": "train",
                 "annotation_provenance": EXPECTED_PROVENANCE,
                 "source_review_status": EXPECTED_REVIEW_STATUS,
-                "per_baseline": per_baseline_records,
-                "worst_subject_per_baseline": worst_summary,
+                "headline_split": "val",
+                "headline_per_baseline_val": val_baseline_records,
+                "fit_diagnostic_per_baseline_train": train_baseline_records,
+                "worst_subject_val_per_baseline": worst_summary.get("val", {}),
+                "worst_subject_train_per_baseline": worst_summary.get("train", {}),
                 "n_train_samples": len(train_rows),
                 "n_val_samples": len(val_rows),
                 "n_test_samples": 0,  # not evaluated
@@ -838,6 +1006,10 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
             },
         )
 
+        # A contract failure (n_failed > 0) does NOT block DONE; the
+        # metrics on the unaffected samples are still valid.  But any
+        # unexpected exception in the runner itself (caught below)
+        # will write FAILED.json instead.
         status["status"] = "DONE"
         status["finished_at_utc"] = _now_iso()
         status["wall_clock_seconds"] = time.perf_counter() - t_start
@@ -853,6 +1025,32 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
         )
         return 0
 
+    except OutputDirCollisionError as exc:
+        # The output-dir collision is a user-facing error, not a run
+        # failure.  We write a small FAILED.json and return 1 so the
+        # caller knows.
+        (output_dir / "FAILED.json").write_text(
+            json.dumps(
+                {
+                    "task_id": TASK_ID,
+                    "status": "FAILED",
+                    "error": str(exc),
+                    "error_kind": "output_dir_collision",
+                    "finished_at_utc": _now_iso(),
+                    "wall_clock_seconds": time.perf_counter() - t_start,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        status["status"] = "FAILED"
+        status["error"] = str(exc)
+        status["error_kind"] = "output_dir_collision"
+        status["finished_at_utc"] = _now_iso()
+        status["wall_clock_seconds"] = time.perf_counter() - t_start
+        _write_json(output_dir / "status.json", status)
+        return 1
     except Exception as exc:  # noqa: BLE001
         tb = traceback.format_exc()
         (output_dir / "FAILED.json").write_text(
@@ -876,6 +1074,42 @@ def run(config: dict[str, Any], output_dir: Path) -> int:
         status["wall_clock_seconds"] = time.perf_counter() - t_start
         _write_json(output_dir / "status.json", status)
         return 1
+
+
+def _check_resolved_config_no_absolute_paths(payload: Any) -> None:
+    """Walk the resolved-config dict and raise if any string field
+    looks like an absolute Windows / POSIX / UNC path.  Skips the
+    ``REDACTED_LOCAL_PATH`` sentinel and any string starting with
+    ``"sha256:"`` / ``"metadata:"``."""
+    def _walk(obj: Any, path: str) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                _walk(v, f"{path}.{k}")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                _walk(v, f"{path}[{i}]")
+        elif isinstance(obj, str):
+            if obj == REDACTED_LOCAL_PATH:
+                return
+            s = obj
+            if s.startswith("/") or s.startswith("\\"):
+                raise ValueError(
+                    f"resolved_config: absolute path not allowed at {path}: {s!r}"
+                )
+            if len(s) >= 2 and s[1] == ":":
+                raise ValueError(
+                    f"resolved_config: Windows absolute path not allowed at {path}: {s!r}"
+                )
+            if s.startswith("\\\\"):
+                raise ValueError(
+                    f"resolved_config: UNC path not allowed at {path}: {s!r}"
+                )
+            if ".." in Path(s).parts:
+                raise ValueError(
+                    f"resolved_config: '..' segment not allowed at {path}: {s!r}"
+                )
+
+    _walk(payload, "resolved_config")
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: tuple[str, ...]) -> None:
@@ -904,19 +1138,19 @@ def main(argv: list[str] | None = None) -> int:
         "--output-dir",
         type=Path,
         required=True,
-        help="Output directory for run artefacts (will be created).",
+        help="Output directory for run artefacts.  Must not already contain run artefacts.",
     )
     parser.add_argument(
         "--b01-freeze-dir",
         type=Path,
-        default=None,
-        help="Override the b01_freeze_dir in the config (must be a real path).",
+        required=True,
+        help="The B01 freeze directory.",
     )
     parser.add_argument(
         "--dataset-root",
         type=Path,
-        default=None,
-        help="Override the dataset_root in the config (must be a real path).",
+        required=True,
+        help="The SLP8 dataset root.",
     )
     args = parser.parse_args(argv)
 
@@ -926,10 +1160,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     _validate_config(cfg)
-    if args.b01_freeze_dir is not None:
-        cfg["b01_freeze_dir"] = str(Path(args.b01_freeze_dir).resolve())
-    if args.dataset_root is not None:
-        cfg["dataset_root"] = str(Path(args.dataset_root).resolve())
+    cfg["b01_freeze_dir"] = str(Path(args.b01_freeze_dir).resolve())
+    cfg["dataset_root"] = str(Path(args.dataset_root).resolve())
     return run(cfg, Path(args.output_dir).resolve())
 
 

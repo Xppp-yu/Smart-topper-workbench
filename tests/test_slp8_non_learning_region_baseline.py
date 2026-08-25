@@ -36,8 +36,28 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+
+def _load_runner_module():
+    """Load the runner module by absolute path; works under any
+    pytest / sys.path configuration."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "b02_runner_under_test",
+        str(SCRIPTS_DIR / "run_slp8_non_learning_region_baseline.py"),
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("could not load runner spec")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
+    spec.loader.exec_module(module)
+    return module
 
 from topper_perception.baseline.slp8_non_learning import (  # noqa: E402
     BACKGROUND_ID,
@@ -298,7 +318,137 @@ class TestAxisContactIntersection:
         total = int((out > 0).sum())
         assert total > 0
         for cid in REGION_IDS:
-            assert int((out == cid).sum()) >= 0  # smoke
+            assert int((out == cid).sum()) >= 0
+
+    def test_predict_with_info_returns_diagnostics(
+        self,
+        fitted_axis: PressureBodyAxisPartitionBaseline,
+        fitted_intersection: PressureAxisContactIntersectionBaseline,
+        fitted_template: TrainSpatialPriorBaseline,
+    ) -> None:
+        """Each baseline must expose a ``predict_with_info`` method
+        that returns a (label_map, info_dict) tuple, where the info
+        dict contains the fallback diagnostic.  This is what the
+        runner uses to count ``no_contact`` / ``degenerate_pca`` /
+        etc."""
+        p = _synthetic_pressure_bar()
+        # Body axis partition: no fallback for a clear vertical bar.
+        labels, info = fitted_axis.predict_with_info(p)
+        assert labels.shape == PRESSURE_SHAPE
+        assert info["fallback"] == "none"
+        assert info["no_contact"] is False
+        assert info["degenerate_pca"] is False
+        # Intersection baseline: same — no fallback for a clear bar.
+        labels2, info2 = fitted_intersection.predict_with_info(p)
+        assert labels2.shape == PRESSURE_SHAPE
+        assert info2["fallback"] == "none"
+        # Spatial prior: no fallback (no body axis).
+        labels3, info3 = fitted_template.predict_with_info(p)
+        assert labels3.shape == PRESSURE_SHAPE
+        assert info3["fallback"] == "none"
+
+    def test_predict_with_info_reports_all_background_fallback(
+        self,
+        fitted_axis: PressureBodyAxisPartitionBaseline,
+    ) -> None:
+        """All-zero pressure ⇒ fallback = 'all_background' and
+        no_contact = True."""
+        p = np.zeros(PRESSURE_SHAPE, dtype=np.float64)
+        labels, info = fitted_axis.predict_with_info(p)
+        assert info["fallback"] == "all_background"
+        assert info["no_contact"] is True
+        # The output is all BACKGROUND.
+        assert int(labels.max()) == 0
+
+    def test_predict_with_info_reports_tiny_contact_fallback(
+        self,
+        fitted_axis: PressureBodyAxisPartitionBaseline,
+    ) -> None:
+        """Single-pixel contact ⇒ degenerate PCA ⇒ fallback."""
+        p = _synthetic_pressure_small()
+        labels, info = fitted_axis.predict_with_info(p)
+        # Either degenerate_pca or all_background fallback; either way
+        # the output is all BACKGROUND.
+        assert info["fallback"] in {"all_background"}
+        assert info["degenerate_pca"] is True or info["no_contact"] is True
+        assert int(labels.max()) == 0
+
+    def test_vertical_body_top_is_head_feet_is_lower_leg(
+        self,
+        axis_state_default: AxisPartitionState,
+    ) -> None:
+        """Strong assertion: a vertical body bar must be labelled
+        HEAD_NECK at the top of the matrix and LOWER_LEG_FOOT at the
+        bottom.  This is the head→toe convention that the B02 v0.1
+        axis partition MUST follow.
+
+        The synthetic bar is at rows 40..160, columns 30..60.  Rows
+        0..39 are outside the contact mask (BACKGROUND).  Rows
+        40..160 are inside the mask.  With
+        ``DEFAULT_SEGMENT_FRACTIONS = (0.18, 0.07, 0.13, 0.12, 0.10,
+        0.10, 0.15, 0.15)`` the cumulative fractions are
+        ``(0.18, 0.25, 0.38, 0.50, 0.60, 0.70, 0.85, 1.00)``.
+
+        The top of the contact bar is at axis-fraction 0.0, which
+        must map to the first segment (HEAD_NECK, ID=1).  The bottom
+        of the contact bar is at axis-fraction 1.0, which must map
+        to the last segment (LOWER_LEG_FOOT, ID=8).  This is the
+        direction the Reviewer flagged as broken in R01.
+        """
+        from topper_perception.baseline.slp8_non_learning import (
+            _build_axis_partition_labels,
+        )
+
+        pressure = _synthetic_pressure_bar()
+        labels, info = _build_axis_partition_labels(pressure, axis_state_default)
+        # No fallback: the synthetic bar has a clear axis.
+        assert info.get("fallback", "none") == "none"
+        # Top contact row (row 40, inside the bar) must be HEAD_NECK.
+        # The axis-fraction at the top of the bar is 0.0, which
+        # corresponds to segment 0 = HEAD_NECK.
+        # We check the upper-middle of the bar to be robust to the
+        # exact contact boundary: pick the row at 5% of the bar.
+        top_row = 40 + int(0.05 * 120)  # row 46
+        assert int(labels[top_row, 40]) == 1, (
+            f"top of body should be HEAD_NECK (1); got {int(labels[top_row, 40])}"
+        )
+        # Bottom contact row (row 159) must be LOWER_LEG_FOOT.
+        # The axis-fraction at the bottom of the bar is 1.0, which
+        # corresponds to the last segment = LOWER_LEG_FOOT (8).
+        bottom_row = 160 - 1  # row 159
+        assert int(labels[bottom_row, 40]) == 8, (
+            f"bottom of body should be LOWER_LEG_FOOT (8); got {int(labels[bottom_row, 40])}"
+        )
+
+    def test_vertical_body_no_segment_inversion(
+        self,
+        fitted_axis: PressureBodyAxisPartitionBaseline,
+    ) -> None:
+        """Additional strong assertion: the centroid of the HEAD_NECK
+        prediction (centroid_y) must be strictly above the centroid
+        of the LOWER_LEG_FOOT prediction (centroid_y).  In image
+        coordinates, "above" means smaller y.  This catches a
+        segment-fraction-vs-axis-direction inversion without relying
+        on a specific contact row.
+        """
+        from topper_perception.baseline.slp8_non_learning import REGION_ID_TO_NAME
+
+        p = _synthetic_pressure_bar()
+        out = fitted_axis.predict(p)
+        # HEAD_NECK is class 1; LOWER_LEG_FOOT is class 8.
+        head_mask = out == 1
+        feet_mask = out == 8
+        assert head_mask.any(), "expected at least one HEAD_NECK pixel"
+        assert feet_mask.any(), "expected at least one LOWER_LEG_FOOT pixel"
+        head_y = float(np.argwhere(head_mask)[:, 0].mean())
+        feet_y = float(np.argwhere(feet_mask)[:, 0].mean())
+        assert head_y < feet_y, (
+            f"head centroid (y={head_y}) must be above feet centroid "
+            f"(y={feet_y}) for a vertical body; segment direction is inverted"
+        )
+        # Sanity: confirm the labels are what we expect.
+        assert REGION_ID_TO_NAME[1] == "HEAD_NECK"
+        assert REGION_ID_TO_NAME[8] == "LOWER_LEG_FOOT"
 
 
 class TestFailClosed:
@@ -428,6 +578,12 @@ class TestNoLeakage:
             params = list(sig.parameters)
             assert params == ["self", "pressure"], (
                 f"{cls.__name__}.predict parameters = {params}"
+            )
+            # predict_with_info must also accept only ``pressure``.
+            sig2 = inspect.signature(cls.predict_with_info)
+            params2 = list(sig2.parameters)
+            assert params2 == ["self", "pressure"], (
+                f"{cls.__name__}.predict_with_info parameters = {params2}"
             )
 
     def test_fit_signatures_have_no_label_when_only_pressure(
@@ -668,6 +824,83 @@ class TestFixedClassMacroMetrics:
         with pytest.raises(ValueError):
             compute_fixed_class_macro_metrics(gt, pred, class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9)
 
+    def test_macro_precision_recall_from_confusion_matrix(self) -> None:
+        """Hand-computed fixture: precision = TP / (TP + FP),
+        recall = TP / (TP + FN), each in [0, 1].
+
+        Construction:
+            gt has 8 pixels of class 1, 4 pixels of class 2, 0 of class 3.
+            pred has 4 pixels of class 1 (all correct), 4 pixels of
+            class 3 (all wrong).
+        Expected per-class metrics:
+            class 1: TP=4, FP=0, FN=4 ⇒ precision=1.0, recall=0.5
+            class 2: TP=0, FP=0, FN=4 ⇒ precision=0.0, recall=0.0
+            class 3: TP=0, FP=4, FN=0 ⇒ precision=0.0, recall=0.0
+            class 4..8: 0/0 ⇒ precision=0.0, recall=0.0
+        """
+        gt = np.zeros((4, 4), dtype=np.uint8)
+        gt[0:2, 0:4] = 1   # 8 pixels of class 1
+        gt[2:4, 0:2] = 2   # 4 pixels of class 2
+
+        pred = np.zeros((4, 4), dtype=np.uint8)
+        pred[0:2, 0:2] = 1  # 4 pixels of class 1 (correct on class 1, wrong on class 2)
+        pred[2:4, 0:2] = 3  # 4 pixels of class 3 (wrong on class 2)
+
+        m = compute_fixed_class_macro_metrics(
+            gt, pred, class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9,
+        )
+
+        # class 1: TP=4, FP=0, FN=4
+        assert m.per_class_tp[1] == 4
+        assert m.per_class_fp[1] == 0
+        assert m.per_class_fn[1] == 4
+        assert m.per_class_precision[1] == pytest.approx(1.0)
+        assert m.per_class_recall[1] == pytest.approx(0.5)
+
+        # class 2: TP=0, FP=0, FN=4
+        assert m.per_class_tp[2] == 0
+        assert m.per_class_fp[2] == 0
+        assert m.per_class_fn[2] == 4
+        assert m.per_class_precision[2] == pytest.approx(0.0)
+        assert m.per_class_recall[2] == pytest.approx(0.0)
+
+        # class 3: TP=0, FP=4, FN=0
+        assert m.per_class_tp[3] == 0
+        assert m.per_class_fp[3] == 4
+        assert m.per_class_fn[3] == 0
+        assert m.per_class_precision[3] == pytest.approx(0.0)
+        assert m.per_class_recall[3] == pytest.approx(0.0)
+
+        # precision and recall must always be in [0, 1]
+        for cid in (1, 2, 3, 4, 5, 6, 7, 8):
+            assert 0.0 <= m.per_class_precision[cid] <= 1.0
+            assert 0.0 <= m.per_class_recall[cid] <= 1.0
+            # TP/FP/FN are non-negative integers
+            assert m.per_class_tp[cid] >= 0
+            assert m.per_class_fp[cid] >= 0
+            assert m.per_class_fn[cid] >= 0
+            # FP = pred_count - TP, FN = gt_count - TP
+            assert m.per_class_fp[cid] == m.per_class_pred_count[cid] - m.per_class_tp[cid]
+            assert m.per_class_fn[cid] == m.per_class_gt_count[cid] - m.per_class_tp[cid]
+
+    def test_macro_precision_recall_perfect_prediction(self) -> None:
+        """Perfect prediction ⇒ precision=recall=1.0 for predicted
+        classes, and the macro recall/precision include 0s for
+        unobserved classes."""
+        gt = np.zeros((4, 4), dtype=np.uint8)
+        gt[0:2, 0:2] = 1
+        gt[0:2, 2:4] = 2
+        pred = gt.copy()
+        m = compute_fixed_class_macro_metrics(
+            gt, pred, class_ids=(1, 2, 3, 4, 5, 6, 7, 8), n_classes=9,
+        )
+        for cid in (1, 2):
+            assert m.per_class_precision[cid] == pytest.approx(1.0)
+            assert m.per_class_recall[cid] == pytest.approx(1.0)
+        for cid in (3, 4, 5, 6, 7, 8):
+            assert m.per_class_precision[cid] == pytest.approx(0.0)
+            assert m.per_class_recall[cid] == pytest.approx(0.0)
+
 
 class TestConfigRoundtrip:
     """AxisPartitionConfig must roundtrip through dataclasses.asdict."""
@@ -728,6 +961,98 @@ class TestFailureAuditableArtifacts:
         # The template SHA-256 is stable.
         assert isinstance(s["template_sha256"], str)
         assert len(s["template_sha256"]) == 64
+
+
+class TestOutputDirCollision:
+    """The runner must refuse to overwrite an existing run output."""
+
+    def test_runner_refuses_to_overwrite_done_json(
+        self, tmp_path: Path
+    ) -> None:
+        """If ``DONE.json`` already exists in the output dir, the
+        runner must raise ``OutputDirCollisionError`` and NOT silently
+        overwrite."""
+        runner = _load_runner_module()
+        out = tmp_path / "EXP"
+        out.mkdir()
+        (out / "DONE.json").write_text('{"task_id": "old"}', encoding="utf-8")
+        with pytest.raises(runner.OutputDirCollisionError):
+            runner._check_output_dir_safety(out)
+
+    def test_runner_refuses_to_overwrite_failed_json(
+        self, tmp_path: Path
+    ) -> None:
+        """If ``FAILED.json`` already exists, the runner must also
+        refuse."""
+        runner = _load_runner_module()
+        out = tmp_path / "EXP"
+        out.mkdir()
+        (out / "FAILED.json").write_text('{"task_id": "old"}', encoding="utf-8")
+        with pytest.raises(runner.OutputDirCollisionError):
+            runner._check_output_dir_safety(out)
+
+    def test_runner_refuses_non_empty_output_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """Any other existing file in the output dir also blocks the
+        run."""
+        runner = _load_runner_module()
+        out = tmp_path / "EXP"
+        out.mkdir()
+        (out / "metrics_summary.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(runner.OutputDirCollisionError):
+            runner._check_output_dir_safety(out)
+
+    def test_runner_allows_empty_output_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """An empty output dir (or a fresh non-existing one) is OK."""
+        runner = _load_runner_module()
+        # Empty existing dir is OK.
+        out = tmp_path / "EXP"
+        out.mkdir()
+        runner._check_output_dir_safety(out)  # does not raise
+        # Non-existing dir is OK.
+        runner._check_output_dir_safety(tmp_path / "DOES_NOT_EXIST")  # does not raise
+
+
+class TestResolvedConfigNoAbsolutePaths:
+    """The runner must not write any absolute path into the resolved
+    config or any other committed artefact."""
+
+    def test_resolved_config_strips_dataset_root(self) -> None:
+        runner = _load_runner_module()
+        cfg = {
+            "b01_freeze_dir": runner.REDACTED_LOCAL_PATH,
+            "dataset_root": runner.REDACTED_LOCAL_PATH,
+            "baselines": [{"name": "all_background", "kind": "sanity_floor"}],
+            "fit_split": "train",
+            "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "raw_semantics": "raw_pmarray_response",
+            "freeze_version": "slp8_training_tables_v0.1",
+        }
+        # Must not raise.
+        runner._check_resolved_config_no_absolute_paths(cfg)
+
+    @pytest.mark.parametrize(
+        "bad_path",
+        [
+            r"C:\Users\foo\bar",
+            "/home/user/foo",
+            r"\\server\share",
+            r".\..\..\etc\passwd",
+        ],
+    )
+    def test_resolved_config_rejects_any_absolute_path(
+        self, bad_path: str
+    ) -> None:
+        runner = _load_runner_module()
+        cfg = {
+            "b01_freeze_dir": bad_path,
+            "dataset_root": "REDACTED_LOCAL_PATH",
+        }
+        with pytest.raises(ValueError):
+            runner._check_resolved_config_no_absolute_paths(cfg)
 
 
 class TestRunConfigSanity:
