@@ -1,0 +1,125 @@
+{
+  "config_version": "slp8_pm_region_smoke_v0.1",
+  "task_id": "TASK-SLP-B03-PM-ONLY-REGION-SMOKE-v0.1",
+  "stage": "S2_B03",
+  "smoke_version": "slp8_region_smoke_v0.1",
+  "model_version": "slp8_tiny_fcn_v0.1",
+  "checkpoint_version": "slp8_region_smoke_v0.1",
+  "freeze_version": "slp8_training_tables_v0.1",
+  "b01_a06_split_sha256_expected": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+  "b01_task_id": "TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1",
+  "raw_semantics": "raw_pmarray_response",
+  "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+  "source_review_status": "NOT_REVIEWED",
+  "_cli_overrides": {
+    "b01_freeze_dir": "MUST be passed via --b01-freeze-dir (absolute path, recorded only as REDACTED_LOCAL_PATH in committed artefacts)",
+    "dataset_root": "MUST be passed via --dataset-root (absolute path, recorded only as REDACTED_LOCAL_PATH in committed artefacts)",
+    "device": "MUST be passed via --device (default: cpu)"
+  },
+  "prohibited_conclusions": [
+    "Not human pixel-level semantic masks",
+    "Not medical, skin-interface stress, or product ground truth",
+    "Not kPa; pressure values are raw PMarray response semantics",
+    "danaLab only, uncover only",
+    "Smoke metrics are for pipeline verification only",
+    "Smoke metrics do NOT rank models or compare with B02",
+    "Smoke metrics do NOT form final conclusions about TEST performance"
+  ],
+  "model": {
+    "architecture": "Slp8TinyFcn",
+    "description": "Minimal fully-convolutional network for SLP8 region segmentation",
+    "input_shape": [192, 84],
+    "input_channels": 1,
+    "n_classes": 9,
+    "background_id": 0,
+    "layers": [
+      {"layer": "conv1", "in": 1, "out": 8, "kernel": 3, "padding": 1},
+      {"layer": "relu1", "type": "ReLU"},
+      {"layer": "conv2", "in": 8, "out": 16, "kernel": 3, "padding": 1},
+      {"layer": "relu2", "type": "ReLU"},
+      {"layer": "conv3", "in": 16, "out": 9, "kernel": 1}
+    ],
+    "no_pooling": true,
+    "no_pretrained_weights": true
+  },
+  "training": {
+    "seed": 42,
+    "device": "cpu",
+    "batch_size": 4,
+    "optimizer": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "loss": "CrossEntropyLoss",
+    "class_weights": false,
+    "epochs": {
+      "initial": 1,
+      "resume": 1
+    }
+  },
+  "dataset": {
+    "pressure_shape": [192, 84],
+    "pressure_dtype": "float64",
+    "label_shape": [192, 84],
+    "label_dtype": "int64",
+    "n_classes": 9,
+    "region_ids": [1, 2, 3, 4, 5, 6, 7, 8],
+    "region_names": [
+      "BACKGROUND",
+      "HEAD_NECK",
+      "SHOULDER",
+      "THORAX_BACK",
+      "LUMBAR_WAIST",
+      "PELVIS_HIP",
+      "ARM",
+      "THIGH",
+      "LOWER_LEG_FOOT"
+    ],
+    "smoke_subset": {
+      "n_train_subjects": 2,
+      "n_val_subjects": 1,
+      "seed": 42
+    },
+    "normalization": {
+      "method": "raw_passthrough_with_minmax_reference",
+      "fit_split": "train",
+      "epsilon": 1e-12,
+      "raw_semantics": "raw_pmarray_response"
+    }
+  },
+  "metrics": {
+    "fixed_foreground_class_ids": [1, 2, 3, 4, 5, 6, 7, 8],
+    "fixed_foreground_macro_does_not_skip_empty_classes": true,
+    "per_region_metrics": true,
+    "per_class_tp_fp_fn": true,
+    "pixel_accuracy": true,
+    "background_iou": true
+  },
+  "verification": {
+    "verify_subject_isolation": true,
+    "verify_param_change_after_initial": true,
+    "verify_param_change_after_resume": true,
+    "verify_checkpoint_save": true,
+    "verify_checkpoint_load": true,
+    "verify_reload_consistency": true,
+    "verify_non_finite_rejection": true,
+    "verify_label_range_check": true
+  },
+  "test_access_policy": {
+    "load_test_default": false,
+    "enable_test_access_purpose_allowed": ["final_evaluation"],
+    "this_run_loads_test": false,
+    "test_access_in_this_run": "denied"
+  },
+  "expected_artifacts": [
+    "status.json",
+    "manifest.json",
+    "resolved_config.json",
+    "input_manifest_hashes.json",
+    "runtime.json",
+    "metrics_summary.json",
+    "reload_consistency.json",
+    "checkpoints/initial_epoch.pt",
+    "checkpoints/resumed_epoch.pt",
+    "DONE.json or FAILED.json"
+  ]
+}
