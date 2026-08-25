@@ -312,7 +312,7 @@ Gate R1 必须同时满足：
 * 数据卡（8-region、`V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`、`NOT_REVIEWED`、danaLab only、uncover only、禁止结论）
 * TEST 防泄漏合同：`enable_test_access(purpose="final_evaluation")` 显式开启才允许读取 TEST label/onehot 或计算 TEST 类别统计；结构性检查（行数 / 主体数 / sample_id 唯一 / 路径 / 文件存在 / hash）默认允许。
 
-详见 [S2_B01 阶段报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)。B01 已以 `DONE_WITH_LIMITATIONS` 通过 Codex 验收，B02/B03 已放行为 `READY`，但尚未启动。
+详见 [S2_B01 阶段报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)。B01 已以 `DONE_WITH_LIMITATIONS` 通过 Codex 验收；B02 非学习区域基线也已以 `DONE_WITH_LIMITATIONS` 验收，B03 PM-only Smoke 保持 `READY`，B04 仅由 B03 阻塞。
 
 **路线 B（R2/R3 polygon，原 HOLD 路线）**：A09R 后已改为 HOLD；如未来重新打开：输入仅 R2/R3；R0/R1 单独弱监督实验；固定 Train/VAL/Test subjects；生成 dataset card、类别/区域覆盖、遮盖分层和版本 hash；测试集标签在模型和规则冻结前保持不可见。
 

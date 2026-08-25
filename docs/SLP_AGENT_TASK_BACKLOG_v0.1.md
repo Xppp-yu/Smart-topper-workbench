@@ -199,9 +199,12 @@ Reviewer checklist:
 
 ### TASK-SLP-B02：非学习区域基线
 
-- 状态：`READY`（B01 已以 `DONE_WITH_LIMITATIONS` 验收；尚未启动）。
-- 目标：节点几何、人体轴分段、PM contact-intersection 三种基线。
-- 验收：使用同一 SLP8 GT 合同和 B01 冻结的训练表（`data/processed/slp8_training_tables_v0.1/`）；保留失败案例；不得读取 TEST label/onehot 除非显式 `enable_test_access(purpose="final_evaluation")`。
+- 状态：`DONE_WITH_LIMITATIONS`（2026-08-25；Codex Reviewer 已验收；实现提交 `e9bf4b5` / `af9ed87`，fail-closed 收口 `cc63ab5`）。
+- 目标：建立 pressure-only 非学习最低比较线；实际实现 all-background、TRAIN spatial prior、pressure body-axis partition、pressure axis-contact intersection 四种基线。节点几何基线因 B01 不提供已批准的 joint predictor 输入而明确保持 `NOT_IMPLEMENTED`，未静默混入派生标签。
+- 真实运行：R02 使用 B01 冻结表在 CPU 上运行 TRAIN 3,645 / VAL 450，TEST 0；VAL fixed IoU 分别为 `0.000000`、`0.205644`、`0.109308`、`0.109713`。R01 保留且未被覆盖。
+- 验收：R03 后定向测试 179 passed，B01 回归 80 passed、2 skipped，合计 259 passed、2 skipped；输出目录防覆盖、失败路径 fail-closed、TRAIN/VAL 分离、TP/FP/FN precision/recall、预测 SHA-256、诊断与失败计数均经 Reviewer 复核。
+- 入口：[S2_B02 阶段报告](stage_reports/S2_B02_SLP8_NON_LEARNING_REGION_BASELINE_v0.2.md)。
+- 限制：使用 `V221_CORRECTED_SUPPORT_AUTO_ACCEPTED` / `NOT_REVIEWED` 的 SLP8 pressure-only 参考 GT；不是人工像素级、医学、皮肤界面应力、硬件或产品 GT；未读取 TEST，不能形成最终测试结论。
 
 ### TASK-SLP-B03：单模态 Region Smoke
 
@@ -212,7 +215,7 @@ Reviewer checklist:
 
 ### TASK-SLP-B04：单模态 Region Mini
 
-- 状态：`BLOCKED_BY_B02_B03`。
+- 状态：`BLOCKED_BY_B03`（B02 已完成；仍需 B03 Smoke 合同验收）。
 - 目标：每模态保留最多1–2个可行候选。
 - 指标：region IoU/Dice、中心误差、逐区域、逐 posture、worst subject；当前仅 uncover。
 - Gate：只淘汰不可行候选，不用小样本宣布冠军。

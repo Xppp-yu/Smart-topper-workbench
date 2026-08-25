@@ -2,11 +2,12 @@
 
 **TASK-ID**: `TASK-SLP-B02-NON-LEARNING-REGION-BASELINE-v0.1`
 **Branch**: `codex/task-slp-b02-non-learning-region-baseline-v0.1`
-**HEAD (this v0.2 commit)**: pending (see handoff for the resolved SHA)
+**R02 implementation commit**: `af9ed8747eb024f2eef1f8d463a8b110089fb709`
+**R03 fail-closed closure commit**: `cc63ab526e74b1386a83d4ca6313fcab18cc1e36`
 **Baseline SHA (origin/main, start of work)**: `a3ad4e00fd819706f386416740b920ee3854c15f`
 **R01 commit (pre-iteration)**: `e9bf4b5dc80efa8bcde6d92efa8cd879ba67ca6d`
 **Date**: 2026-08-25
-**Status**: `IMPLEMENTED_AND_TRAIN_VAL_RUN_COMPLETE — READY_FOR_CODEX_REVIEW`
+**Status**: `DONE_WITH_LIMITATIONS — CODEX_REVIEWER_ACCEPTED`
 
 ---
 
@@ -68,7 +69,8 @@ the 8 issues called out by the Reviewer:
    "pending commit / working copy not yet committed" language.
    R02 corrects both: B03 has been released as `READY` since B01
    (B03 does not require B02 to be a TRAIN/VAL-only pressure Smoke),
-   and B04 remains `BLOCKED_BY_B02_B03`.  The report's "current
+   and B04 still required both B02 and B03 at the R02 review point.
+   After R03 Reviewer acceptance, B04 is now `BLOCKED_BY_B03`. The report's "current
    git status" section is replaced with the actual final
    `git status --short --branch` output reported in the handoff.
 
@@ -828,7 +830,7 @@ this run:
       morphological padding step on the contact mask (default 0);
       it is consumed by the runner.
 * [x] Stage Report §16 (Next Gate) is corrected: B03 is `READY`
-      (released by B01), B04 is `BLOCKED_BY_B02_B03`.  Smoke is
+      (released by B01); after B02 acceptance, B04 is `BLOCKED_BY_B03`. Smoke is
       not used to rank or to require > B02.
 * [x] Stage Report does not contain "pending commit / working
       copy not yet committed" language.
@@ -855,8 +857,12 @@ this run:
 
 ## 16. Next Gate
 
-* `B02 v0.1` is `IMPLEMENTED_AND_TRAIN_VAL_RUN_COMPLETE (R02) —
-  READY_FOR_CODEX_REVIEW`.
+* `B02 v0.1` is `DONE_WITH_LIMITATIONS — CODEX_REVIEWER_ACCEPTED`.
+  R03 made contract failures fail closed, removed committed local absolute
+  paths, and passed the independent Codex review suite (179 targeted tests
+  plus 80 B01 regressions; 2 real-data-fixture tests skipped). R03 did not
+  change prediction algorithms, so the completed R02 TRAIN/VAL evidence
+  remains the accepted run.
 * **B03 (PM-only Smoke) is `READY`**.  Per the SLP Agent Backlog,
   B03 was released by B01 (`DONE_WITH_LIMITATIONS`) and does not
   require B02 to begin.  Smoke is a *smoke test*: it validates
@@ -867,9 +873,8 @@ this run:
   `docs/SLP_TWO_PHASE_CONTINUOUS_DEVELOPMENT_PLAN_v0.2.md` §5.B2,
   "Mini 只检查可学习性、吞吐、显存、checkpoint、resume、reload 和
   标签链路，不排名".
-* **B04 (PM-only Mini) is `BLOCKED_BY_B02_B03`**.  Per the
-  backlog, B04 requires both B02 (the non-learning baseline
-  reference) and B03 (the Smoke contract) to be complete.
+* **B04 (PM-only Mini) is `BLOCKED_BY_B03`**. B02 is complete;
+  B03's Smoke contract remains the only prerequisite.
 * TEST access remains default-deny.  A separate `EXP-ID` with
   `enable_test_access(purpose="final_evaluation")` is required to
   run any TEST evaluation; this is OUT OF SCOPE for B02 v0.1.
@@ -888,5 +893,5 @@ commit).
 *本报告由 Claude Code (Mavis) 在 R02 真实数据运行完成后基于
 B01 `DONE_WITH_LIMITATIONS` 验收产物生成。R01
 `EXP-SLP-B02-NONLEARNING-DEV-20260825-R01` 已保留为可复算的参考
-证据，未被覆盖或修改。Owner 决策编号 (B02) 等待 Codex Reviewer
-接受。*
+证据，未被覆盖或修改。B02 已于 2026-08-25 通过 Codex Reviewer
+验收，结论为 `DONE_WITH_LIMITATIONS`。*
