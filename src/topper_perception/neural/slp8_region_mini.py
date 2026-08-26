@@ -1,21 +1,25 @@
-"""SLP8 PM-only Region Mini Runner (TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-v0.1).
+"""SLP8 PM-only Region Mini Runner (TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1).
 
 This module is the **B04 Mini core**: it freezes the protocol that the
 Experiment Runner would later execute on real B01 data.  B04 ships the
 runner, the model registry, the class-weight contract, the extended
-metrics, and the fail-closed configuration validation.  The actual real
-run is gated behind an explicit ``--run-authorized`` flag (see
-``scripts/run_slp8_region_mini.py``) and is **not** performed by this
-task.
+metrics, the fail-closed configuration validation, the resource
+budget monitor, the checkpoint / resume contract, and the determinism
+configuration.  The actual real run is gated behind an explicit
+``--run-authorized`` flag (see ``scripts/run_slp8_region_mini.py``) and
+is **not** performed by this task.
 
-Design contract
-===============
+Design contract (R02)
+=====================
 
 * **Data contract** — Only B01 freeze tables are read; the runner
   never constructs a TEST loader and refuses any caller-supplied path
   that does not look like a real B01 freeze directory.  TEST rows
   remain inaccessible because :func:`load_b01_freeze_tables` is called
-  with ``load_test=False``.
+  with ``load_test=False``.  The real B01 path performs a
+  fail-closed contract check (counts / subject counts / A06 SHA /
+  provenance / setting / cover) — see
+  :mod:`topper_perception.neural.slp8_region_b01_contract`.
 
 * **Class-weight contract** — The class weight vector is derived from
   ``train_class_stats.json`` only; VAL/TEST are rejected.
@@ -28,15 +32,35 @@ Design contract
   (refuses to fall back to CPU) **unless** the run is a synthetic CPU
   smoke, in which case CPU is the only allowed device.
 
-* **Checkpoint contract** — One ``last.pt`` and one ``best.pt`` per
-  candidate.  ``best`` is selected by the lowest val_loss (mode="min",
-  earliest-epoch tie-break).  Independent reload (a freshly-built
-  model loaded from ``best.pt``) must produce predictions whose
-  canonical hash matches the in-process predictions.
+* **Resource budget** — The runner is monitored end-to-end:
+  ``time.monotonic`` is sampled after every validation epoch, the
+  per-candidate and total wall budgets are compared, and the CUDA peak
+  memory (via :func:`torch.cuda.max_memory_allocated` after a
+  :func:`torch.cuda.reset_peak_memory_stats` at candidate start) is
+  compared against the frozen threshold.  Any exceedance transitions
+  the candidate to ``STOPPED`` (not ``FAILED``) and the run never
+  writes ``DONE.json``.
+
+* **Checkpoint / resume contract** — One ``last.pt`` and one
+  ``best.pt`` per candidate.  ``best`` is selected by the lowest
+  val_loss (mode="min", earliest-epoch tie-break).  Independent
+  reload (a freshly-built model loaded from ``best.pt``) must produce
+  predictions whose canonical hash matches the in-process predictions.
+  Every checkpoint embeds a :class:`CheckpointIdentity` block; resume
+  with a mismatched identity is rejected fail-closed.  Resume for a
+  run that already produced ``DONE.json`` is refused.
+
+* **Determinism contract** — :func:`apply_settings` configures Python,
+  NumPy and torch RNGs plus CPU thread count and deterministic-algorithm
+  flags; two independent processes with the same seed / commit /
+  config must produce identical ``predictions_manifest`` /
+  ``centroid_errors`` / ``candidate_decision`` outputs.
 
 * **Output contract** — Every output file in the B04 specification is
   written (see :func:`write_mini_artifacts`).  Output directory
-  collisions are rejected.
+  collisions are rejected **before any file is written**.  The
+  terminal ``DONE.json`` / ``FAILED.json`` / ``STOPPED.json`` files
+  are mutually exclusive.
 """
 
 from __future__ import annotations
@@ -67,6 +91,18 @@ from torch.utils.data import DataLoader, Dataset
 from topper_perception.evaluation.slp_pressure_metrics import (
     compute_fixed_class_macro_metrics,
 )
+from topper_perception.neural.slp8_region_b01_contract import (
+    B01ContractError,
+    B01FreezeSnapshot,
+    check_freeze_manifest_file_consistency,
+    verify_b01_contract,
+)
+from topper_perception.neural.slp8_region_budget import (
+    BudgetCheck,
+    ResourceBudget,
+    ResourceBudgetState,
+    resource_budget_from_config,
+)
 from topper_perception.neural.slp8_region_class_weights import (
     ClassWeightResult,
     WEIGHT_CLIP_MAX,
@@ -88,6 +124,12 @@ from topper_perception.neural.slp8_region_dataset import (
     collate_fn,
     verify_subject_isolation,
 )
+from topper_perception.neural.slp8_region_determinism import (
+    DeterminismSettings,
+    apply_settings,
+    collect_settings,
+    environment_payload,
+)
 from topper_perception.neural.slp8_region_models import (
     B04_MAX_PARAMETERS,
     INPUT_SHAPE,
@@ -106,13 +148,27 @@ from topper_perception.neural.slp8_region_metrics_ext import (
     summarize_centroid_errors,
     METRICS_VERSION as EXT_METRICS_VERSION,
 )
+from topper_perception.neural.slp8_region_resume import (
+    CheckpointIdentity,
+    EarlyStopperState,
+    ResumeIdentityError,
+    ResumeRefusedError,
+    capture_rng_state,
+    class_weight_sha256,
+    file_sha256 as _resume_file_sha256,
+    identity_from_dict,
+    input_manifest_hashes_sha256,
+    refuse_resume_for_done_run,
+    restore_rng_state,
+    verify_resume_identity,
+)
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-TASK_ID = "TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-v0.1"
+TASK_ID = "TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1"
 MINI_VERSION = "slp8_region_mini_v0.1"
 
 #: Default seed.
@@ -206,6 +262,7 @@ class MiniConfig:
 
     task_id: str
     config_version: str
+    config_path: str
     candidates: tuple[str, ...]
     seed: int
     device: str
@@ -231,11 +288,22 @@ class MiniConfig:
     image_shape: tuple[int, int]
     max_parameters: int
     val_feasibility_threshold: float
+    expected_train_count: int
+    expected_val_count: int
+    expected_test_count: int
+    expected_train_subjects: int
+    expected_val_subjects: int
+    expected_test_subjects: int
+    expected_provenance: str
+    expected_source_review_status: str
+    expected_setting: str
+    expected_cover: str
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
             "config_version": self.config_version,
+            "config_path": self.config_path,
             "candidates": list(self.candidates),
             "seed": self.seed,
             "device": self.device,
@@ -261,6 +329,20 @@ class MiniConfig:
             "image_shape": list(self.image_shape),
             "max_parameters": self.max_parameters,
             "val_feasibility_threshold": self.val_feasibility_threshold,
+            "expected_split_counts": {
+                "train": int(self.expected_train_count),
+                "val": int(self.expected_val_count),
+                "test": int(self.expected_test_count),
+            },
+            "expected_subjects": {
+                "train": int(self.expected_train_subjects),
+                "val": int(self.expected_val_subjects),
+                "test": int(self.expected_test_subjects),
+            },
+            "expected_provenance": self.expected_provenance,
+            "expected_source_review_status": self.expected_source_review_status,
+            "expected_setting": self.expected_setting,
+            "expected_cover": self.expected_cover,
         }
 
     def raw_raw_semantics_safe(self) -> str:
@@ -285,6 +367,14 @@ _REQUIRED_TOP_LEVEL_KEYS: tuple[str, ...] = (
     "metrics",
     "resource_budget",
     "feasibility_gate",
+    "expected_split_counts",
+    "expected_subjects",
+    "lifecycle",
+)
+
+_REQUIRED_LIFECYCLE_KEYS: tuple[str, ...] = (
+    "valid_terminal_states",
+    "exclusive_terminal_files",
 )
 
 _REQUIRED_CANDIDATE_KEYS: tuple[str, ...] = (
@@ -511,21 +601,76 @@ def validate_mini_config(cfg: Mapping[str, Any]) -> None:
             f"{B02_BASELINE_REFERENCE_VAL_FIXED_IOU}; got {threshold}"
         )
 
+    expected_split = cfg.get("expected_split_counts", {})
+    if int(expected_split.get("train", -1)) != 3645:
+        raise ConfigValidationError(
+            "config.expected_split_counts.train must be 3645; got "
+            f"{expected_split.get('train')!r}"
+        )
+    if int(expected_split.get("val", -1)) != 450:
+        raise ConfigValidationError(
+            "config.expected_split_counts.val must be 450; got "
+            f"{expected_split.get('val')!r}"
+        )
+    if int(expected_split.get("test", -1)) != 0:
+        raise ConfigValidationError(
+            "config.expected_split_counts.test must be 0; got "
+            f"{expected_split.get('test')!r}"
+        )
+
+    expected_subjects = cfg.get("expected_subjects", {})
+    if int(expected_subjects.get("train", -1)) != 81:
+        raise ConfigValidationError(
+            "config.expected_subjects.train must be 81; got "
+            f"{expected_subjects.get('train')!r}"
+        )
+    if int(expected_subjects.get("val", -1)) != 10:
+        raise ConfigValidationError(
+            "config.expected_subjects.val must be 10; got "
+            f"{expected_subjects.get('val')!r}"
+        )
+    if int(expected_subjects.get("test", -1)) != 0:
+        raise ConfigValidationError(
+            "config.expected_subjects.test must be 0; got "
+            f"{expected_subjects.get('test')!r}"
+        )
+
+    lifecycle = cfg.get("lifecycle", {})
+    _expect_keys("config.lifecycle", lifecycle, _REQUIRED_LIFECYCLE_KEYS)
+    if sorted(lifecycle.get("valid_terminal_states", [])) != sorted(
+        ["DONE", "FAILED", "STOPPED"]
+    ):
+        raise ConfigValidationError(
+            "config.lifecycle.valid_terminal_states must be "
+            "['DONE', 'FAILED', 'STOPPED']"
+        )
+    if sorted(lifecycle.get("exclusive_terminal_files", [])) != sorted(
+        ["DONE.json", "FAILED.json", "STOPPED.json"]
+    ):
+        raise ConfigValidationError(
+            "config.lifecycle.exclusive_terminal_files must be "
+            "['DONE.json', 'FAILED.json', 'STOPPED.json']"
+        )
+
 
 def build_mini_config(
     cfg: Mapping[str, Any],
     *,
     b01_freeze_dir: str | None,
     data_root: str | None,
+    config_path: str | None = None,
 ) -> MiniConfig:
     """Build a :class:`MiniConfig` from a validated JSON config."""
 
     training = cfg["training"]
     early = training["early_stopping"]
     rb = cfg["resource_budget"]
+    expected_split = cfg.get("expected_split_counts", {})
+    expected_subjects = cfg.get("expected_subjects", {})
     return MiniConfig(
         task_id=str(cfg["task_id"]),
         config_version=str(cfg["config_version"]),
+        config_path=str(config_path) if config_path else "",
         candidates=tuple(str(c["name"]) for c in cfg["candidates"]),
         seed=int(training["seed"]),
         device=str(training["device"]),
@@ -556,6 +701,20 @@ def build_mini_config(
         image_shape=tuple(int(v) for v in cfg["dataset"]["image_shape"]),
         max_parameters=int(B04_MAX_PARAMETERS),
         val_feasibility_threshold=float(cfg["feasibility_gate"]["b02_reference_val_fixed_iou"]),
+        expected_train_count=int(expected_split.get("train", 3645)),
+        expected_val_count=int(expected_split.get("val", 450)),
+        expected_test_count=int(expected_split.get("test", 0)),
+        expected_train_subjects=int(expected_subjects.get("train", 81)),
+        expected_val_subjects=int(expected_subjects.get("val", 10)),
+        expected_test_subjects=int(expected_subjects.get("test", 0)),
+        expected_provenance=str(
+            cfg.get("expected_provenance", "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED")
+        ),
+        expected_source_review_status=str(
+            cfg.get("expected_source_review_status", "NOT_REVIEWED")
+        ),
+        expected_setting=str(cfg.get("expected_setting", "danaLab")),
+        expected_cover=str(cfg.get("expected_cover", "uncover")),
     )
 
 
@@ -569,7 +728,10 @@ def check_output_dir_safety(output_dir: Path) -> None:
 
     The rule: if the output directory already exists and contains
     anything other than a ``.gitkeep`` marker, the runner raises
-    :class:`OutputCollisionError`.
+    :class:`OutputCollisionError`.  Sentinel files
+    (``DONE.json`` / ``FAILED.json`` / ``STOPPED.json``) are detected
+    explicitly so the error message points the operator at the right
+    file rather than a generic "not empty" complaint.
     """
 
     output_dir = Path(output_dir)
@@ -579,7 +741,7 @@ def check_output_dir_safety(output_dir: Path) -> None:
         raise OutputCollisionError(
             f"output path exists but is not a directory: {output_dir}"
         )
-    sentinels = ("DONE.json", "FAILED.json")
+    sentinels = ("DONE.json", "FAILED.json", "STOPPED.json")
     for sentinel in sentinels:
         if (output_dir / sentinel).is_file():
             raise OutputCollisionError(
@@ -812,9 +974,14 @@ def build_synthetic_dataset(
                 n_train_pixels += int(label.size)
 
             # Persist to disk so the dataset follows the same lazy-load
-            # path as the real B01 dataset.
-            pressure_path = pressure_dir / f"{split}_{i:06d}.npy"
-            label_path = label_dir / f"{split}_{i:06d}.npy"
+            # path as the real B01 dataset.  The paths stored on the
+            # ``RegionSample`` are RELATIVE to ``cache_root`` so the
+            # synthetic dataset can resolve them via its
+            # ``dataset_root / sample.label_path`` contract.
+            pressure_relpath = f"pressure/{split}_{i:06d}.npy"
+            label_relpath = f"labels/{split}_{i:06d}.npy"
+            pressure_path = cache_root / pressure_relpath
+            label_path = cache_root / label_relpath
             np.save(pressure_path, pressure)
             np.save(label_path, label)
             sample = RegionSample(
@@ -822,10 +989,9 @@ def build_synthetic_dataset(
                 subject_id=subject,
                 ml_split=split,
                 posture=["SUPINE", "LEFT", "RIGHT"][i % 3],
-                pressure_path=str(pressure_path),
-                label_path=str(label_path),
-                onehot_path=str(label_path),  # synthetic; the one-hot is
-                                              # not consumed by the runner.
+                pressure_path=pressure_relpath,
+                label_path=label_relpath,
+                onehot_path=label_relpath,
             )
             sample_list.append(sample)
             pressure_buf.append(pressure)
@@ -857,13 +1023,13 @@ def build_synthetic_dataset(
     train_dataset = Slp8SyntheticDataset(
         samples=train_samples,
         pressure_arrays=train_pressures,
-        dataset_root=Path.cwd(),
+        dataset_root=cache_root,
         normalization=normalization,
     )
     val_dataset = Slp8SyntheticDataset(
         samples=val_samples,
         pressure_arrays=val_pressures,
-        dataset_root=Path.cwd(),
+        dataset_root=cache_root,
         normalization=normalization,
     )
 
@@ -1056,6 +1222,10 @@ class CandidateResult:
     param_changed: bool
     last_in_process_prediction_hash: str | None
     class_weight_summary: dict[str, Any]
+    elapsed_seconds: float
+    budget_status: str  # "ok" | "per_candidate_wall_exceeded" | "total_wall_exceeded" | "cuda_peak_exceeded"
+    budget_report: dict[str, Any]
+    budget_thresholds: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1083,6 +1253,10 @@ class CandidateResult:
             "n_test_samples": int(self.n_test_samples),
             "param_changed": bool(self.param_changed),
             "class_weight_summary": dict(self.class_weight_summary),
+            "elapsed_seconds": float(self.elapsed_seconds),
+            "budget_status": str(self.budget_status),
+            "budget_report": dict(self.budget_report),
+            "budget_thresholds": dict(self.budget_thresholds),
         }
 
 
@@ -1126,8 +1300,25 @@ def _build_checkpoint_payload(
     metrics: Mapping[str, Any],
     n_classes: int,
     image_shape: tuple[int, int],
+    stopper: "_EarlyStopper | None" = None,
+    train_loss_history: Sequence[float] | None = None,
+    val_loss_history: Sequence[float] | None = None,
+    epoch_metrics: Sequence[EpochMetricsRow] | None = None,
+    identity: CheckpointIdentity | None = None,
+    input_manifest_hashes: Mapping[str, Any] | None = None,
+    rng_state: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    """Assemble a versioned B04 checkpoint payload.
+
+    R02 expands the payload with the full B04 identity block,
+    the early-stopper state, the metric history, the input-hash
+    snapshot, and the captured RNG state.  The payload is
+    ``weights_only=True`` safe because every value is either a
+    primitive, a ``numpy`` / ``torch`` tensor, or a JSON-safe dict /
+    list.
+    """
+
+    payload: dict[str, Any] = {
         "version": CHECKPOINT_VERSION,
         "model_state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
         "optimizer_state_dict": {k: v for k, v in optimizer.state_dict().items()},
@@ -1139,6 +1330,21 @@ def _build_checkpoint_payload(
         "n_classes": int(n_classes),
         "image_shape": list(image_shape),
     }
+    if identity is not None:
+        payload["identity"] = identity.as_dict()
+    if stopper is not None:
+        payload["early_stopper"] = stopper.snapshot().as_dict()
+    if train_loss_history is not None:
+        payload["train_loss_history"] = [float(v) for v in train_loss_history]
+    if val_loss_history is not None:
+        payload["val_loss_history"] = [float(v) for v in val_loss_history]
+    if epoch_metrics is not None:
+        payload["epoch_metrics"] = [asdict(row) for row in epoch_metrics]
+    if input_manifest_hashes is not None:
+        payload["input_manifest_hashes"] = dict(input_manifest_hashes)
+    if rng_state is not None:
+        payload["rng_state"] = dict(rng_state)
+    return payload
 
 
 def _save_checkpoint(path: Path, payload: Mapping[str, Any]) -> str:
@@ -1357,6 +1563,36 @@ class _EarlyStopper:
         )
         return is_best, should_stop
 
+    def snapshot(self) -> EarlyStopperState:
+        return EarlyStopperState(
+            best_metric=self.best,
+            best_epoch=self.best_epoch,
+            patience=self.patience,
+            min_delta=self.min_delta,
+            min_epochs=self.min_epochs,
+            mode=self.mode,
+            monitor=self.monitor,
+        )
+
+    def restore(self, state: EarlyStopperState) -> None:
+        if state.monitor != "val_loss" or state.mode != "min":
+            raise ResumeIdentityError(
+                "early-stopper identity mismatch on resume: "
+                f"monitor={state.monitor}, mode={state.mode}"
+            )
+        if (
+            state.patience != self.patience
+            or state.min_epochs != self.min_epochs
+            or state.min_delta != self.min_delta
+        ):
+            raise ResumeIdentityError(
+                "early-stopper hyperparameter mismatch on resume"
+            )
+        self.best = state.best_metric
+        self.best_epoch = state.best_epoch
+        # _patience is implicit from history (no need to restore).
+        self._patience = 0
+
 
 # ---------------------------------------------------------------------------
 # Single-candidate runner
@@ -1372,6 +1608,11 @@ def run_one_candidate(
     class_weight_result: ClassWeightResult,
     output_dir: Path,
     device: torch.device,
+    budget_state: ResourceBudgetState,
+    identity: CheckpointIdentity,
+    input_manifest_hashes: Mapping[str, Any],
+    deterministic: DeterminismSettings,
+    resume_from: Path | None = None,
 ) -> CandidateResult:
     """Train one B04 candidate end-to-end and write its outputs.
 
@@ -1380,14 +1621,28 @@ def run_one_candidate(
     when ``val_loss`` improves (mode='min', earliest-epoch tie-break).
     Independent reload of ``best.pt`` is verified and a canonical hash
     of its predictions is compared to the in-process predictions.
+
+    The runner checks the resource budget (wall-clock and CUDA peak
+    memory) at every validation epoch; any exceedance transitions the
+    candidate to ``STOPPED`` and the run never writes ``DONE.json``.
+
+    When ``resume_from`` points at a previous ``last.pt``, the runner
+    restores the model / optimizer / RNG / early-stopper state and
+    history, then resumes from the next epoch.  The saved
+    :class:`CheckpointIdentity` is compared against the requested
+    identity; any mismatch raises :class:`ResumeIdentityError`.
     """
 
-    set_seed(config.seed)
+    apply_settings(config.seed, cpu_threads=deterministic.cpu_threads)
+
+    # ------------------------------------------------------------------
+    # Refuse to resume a closed (DONE) experiment.
+    # ------------------------------------------------------------------
+    refuse_resume_for_done_run(output_dir)
+
     builder = get_model_builder(candidate_name)
     model, model_config = builder.factory(N_CLASSES, str(device))
     if model_config.get("device") != str(device):
-        # The registry's factory may normalise the device string; record
-        # the actual device used in the manifest.
         model_config["device"] = str(device)
     if model_config.get("n_classes") != N_CLASSES:
         raise MiniProtocolError(
@@ -1435,6 +1690,12 @@ def run_one_candidate(
         min_epochs=config.min_epochs,
     )
 
+    # ------------------------------------------------------------------
+    # Budget + identity setup
+    # ------------------------------------------------------------------
+    budget_state.begin_candidate()
+    budget_state.reset_cuda_peak()
+
     epoch_metrics: list[EpochMetricsRow] = []
     train_loss_history: list[float] = []
     val_loss_history: list[float] = []
@@ -1448,16 +1709,77 @@ def run_one_candidate(
     best_val_postures: list[str] | None = None
     best_train_sample_ids: list[str] | None = None
     best_val_sample_ids: list[str] | None = None
-    best_metrics_snapshot: dict[str, Any] | None = None
     best_epoch: int | None = None
     best_val_loss: float | None = None
     best_sha: str | None = None
     last_sha: str | None = None
     feasibility: str = "FAILED"
-    reason: str = "stopped"
+    reason: str = "not_run"
     stopped_early: bool = False
+    budget_status: str = "ok"
+    budget_report: dict[str, Any] = {}
+    budget_thresholds: dict[str, Any] = budget_state.budget.as_dict()
 
-    for epoch in range(1, config.max_epochs + 1):
+    start_epoch: int = 1
+    resume_checkpoint_payload: dict[str, Any] | None = None
+
+    # ------------------------------------------------------------------
+    # Optional resume
+    # ------------------------------------------------------------------
+    if resume_from is not None:
+        if not Path(resume_from).is_file():
+            raise MiniProtocolError(
+                f"resume_from path does not exist: {resume_from}"
+            )
+        payload = _load_checkpoint(Path(resume_from))
+        saved_identity = identity_from_dict(payload)
+        verify_resume_identity(saved_identity, identity)
+        try:
+            model.load_state_dict(payload["model_state_dict"])
+        except Exception as exc:
+            raise ResumeIdentityError(
+                f"resume model state_dict load failed: {exc}"
+            )
+        try:
+            optimizer.load_state_dict(payload["optimizer_state_dict"])
+        except Exception as exc:
+            raise ResumeIdentityError(
+                f"resume optimizer state_dict load failed: {exc}"
+            )
+        rng_state = payload.get("rng_state")
+        if rng_state is not None:
+            try:
+                restore_rng_state(rng_state)
+            except Exception as exc:
+                raise ResumeIdentityError(
+                    f"resume RNG state restore failed: {exc}"
+                )
+        if "early_stopper" in payload:
+            stopper.restore(EarlyStopperState.from_dict(payload["early_stopper"]))
+        train_loss_history = [float(x) for x in payload.get("train_loss_history", [])]
+        val_loss_history = [float(x) for x in payload.get("val_loss_history", [])]
+        epoch_metrics = [
+            EpochMetricsRow(**row) for row in payload.get("epoch_metrics", [])
+        ]
+        resume_checkpoint_payload = payload
+        start_epoch = int(payload.get("epoch", 0)) + 1
+        # best.pt may have been written previously; re-load its SHA so
+        # the manifest remains accurate.
+        if payload.get("is_best"):
+            best_sha = file_sha256(best_path) if best_path.is_file() else None
+            best_epoch = int(payload.get("epoch"))
+            best_val_loss = float(payload.get("metrics", {}).get("val_loss")) if payload.get("metrics", {}).get("val_loss") is not None else None
+        last_sha = file_sha256(last_path) if last_path.is_file() else None
+
+    budget_exceeded: bool = False
+    budget_check_history: list[dict[str, Any]] = []
+
+    if start_epoch > config.max_epochs:
+        # Resumed past the last epoch; treat as completion and proceed
+        # to the metrics / reload / decision stage.
+        stopped_early = True
+
+    for epoch in range(start_epoch, config.max_epochs + 1):
         t_epoch = time.perf_counter()
         try:
             train_loss = _train_one_epoch(model, train_loader, optimizer, loss_fn, device)
@@ -1476,17 +1798,33 @@ def run_one_candidate(
                 epoch_metrics=epoch_metrics,
                 train_loss_history=train_loss_history,
                 val_loss_history=val_loss_history,
-                best_epoch=None,
-                best_val_loss=None,
-                best_sha=None,
-                last_sha=None,
+                best_epoch=best_epoch,
+                best_val_loss=best_val_loss,
+                best_sha=best_sha,
+                last_sha=last_sha,
                 param_changed=False,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
                 train_class_weight_result=class_weight_result,
                 reload_consistent=False,
                 reload_max_abs_diff=None,
+                elapsed_seconds=budget_state.elapsed_seconds,
+                budget_status=budget_status,
+                budget_report=budget_report,
+                budget_thresholds=budget_thresholds,
             )
+
+        # ------------------------------------------------------------------
+        # Resource budget check (after every validation epoch)
+        # ------------------------------------------------------------------
+        budget_state.update_cuda_peak()
+        budget_check = budget_state.check()
+        budget_check_history.append(budget_check.as_dict())
+        if budget_check.exceeded:
+            budget_status = budget_check.reason
+            budget_report = budget_check.as_dict()
+            feasibility = "STOPPED"
+            reason = f"resource budget exceeded: {budget_check.reason}"
+            budget_exceeded = True
+            break
 
         train_loss_history.append(float(train_loss))
         val_loss_history.append(float(val_loss))
@@ -1517,6 +1855,13 @@ def run_one_candidate(
             },
             n_classes=N_CLASSES,
             image_shape=PRESSURE_SHAPE,
+            stopper=stopper,
+            train_loss_history=train_loss_history,
+            val_loss_history=val_loss_history,
+            epoch_metrics=epoch_metrics,
+            identity=identity,
+            input_manifest_hashes=dict(input_manifest_hashes),
+            rng_state=capture_rng_state(),
         )
         last_sha = _save_checkpoint(last_path, payload)
 
@@ -1524,14 +1869,13 @@ def run_one_candidate(
             best_sha = _save_checkpoint(best_path, payload)
             best_epoch = epoch
             best_val_loss = float(val_loss)
-            # Cache predictions for metrics and predictions_manifest.
             best_val_preds = list(val_preds)
             best_val_labels = list(val_labels)
             best_val_subjects = list(val_subjs)
             best_val_postures = list(val_pos)
             best_val_sample_ids = list(val_sids)
-            # Also cache the in-process train predictions for the
-            # predictions_manifest.
+            # Re-run training inference so the predictions_manifest
+            # carries real per-sample evidence for the best epoch.
             (
                 _t_loss,
                 train_labels_epoch,
@@ -1545,11 +1889,48 @@ def run_one_candidate(
             best_train_subjects = list(train_subjs)
             best_train_postures = list(train_pos)
             best_train_sample_ids = list(train_sids)
-            best_metrics_snapshot = {"train_loss": float(train_loss), "val_loss": float(val_loss)}
 
         if should_stop:
             stopped_early = True
             break
+
+    if not budget_exceeded:
+        budget_state.update_cuda_peak()
+        final_check = budget_state.check()
+        budget_check_history.append(final_check.as_dict())
+        if final_check.exceeded:
+            budget_status = final_check.reason
+            budget_report = final_check.as_dict()
+            budget_exceeded = True
+
+    if budget_exceeded:
+        return _build_candidate_result(
+            candidate_name=candidate_name,
+            model_version=builder.version,
+            parameter_count=parameter_count,
+            feasibility="STOPPED",
+            reason=reason,
+            epoch_metrics=epoch_metrics,
+            train_loss_history=train_loss_history,
+            val_loss_history=val_loss_history,
+            best_epoch=best_epoch,
+            best_val_loss=best_val_loss,
+            best_sha=best_sha,
+            last_sha=last_sha,
+            param_changed=True,
+            train_class_weight_result=class_weight_result,
+            reload_consistent=False,
+            reload_max_abs_diff=None,
+            elapsed_seconds=budget_state.elapsed_seconds,
+            budget_status=budget_status,
+            budget_report=budget_report,
+            budget_thresholds=budget_thresholds,
+        )
+
+    if not budget_report:
+        budget_state.update_cuda_peak()
+        budget_report = budget_state.check().as_dict()
+        budget_status = budget_report["reason"]
 
     # ------------------------------------------------------------------
     # Independent reload of best.pt
@@ -1566,7 +1947,6 @@ def run_one_candidate(
     fresh_model = fresh_model.to("cpu")
     fresh_model.eval()
 
-    # Build a deterministic reference batch from VAL (first 2 samples).
     val_subset_indices = list(range(min(2, len(val_dataset))))
     if val_subset_indices:
         ref_pressure = torch.stack(
@@ -1583,7 +1963,6 @@ def run_one_candidate(
         max_abs_diff = 0.0
         reload_consistent = True
 
-    # Hash predictions from the reloaded best model on the full VAL set.
     fresh_model = fresh_model.to(device)
     reloaded_val_loader = _make_loader(
         val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=0,
@@ -1601,18 +1980,17 @@ def run_one_candidate(
     hash_consistent = bool(in_process_hash is not None and reloaded_hash == in_process_hash)
 
     final_state_diff = float(sum(
-        (current.float() - initial.float()).pow(2).sum().sqrt().item()
-        for current, initial in zip(
-            (p for p in model.state_dict().values()),
-            (initial_state[k] for k in model.state_dict().keys()),
-        )
+        (current.float() - initial_state[k].float()).pow(2).sum().sqrt().item()
+        for k, current in model.state_dict().items()
     ))
     param_changed = final_state_diff > 1e-6
 
-    # ------------------------------------------------------------------
-    # Compute the candidate metrics from the best-epoch predictions.
-    # ------------------------------------------------------------------
-    if best_val_preds is None or best_val_labels is None or best_val_subjects is None or best_val_postures is None:
+    if (
+        best_val_preds is None
+        or best_val_labels is None
+        or best_val_subjects is None
+        or best_val_postures is None
+    ):
         feasibility = "FAILED"
         reason = "best checkpoint missing predictions"
         metrics: CandidateMetrics | None = None
@@ -1639,9 +2017,6 @@ def run_one_candidate(
             n_test_samples=0,
         )
 
-    # ------------------------------------------------------------------
-    # Feasibility decision.
-    # ------------------------------------------------------------------
     if metrics is None:
         feasibility = "FAILED"
         reason = "no best metrics"
@@ -1678,9 +2053,6 @@ def run_one_candidate(
                     f"{threshold:.6f}"
                 )
 
-    # ------------------------------------------------------------------
-    # Build per-sample prediction records.
-    # ------------------------------------------------------------------
     train_records: list[PredictionRecord] = []
     val_records: list[PredictionRecord] = []
     if best_train_preds is not None and best_train_labels is not None:
@@ -1704,13 +2076,12 @@ def run_one_candidate(
             postures=best_val_postures or [],
         )
 
-    # Subject isolation sanity check.
     train_subjs_set = set(best_train_subjects or [])
     val_subjs_set = set(best_val_subjects or [])
     train_overlap = bool(train_subjs_set & val_subjs_set)
     val_overlap = bool(val_subjs_set & train_subjs_set)
 
-    result = CandidateResult(
+    return CandidateResult(
         candidate=candidate_name,
         model_version=builder.version,
         parameter_count=parameter_count,
@@ -1743,8 +2114,11 @@ def run_one_candidate(
         param_changed=param_changed,
         last_in_process_prediction_hash=_predictions_hash(best_train_preds) if best_train_preds else None,
         class_weight_summary=class_weight_result.as_dict(),
+        elapsed_seconds=budget_state.elapsed_seconds,
+        budget_status=budget_status,
+        budget_report=budget_report,
+        budget_thresholds=budget_thresholds,
     )
-    return result
 
 
 def _build_candidate_result(
@@ -1762,13 +2136,15 @@ def _build_candidate_result(
     best_sha: str | None,
     last_sha: str | None,
     param_changed: bool,
-    train_dataset: Dataset,
-    val_dataset: Dataset,
     train_class_weight_result: ClassWeightResult,
     reload_consistent: bool,
     reload_max_abs_diff: float | None,
+    elapsed_seconds: float,
+    budget_status: str,
+    budget_report: dict[str, Any],
+    budget_thresholds: dict[str, Any],
 ) -> CandidateResult:
-    """Construct a degenerate :class:`CandidateResult` for early-exit branches."""
+    """Construct a :class:`CandidateResult` for early-exit branches."""
 
     return CandidateResult(
         candidate=candidate_name,
@@ -1803,6 +2179,10 @@ def _build_candidate_result(
         param_changed=param_changed,
         last_in_process_prediction_hash=None,
         class_weight_summary=train_class_weight_result.as_dict(),
+        elapsed_seconds=float(elapsed_seconds),
+        budget_status=str(budget_status),
+        budget_report=dict(budget_report),
+        budget_thresholds=dict(budget_thresholds),
     )
 
 
@@ -1825,12 +2205,16 @@ class MiniRunResult:
     n_candidates_failed: int
     n_candidates_stopped: int
     overall_decision: str  # "MINI_NOT_FEASIBLE" | "MINI_HAS_FEASIBLE_CANDIDATE"
+    terminal_state: str  # "DONE" | "FAILED" | "STOPPED"
     started_at_utc: str
     ended_at_utc: str
     wall_clock_seconds: float
     input_hashes: dict[str, Any]
     train_class_stats_source: str
     synthetic: bool
+    determinism: DeterminismSettings
+    resource_budget: ResourceBudget
+    b01_contract_report: dict[str, Any] | None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1841,6 +2225,7 @@ class MiniRunResult:
             "n_candidates_failed": int(self.n_candidates_failed),
             "n_candidates_stopped": int(self.n_candidates_stopped),
             "overall_decision": self.overall_decision,
+            "terminal_state": self.terminal_state,
             "started_at_utc": self.started_at_utc,
             "ended_at_utc": self.ended_at_utc,
             "wall_clock_seconds": float(self.wall_clock_seconds),
@@ -1848,17 +2233,14 @@ class MiniRunResult:
             "input_hashes": self.input_hashes,
             "train_class_stats_source": self.train_class_stats_source,
             "synthetic": bool(self.synthetic),
+            "determinism": self.determinism.as_dict(),
+            "resource_budget": self.resource_budget.as_dict(),
+            "b01_contract_report": self.b01_contract_report,
         }
 
 
 def _gather_environment() -> dict[str, Any]:
-    return {
-        "platform": platform.platform(),
-        "python_version": platform.python_version(),
-        "torch_version": torch.__version__,
-        "cuda_available": bool(torch.cuda.is_available()),
-        "cuda_device_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
-    }
+    return environment_payload()
 
 
 def run_mini(
@@ -1873,8 +2255,22 @@ def run_mini(
     input_hashes: dict[str, Any],
     train_class_stats_source: str,
     synthetic: bool,
+    budget: ResourceBudget | None = None,
+    b01_contract_report: dict[str, Any] | None = None,
+    resume_from_per_candidate: dict[str, Path] | None = None,
 ) -> MiniRunResult:
-    """Run the B04 Mini end-to-end across all frozen candidates."""
+    """Run the B04 Mini end-to-end across all frozen candidates.
+
+    The orchestrator wires the resource budget, the checkpoint
+    identity, the determinism settings, and the (optional) per-
+    candidate resume path into the per-candidate runner.  After every
+    candidate it inspects the feasibility to compute the terminal
+    state:
+
+    * any FAILED → terminal_state="FAILED"
+    * any STOPPED (no FAILED) → terminal_state="STOPPED"
+    * all candidates FEASIBLE / NOT_FEASIBLE → terminal_state="DONE"
+    """
 
     started_at = datetime.now(timezone.utc).isoformat()
     output_dir = Path(output_dir)
@@ -1882,21 +2278,58 @@ def run_mini(
 
     assert_class_weight_invariants(class_weight_result)
 
+    # Apply the determinism configuration once for the whole run.
+    determinism = apply_settings(config.seed, cpu_threads=1)
+
+    if budget is None:
+        budget = resource_budget_from_config(
+            {
+                "max_wall_minutes_per_candidate": 45,
+                "max_total_wall_minutes": 90,
+                "max_peak_cuda_mb": 12288,
+            }
+        )
+    budget_state = ResourceBudgetState(budget)
+
     candidate_results: dict[str, CandidateResult] = {}
     n_feasible = 0
     n_not_feasible = 0
     n_failed = 0
     n_stopped = 0
 
+    input_manifest_hashes_for_payload: dict[str, Any] = dict(input_hashes)
+
     for candidate_name in config.candidates:
         cand_dir = output_dir / "checkpoints" / candidate_name
-        # Each candidate gets its own sub-output dir; refuse to overwrite
-        # if either last.pt or best.pt already exists.
         for name in ("last.pt", "best.pt"):
-            if (cand_dir / name).exists():
+            if (cand_dir / name).exists() and (
+                resume_from_per_candidate is None
+                or candidate_name not in resume_from_per_candidate
+            ):
                 raise OutputCollisionError(
                     f"checkpoint {cand_dir / name} already exists; refusing to overwrite"
                 )
+        identity = CheckpointIdentity(
+            task_id=config.task_id,
+            candidate=candidate_name,
+            model_version=get_model_builder(candidate_name).version,
+            seed=int(config.seed),
+            n_classes=int(N_CLASSES),
+            image_shape=tuple(PRESSURE_SHAPE),
+            config_sha256=file_sha256(Path(config.config_path)) if hasattr(config, "config_path") else "",
+            a06_split_sha256=str(config.b01_a06_split_sha256_expected),
+            freeze_manifest_sha256=str(input_hashes.get("freeze_manifest_sha256", "")),
+            train_class_stats_sha256=str(input_hashes.get("train_class_stats_sha256", "")),
+            class_weight_sha256=class_weight_sha256(class_weight_result.as_dict()),
+            input_manifest_hashes_sha256=input_manifest_hashes_sha256(
+                input_manifest_hashes_for_payload
+            ),
+        )
+        resume_path = (
+            Path(resume_from_per_candidate[candidate_name])
+            if (resume_from_per_candidate and candidate_name in resume_from_per_candidate)
+            else None
+        )
         result = run_one_candidate(
             candidate_name=candidate_name,
             config=config,
@@ -1905,6 +2338,11 @@ def run_mini(
             class_weight_result=class_weight_result,
             output_dir=output_dir,
             device=device,
+            budget_state=budget_state,
+            identity=identity,
+            input_manifest_hashes=input_manifest_hashes_for_payload,
+            deterministic=determinism,
+            resume_from=resume_path,
         )
         candidate_results[candidate_name] = result
         if result.feasibility == "FEASIBLE":
@@ -1923,9 +2361,19 @@ def run_mini(
         decision = "MINI_HAS_FEASIBLE_CANDIDATE"
 
     # ------------------------------------------------------------------
+    # Terminal state machine
+    # ------------------------------------------------------------------
+    if n_failed > 0:
+        terminal_state = "FAILED"
+    elif n_stopped > 0:
+        terminal_state = "STOPPED"
+    else:
+        terminal_state = "DONE"
+
+    # ------------------------------------------------------------------
     # Write artifacts (epoch_metrics, metrics_summary, metrics_by_*,
     # confusion_matrix, centroid_errors, worst_subject, predictions_manifest,
-    # candidate_decision, reload_consistency).
+    # candidate_decision, reload_consistency, budget_report).
     # ------------------------------------------------------------------
     write_mini_artifacts(
         output_dir=output_dir,
@@ -1935,6 +2383,10 @@ def run_mini(
         candidate_results=candidate_results,
         input_hashes=input_hashes,
         train_class_stats_source=train_class_stats_source,
+        budget=budget,
+        budget_state=budget_state,
+        determinism=determinism,
+        b01_contract_report=b01_contract_report,
     )
 
     return MiniRunResult(
@@ -1948,12 +2400,16 @@ def run_mini(
         n_candidates_failed=n_failed,
         n_candidates_stopped=n_stopped,
         overall_decision=decision,
+        terminal_state=terminal_state,
         started_at_utc=started_at,
         ended_at_utc=ended_at,
         wall_clock_seconds=0.0,  # populated by the CLI
         input_hashes=input_hashes,
         train_class_stats_source=train_class_stats_source,
         synthetic=synthetic,
+        determinism=determinism,
+        resource_budget=budget,
+        b01_contract_report=b01_contract_report,
     )
 
 
@@ -1971,6 +2427,10 @@ def write_mini_artifacts(
     candidate_results: dict[str, CandidateResult],
     input_hashes: dict[str, Any],
     train_class_stats_source: str,
+    budget: ResourceBudget,
+    budget_state: ResourceBudgetState,
+    determinism: DeterminismSettings,
+    b01_contract_report: dict[str, Any] | None,
 ) -> None:
     output_dir = Path(output_dir)
     log_dir = output_dir / "logs"
@@ -2010,6 +2470,10 @@ def write_mini_artifacts(
             "in_process_prediction_hash": result.in_process_prediction_hash,
             "last_in_process_prediction_hash": result.last_in_process_prediction_hash,
             "class_weight_summary": dict(result.class_weight_summary),
+            "elapsed_seconds": float(result.elapsed_seconds),
+            "budget_status": str(result.budget_status),
+            "budget_report": dict(result.budget_report),
+            "budget_thresholds": dict(result.budget_thresholds),
         }
         for cand, result in candidate_results.items()
     }
@@ -2088,11 +2552,7 @@ def write_mini_artifacts(
                 })
 
     # ---- confusion_matrix.csv (per candidate) ----
-    cm_dir = output_dir  # the spec says confusion_matrix.csv (one per run)
-    # Use a per-candidate suffix to keep the file single-purpose; the
-    # B04 contract asks for a single confusion_matrix.csv per run, so
-    # write one combined CSV with a 'candidate' column.
-    cm_csv = cm_dir / "confusion_matrix.csv"
+    cm_csv = output_dir / "confusion_matrix.csv"
     with open(cm_csv, "w", newline="", encoding="utf-8") as f:
         header = ["candidate", "true_class", "pred_class_0", "pred_class_1", "pred_class_2",
                   "pred_class_3", "pred_class_4", "pred_class_5", "pred_class_6", "pred_class_7",
@@ -2111,19 +2571,33 @@ def write_mini_artifacts(
     centroid_csv = output_dir / "centroid_errors.csv"
     with open(centroid_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=["candidate", "split", "sample_index", "subject_id", "region_id", "error", "both_missing"]
+            f, fieldnames=[
+                "candidate", "split", "sample_index", "sample_id",
+                "subject_id", "posture", "region", "error",
+                "valid", "invalid_reason", "both_missing",
+            ]
         )
         writer.writeheader()
         for cand_name, cand in candidate_results.items():
             if cand.metrics is None:
                 continue
-            for split_name, preds, labels, subjects in (
-                ("train", cand.train_predictions,
-                 _gather_train_labels_for_centroid(cand),
-                 _gather_train_subjects_for_centroid(cand)),
-                ("val", cand.val_predictions,
-                 _gather_val_labels_for_centroid(cand),
-                 _gather_val_subjects_for_centroid(cand)),
+            for split_name, preds, labels, subjects, sample_ids, postures in (
+                (
+                    "train",
+                    cand.train_predictions,
+                    _gather_train_labels_for_centroid(cand),
+                    _gather_train_subjects_for_centroid(cand),
+                    [r.sample_id for r in cand.train_records],
+                    [r.posture for r in cand.train_records],
+                ),
+                (
+                    "val",
+                    cand.val_predictions,
+                    _gather_val_labels_for_centroid(cand),
+                    _gather_val_subjects_for_centroid(cand),
+                    [r.sample_id for r in cand.val_records],
+                    [r.posture for r in cand.val_records],
+                ),
             ):
                 if not preds or not labels or not subjects:
                     continue
@@ -2133,13 +2607,33 @@ def write_mini_artifacts(
                     subject_ids=subjects,
                 )
                 for rec in records:
+                    sample_id = (
+                        sample_ids[rec.sample_index]
+                        if rec.sample_index < len(sample_ids)
+                        else ""
+                    )
+                    posture = (
+                        postures[rec.sample_index]
+                        if rec.sample_index < len(postures)
+                        else ""
+                    )
+                    if rec.both_missing:
+                        valid = False
+                        invalid_reason = "both_gt_and_pred_absent"
+                    else:
+                        valid = True
+                        invalid_reason = ""
                     writer.writerow({
                         "candidate": cand_name,
                         "split": split_name,
                         "sample_index": rec.sample_index,
+                        "sample_id": sample_id,
                         "subject_id": rec.subject_id,
-                        "region_id": rec.region_id,
+                        "posture": posture,
+                        "region": rec.region_id,
                         "error": rec.error,
+                        "valid": valid,
+                        "invalid_reason": invalid_reason,
                         "both_missing": rec.both_missing,
                     })
 
@@ -2165,10 +2659,21 @@ def write_mini_artifacts(
                 writer.writerow(record.as_dict())
 
     # ---- candidate_decision.json ----
+    n_feasible = sum(1 for r in candidate_results.values() if r.feasibility == "FEASIBLE")
+    n_not_feasible = sum(1 for r in candidate_results.values() if r.feasibility == "NOT_FEASIBLE")
+    n_failed = sum(1 for r in candidate_results.values() if r.feasibility == "FAILED")
+    n_stopped = sum(1 for r in candidate_results.values() if r.feasibility == "STOPPED")
+    if n_failed > 0:
+        terminal_state = "FAILED"
+    elif n_stopped > 0:
+        terminal_state = "STOPPED"
+    else:
+        terminal_state = "DONE"
     decision_payload = {
         "task_id": config.task_id,
         "config_version": config.config_version,
         "val_feasibility_threshold": config.val_feasibility_threshold,
+        "terminal_state": terminal_state,
         "candidates": {
             cand_name: {
                 "feasibility": result.feasibility,
@@ -2179,17 +2684,17 @@ def write_mini_artifacts(
                 ),
                 "val_loss": result.best_val_loss,
                 "best_epoch": result.best_epoch,
+                "elapsed_seconds": float(result.elapsed_seconds),
+                "budget_status": str(result.budget_status),
             }
             for cand_name, result in candidate_results.items()
         },
-        "n_feasible": sum(1 for r in candidate_results.values() if r.feasibility == "FEASIBLE"),
-        "n_not_feasible": sum(1 for r in candidate_results.values() if r.feasibility == "NOT_FEASIBLE"),
-        "n_failed": sum(1 for r in candidate_results.values() if r.feasibility == "FAILED"),
-        "n_stopped": sum(1 for r in candidate_results.values() if r.feasibility == "STOPPED"),
+        "n_feasible": n_feasible,
+        "n_not_feasible": n_not_feasible,
+        "n_failed": n_failed,
+        "n_stopped": n_stopped,
         "overall_decision": (
-            "MINI_NOT_FEASIBLE" if not any(
-                r.feasibility == "FEASIBLE" for r in candidate_results.values()
-            ) else "MINI_HAS_FEASIBLE_CANDIDATE"
+            "MINI_NOT_FEASIBLE" if n_feasible == 0 else "MINI_HAS_FEASIBLE_CANDIDATE"
         ),
     }
     write_json(output_dir / "candidate_decision.json", decision_payload)
@@ -2211,6 +2716,26 @@ def write_mini_artifacts(
     }
     write_json(output_dir / "reload_consistency.json", reload_payload)
 
+    # ---- budget_report.json ----
+    budget_report = {
+        "thresholds": budget.as_dict(),
+        "elapsed_total_seconds": float(budget_state.total_elapsed_seconds),
+        "peak_cuda_mb": float(budget_state.peak_cuda_mb),
+        "candidates": {
+            cand_name: {
+                "elapsed_seconds": float(result.elapsed_seconds),
+                "budget_status": str(result.budget_status),
+                "budget_report": dict(result.budget_report),
+            }
+            for cand_name, result in candidate_results.items()
+        },
+        "terminal_state": terminal_state,
+        "determinism": determinism.as_dict(),
+    }
+    if b01_contract_report is not None:
+        budget_report["b01_contract_report"] = b01_contract_report
+    write_json(output_dir / "budget_report.json", budget_report)
+
     # ---- run.log ----
     log_lines = [
         f"task_id={config.task_id}",
@@ -2222,9 +2747,15 @@ def write_mini_artifacts(
         f"n_val_samples={dataset_manifest.get('n_val_samples')}",
         f"n_test_samples={dataset_manifest.get('n_test_samples', 0)}",
         f"train_class_stats_source={train_class_stats_source}",
+        f"determinism={json.dumps(determinism.as_dict(), sort_keys=True)}",
+        f"terminal_state={terminal_state}",
     ]
     for cand_name, result in candidate_results.items():
-        log_lines.append(f"candidate={cand_name} feasibility={result.feasibility} reason={result.reason}")
+        log_lines.append(
+            f"candidate={cand_name} feasibility={result.feasibility} "
+            f"budget_status={result.budget_status} elapsed={result.elapsed_seconds:.2f}s "
+            f"reason={result.reason}"
+        )
     (log_dir / "run.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
 
 
@@ -2239,19 +2770,25 @@ def write_status_files(
     status: str,
     extra: Mapping[str, Any],
 ) -> None:
-    """Emit ``DONE.json`` XOR ``FAILED.json`` (mutually exclusive)."""
+    """Emit exactly one of ``DONE.json`` / ``FAILED.json`` / ``STOPPED.json``.
+
+    The three terminal files are mutually exclusive: writing one of
+    them deletes the other two so a downstream reader can rely on
+    ``ls output_dir | grep .json`` to see at most one terminal file.
+    """
 
     output_dir = Path(output_dir)
-    if status == "DONE":
-        target = output_dir / "DONE.json"
-        forbidden = output_dir / "FAILED.json"
-    elif status == "FAILED":
-        target = output_dir / "FAILED.json"
-        forbidden = output_dir / "DONE.json"
-    else:
-        raise MiniProtocolError(f"unknown status {status!r}")
-    if forbidden.exists():
-        forbidden.unlink()
+    if status not in {"DONE", "FAILED", "STOPPED"}:
+        raise MiniProtocolError(f"unknown terminal status {status!r}")
+    targets = {
+        "DONE": output_dir / "DONE.json",
+        "FAILED": output_dir / "FAILED.json",
+        "STOPPED": output_dir / "STOPPED.json",
+    }
+    target = targets[status]
+    for other_status, other_path in targets.items():
+        if other_status != status and other_path.exists():
+            other_path.unlink()
     payload = {
         "status": status,
         "task_id": TASK_ID,

@@ -172,7 +172,12 @@ def _run_validate_config(
     _log("config validation: PASSED")
 
     # Build a MiniConfig purely to serialize the resolved view.
-    config = build_mini_config(raw, b01_freeze_dir=None, data_root=None)
+    config = build_mini_config(
+        raw,
+        b01_freeze_dir=None,
+        data_root=None,
+        config_path=str(config_path),
+    )
     _write_json(output_dir / "resolved_config.json", config.as_dict())
     _write_json(
         output_dir / "input_manifest_hashes.json",
@@ -257,6 +262,7 @@ def _run_synthetic_cpu_smoke(
         raw,
         b01_freeze_dir="<SYNTHETIC>",
         data_root="<SYNTHETIC>",
+        config_path=str(config_path),
     )
 
     device = resolve_device("cpu", allow_cpu_fallback=True)
@@ -707,6 +713,26 @@ def main(argv: list[str] | None = None) -> int:
         # No explicit mode supplied — default to validate-config.
         return _run_validate_config(args.config, args.output_dir)
     except Exception as exc:
+        # When the exception is an ``OutputCollisionError`` or an
+        # authorization-rejection ``MiniProtocolError`` we MUST NOT
+        # create any file in the output directory: doing so would
+        # silently mutate the directory the operator just asked us
+        # to leave alone.  Only other (post-validation) errors write
+        # ``FAILED.json`` / ``status.json`` so the directory is
+        # auditable.
+        from topper_perception.neural.slp8_region_mini import (
+            OutputCollisionError,
+        )
+
+        non_mutating = (
+            isinstance(exc, OutputCollisionError)
+            or "--run-authorized was NOT set" in str(exc)
+            or "real B01 run requires both" in str(exc)
+        )
+        if non_mutating:
+            print(f"REJECTED: {exc}", file=sys.stderr)
+            return 2
+
         output_dir = Path(args.output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         failed = {

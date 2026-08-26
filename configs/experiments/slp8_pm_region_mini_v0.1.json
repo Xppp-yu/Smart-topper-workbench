@@ -1,13 +1,10 @@
 {
   "config_version": "slp8_region_mini_v0.1",
-  "task_id": "TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-v0.1",
+  "task_id": "TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1",
   "stage": "S2_B04",
   "freeze_version": "slp8_training_tables_v0.1",
   "b01_task_id": "TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1",
   "b01_a06_split_sha256_expected": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
-  "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
-  "raw_semantics": "raw_pmarray_response",
-  "source_review_status": "NOT_REVIEWED",
   "expected_split_counts": {
     "train": 3645,
     "val": 450,
@@ -18,6 +15,13 @@
     "val": 10,
     "test": 0
   },
+  "expected_provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+  "expected_source_review_status": "NOT_REVIEWED",
+  "expected_setting": "danaLab",
+  "expected_cover": "uncover",
+  "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+  "raw_semantics": "raw_pmarray_response",
+  "source_review_status": "NOT_REVIEWED",
   "prohibited_conclusions": [
     "Not human pixel-level semantic masks",
     "Not medical, skin-interface stress, or product ground truth",
@@ -86,6 +90,15 @@
       "clip": [0.25, 4.0]
     }
   },
+  "determinism": {
+    "cpu_threads": 1,
+    "use_deterministic_algorithms": true,
+    "cudnn_deterministic": true,
+    "cudnn_benchmark": false,
+    "omp_num_threads": 1,
+    "mkl_num_threads": 1,
+    "numpy_bit_generator": "PCG64"
+  },
   "metrics": {
     "fixed_foreground_class_ids": [1, 2, 3, 4, 5, 6, 7, 8],
     "fixed_foreground_macro_does_not_skip_empty_classes": true,
@@ -112,6 +125,10 @@
       "2_feasible": "keep both feasible candidates; B04 does not pick a champion"
     }
   },
+  "lifecycle": {
+    "valid_terminal_states": ["DONE", "FAILED", "STOPPED"],
+    "exclusive_terminal_files": ["DONE.json", "FAILED.json", "STOPPED.json"]
+  },
   "test_access_policy": {
     "load_test_default": false,
     "this_run_loads_test": false,
@@ -136,8 +153,9 @@
     "checkpoints/<candidate>/best.pt",
     "checkpoints/<candidate>/last.pt",
     "reload_consistency.json",
+    "budget_report.json",
     "logs/run.log",
-    "DONE.json or FAILED.json"
+    "DONE.json or FAILED.json or STOPPED.json"
   ],
   "real_run_authorization": {
     "required_flag": "--run-authorized",
