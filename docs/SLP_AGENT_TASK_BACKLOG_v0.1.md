@@ -208,14 +208,15 @@ Reviewer checklist:
 
 ### TASK-SLP-B03：单模态 Region Smoke
 
-- 状态：`READY`（B01 已以 `DONE_WITH_LIMITATIONS` 验收；尚未启动）。
+- 状态：`DONE_WITH_LIMITATIONS`（2026-08-27；R03 `8979c6f`；Codex Reviewer 已验收）。
 - 当前模态：PM-only；Depth/IR/RGB 属于独立对齐合同后的可选路线。
 - 目标：验证数据吞吐、loss、输出、checkpoint/resume/reload。
+- 结果：CPU TRAIN 90 / VAL 45 / TEST 0；initial+resume 各 1 epoch；270 行真实预测证据；独立复核运行与 R03 的 loss、IoU、预测哈希一致；联合测试 479 passed、2 skipped。
 - 禁止：Smoke 分数排名；不得读取 TEST label/onehot 除非显式 `enable_test_access(purpose="final_evaluation")`。
 
 ### TASK-SLP-B04：单模态 Region Mini
 
-- 状态：`BLOCKED_BY_B03`（B02 已完成；仍需 B03 Smoke 合同验收）。
+- 状态：`READY_AFTER_B03`（B03 已通过 Reviewer Gate；执行前仍需冻结 Mini 协议并取得 Owner 运行授权）。
 - 目标：每模态保留最多1–2个可行候选。
 - 指标：region IoU/Dice、中心误差、逐区域、逐 posture、worst subject；当前仅 uncover。
 - Gate：只淘汰不可行候选，不用小样本宣布冠军。
