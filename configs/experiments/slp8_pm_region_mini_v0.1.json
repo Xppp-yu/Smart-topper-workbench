@@ -1,0 +1,147 @@
+{
+  "config_version": "slp8_region_mini_v0.1",
+  "task_id": "TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-v0.1",
+  "stage": "S2_B04",
+  "freeze_version": "slp8_training_tables_v0.1",
+  "b01_task_id": "TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1",
+  "b01_a06_split_sha256_expected": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+  "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+  "raw_semantics": "raw_pmarray_response",
+  "source_review_status": "NOT_REVIEWED",
+  "expected_split_counts": {
+    "train": 3645,
+    "val": 450,
+    "test": 0
+  },
+  "expected_subjects": {
+    "train": 81,
+    "val": 10,
+    "test": 0
+  },
+  "prohibited_conclusions": [
+    "Not human pixel-level semantic masks",
+    "Not medical, skin-interface stress, or product ground truth",
+    "Not kPa; pressure values are raw PMarray response semantics",
+    "danaLab only, uncover only",
+    "Mini metrics do NOT announce a final champion",
+    "B02 0.205644 is a feasibility threshold, not a 'B04 beat B02' claim",
+    "No Mini result shall be extrapolated to product, hardware, comfort, or overnight stability"
+  ],
+  "candidates": [
+    {
+      "name": "slp8_tiny_fcn_v0.1",
+      "version": "slp8_tiny_fcn_v0.1",
+      "max_parameters": 150000,
+      "description": "Reused B03 Slp8TinyFcn architecture control candidate."
+    },
+    {
+      "name": "slp8_small_unet_v0.1",
+      "version": "slp8_small_unet_v0.1",
+      "max_parameters": 150000,
+      "description": "New B04 SmallUNet with explicit bilinear upsample to skip spatial size."
+    }
+  ],
+  "training": {
+    "seed": 42,
+    "device": "cuda",
+    "batch_size": 16,
+    "max_epochs": 20,
+    "min_epochs": 5,
+    "early_stopping": {
+      "monitor": "val_loss",
+      "mode": "min",
+      "patience": 4,
+      "min_delta": 0.0
+    },
+    "optimizer": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "scheduler": "none",
+    "augmentation": "none",
+    "num_workers": 0,
+    "gradient_clip_norm": null,
+    "amp_enabled": false
+  },
+  "dataset": {
+    "image_shape": [192, 84],
+    "n_classes": 9,
+    "pressure_dtype": "float64",
+    "label_dtype": "int64",
+    "raw_passthrough": {
+      "method": "raw_passthrough_with_minmax_reference",
+      "fit_split": "train",
+      "epsilon": 1e-12,
+      "raw_semantics": "raw_pmarray_response"
+    },
+    "test_access_policy": {
+      "load_test_default": false,
+      "load_test_in_mini": false,
+      "test_access_in_mini": "denied"
+    },
+    "class_weight_formula": {
+      "version": "slp8_class_weights_v0.1",
+      "source_split": "train",
+      "raw_weight": "1 / sqrt(pixel_ratio[c])",
+      "normalization": "weight[c] = raw_weight[c] / mean(raw_weight)",
+      "clip": [0.25, 4.0]
+    }
+  },
+  "metrics": {
+    "fixed_foreground_class_ids": [1, 2, 3, 4, 5, 6, 7, 8],
+    "fixed_foreground_macro_does_not_skip_empty_classes": true,
+    "compute_per_region": true,
+    "compute_per_posture": true,
+    "compute_per_subject": true,
+    "compute_centroid_error": true,
+    "centroid_normalization": "diagonal",
+    "centroid_max_when_gt_present_pred_missing": 1.0,
+    "compute_confusion_matrix": true
+  },
+  "resource_budget": {
+    "max_wall_minutes_per_candidate": 45,
+    "max_total_wall_minutes": 90,
+    "max_peak_cuda_mb": 12288,
+    "candidates_serial": true
+  },
+  "feasibility_gate": {
+    "b02_reference_val_fixed_iou": 0.205644,
+    "min_candidates_feasible": 0,
+    "decision_rules": {
+      "0_feasible": "MINI_NOT_FEASIBLE",
+      "1_feasible": "keep the single feasible candidate",
+      "2_feasible": "keep both feasible candidates; B04 does not pick a champion"
+    }
+  },
+  "test_access_policy": {
+    "load_test_default": false,
+    "this_run_loads_test": false,
+    "test_access_in_this_run": "denied"
+  },
+  "expected_artifacts": [
+    "status.json",
+    "manifest.json",
+    "resolved_config.json",
+    "input_manifest_hashes.json",
+    "environment.json",
+    "epoch_metrics.csv",
+    "metrics_summary.json",
+    "metrics_by_region.csv",
+    "metrics_by_subject.csv",
+    "metrics_by_posture.csv",
+    "centroid_errors.csv",
+    "worst_subject.json",
+    "confusion_matrix.csv",
+    "predictions_manifest.csv",
+    "candidate_decision.json",
+    "checkpoints/<candidate>/best.pt",
+    "checkpoints/<candidate>/last.pt",
+    "reload_consistency.json",
+    "logs/run.log",
+    "DONE.json or FAILED.json"
+  ],
+  "real_run_authorization": {
+    "required_flag": "--run-authorized",
+    "default_behavior": "refuse to read B01 freeze tables without --run-authorized",
+    "this_protocol": "this task does NOT exercise the real B01 path"
+  }
+}
