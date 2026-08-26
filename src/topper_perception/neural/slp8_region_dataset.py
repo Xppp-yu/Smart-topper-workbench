@@ -93,7 +93,13 @@ class NormalizationError(Slp8RegionDatasetError):
 
 @dataclass(frozen=True, slots=True)
 class NormalizationStats:
-    """TRAIN-only normalization statistics from B01 freeze."""
+    """TRAIN-only normalization statistics from B01 freeze.
+
+    For method="raw_passthrough_with_minmax_reference", the global_min/max/
+    mean/std are recorded only as TRAIN-only reference values and are NOT
+    applied as a Min-Max transformation. The raw pressure values are passed
+    through unchanged (only the dtype and channel dimension are modified).
+    """
 
     global_min: float
     global_max: float
@@ -106,23 +112,55 @@ class NormalizationStats:
 
     @classmethod
     def from_b01_stats(cls, stats: dict[str, Any]) -> "NormalizationStats":
-        """Create NormalizationStats from B01 normalization_stats.json dict."""
+        """Create NormalizationStats from B01 normalization_stats.json dict.
+
+        The B01 file structure is::
+
+            {
+                "stats": {
+                    "global_min": ...,
+                    "global_max": ...,
+                    "global_mean": ...,
+                    "global_std": ...,
+                    "method": "...",
+                    "raw_semantics": "...",
+                    "fit_split": "...",
+                    "epsilon": ...,
+                },
+                "stats_sha256": "...",
+            }
+
+        For convenience, if the ``global_min`` key is found at the top level
+        (e.g. unit tests passing a flattened dict), the same flat dict is
+        accepted as a fallback.
+        """
+        if "stats" in stats and isinstance(stats["stats"], dict):
+            data = stats["stats"]
+        else:
+            data = stats
+
         return cls(
-            global_min=float(stats["global_min"]),
-            global_max=float(stats["global_max"]),
-            global_mean=float(stats["global_mean"]),
-            global_std=float(stats["global_std"]),
-            method=str(stats["method"]),
-            raw_semantics=str(stats.get("raw_semantics", "raw_pmarray_response")),
-            fit_split=str(stats["fit_split"]),
-            epsilon=float(stats.get("epsilon", 1e-12)),
+            global_min=float(data["global_min"]),
+            global_max=float(data["global_max"]),
+            global_mean=float(data["global_mean"]),
+            global_std=float(data["global_std"]),
+            method=str(data["method"]),
+            raw_semantics=str(data.get("raw_semantics", "raw_pmarray_response")),
+            fit_split=str(data["fit_split"]),
+            epsilon=float(data.get("epsilon", 1e-12)),
         )
 
     def apply(self, pressure: np.ndarray) -> np.ndarray:
-        """Apply normalization to raw pressure array.
+        """Apply raw-passthrough normalization to a pressure array.
 
-        B03 uses raw_passthrough_with_minmax_reference:
-        output = (input - min) / (max - min + epsilon)
+        Method ``raw_passthrough_with_minmax_reference`` means:
+        * Raw pressure values are kept unchanged.
+        * global_min / global_max / global_mean / global_std are recorded
+          as TRAIN-only reference values and are NOT applied as a
+          Min-Max transformation.
+        * Only dtype is cast (float64 -> float32) and channel dimension
+          is added (192, 84) -> (1, 192, 84).
+        * raw semantics remain ``raw_pmarray_response`` (NOT kPa).
 
         Parameters
         ----------
@@ -132,32 +170,37 @@ class NormalizationStats:
         Returns
         -------
         np.ndarray
-            Normalized pressure of shape (1, 192, 84), dtype float32.
+            Pressure of shape (1, 192, 84), dtype float32, values equal to
+            the input float32 cast.
         """
         if self.method != "raw_passthrough_with_minmax_reference":
             raise NormalizationError(
                 f"Unsupported normalization method: {self.method!r}. "
                 f"Expected 'raw_passthrough_with_minmax_reference'."
             )
+        if self.raw_semantics != "raw_pmarray_response":
+            raise NormalizationError(
+                f"raw_semantics must be 'raw_pmarray_response', got {self.raw_semantics!r}"
+            )
+        if self.fit_split != "train":
+            raise NormalizationError(
+                f"Normalization fit_split must be 'train', got {self.fit_split!r}"
+            )
 
-        # Compute range with epsilon to avoid division by zero
-        pmin = float(self.global_min)
-        pmax = float(self.global_max)
-        epsilon = self.epsilon
-        pmin_val = min(pmin, pmax)  # Handle case where min == max
-        pmax_val = max(pmin, pmax)
-        value_range = max(pmax_val - pmin_val, epsilon)
+        if pressure.dtype != np.float64:
+            raise NormalizationError(
+                f"Input pressure dtype must be float64, got {pressure.dtype}"
+            )
+        if pressure.shape != PRESSURE_SHAPE:
+            raise NormalizationError(
+                f"Input pressure shape must be {PRESSURE_SHAPE}, got {pressure.shape}"
+            )
 
-        # Normalize: (x - min) / (max - min + epsilon)
-        normalized = (pressure - pmin_val) / value_range
-
-        # Convert to float32 and add channel dimension
-        normalized = normalized.astype(np.float32)
-
-        # Add channel dimension: (192, 84) -> (1, 192, 84)
-        normalized = np.expand_dims(normalized, axis=0)
-
-        return normalized
+        # Raw passthrough: values unchanged, only dtype and channel dimension
+        # are transformed.
+        casted = pressure.astype(np.float32)
+        with_channel = np.expand_dims(casted, axis=0)
+        return with_channel
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +471,9 @@ def build_smoke_dataset(
     # Load B01 freeze tables (TEST access is blocked by default)
     freeze = load_b01_freeze_tables(b01_freeze_dir, load_test=False)
 
-    if freeze.test_rows is not None:
+    # Verify TEST was not loaded by checking the underlying attribute
+    # (freeze.test_rows is a property that raises TestLeakageError).
+    if freeze._test_rows is not None:  # noqa: SLF001
         raise Slp8TestDataAccessError(
             "TEST rows should not be present when load_test=False"
         )

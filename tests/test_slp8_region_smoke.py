@@ -7,12 +7,14 @@ Tests cover:
 4. Success writes DONE but not FAILED
 5. Checkpoint weights_only-safe reload
 6. Resume parameter change
-7. Reload prediction consistency
+7. Reload prediction consistency (must do real comparison, not hardcoded True)
+8. Config validation fail-closed
 """
 
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,12 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
+
+# Ensure scripts is importable
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 from topper_perception.evaluation.slp_pressure_metrics import (
     compute_fixed_class_macro_metrics,
@@ -45,6 +53,7 @@ from topper_perception.neural.slp8_region_smoke import (
     DEFAULT_SEED,
     DEFAULT_WEIGHT_DECAY,
     SmokeConfig,
+    check_reload_consistency,
     compute_smoke_metrics,
     set_seed,
     training_step,
@@ -97,18 +106,11 @@ def sample_batch():
 
 
 class TestSmokeConfig:
-    """Test SmokeConfig dataclass."""
+    """Test SmokeConfig dataclass.
 
-    def test_default_config(self):
-        config = SmokeConfig()
-
-        assert config.seed == DEFAULT_SEED
-        assert config.batch_size == DEFAULT_BATCH_SIZE
-        assert config.initial_epochs == DEFAULT_INITIAL_EPOCHS
-        assert config.resume_epochs == DEFAULT_RESUME_EPOCHS
-        assert config.lr == DEFAULT_LR
-        assert config.weight_decay == DEFAULT_WEIGHT_DECAY
-        assert config.device == "cpu"
+    All fields are required; there is no default-based masking of missing
+    configuration.
+    """
 
     def test_custom_config(self):
         config = SmokeConfig(
@@ -117,7 +119,8 @@ class TestSmokeConfig:
             initial_epochs=2,
             resume_epochs=1,
             lr=0.0001,
-            device="cuda",
+            weight_decay=0.0001,
+            device="cpu",
         )
 
         assert config.seed == 123
@@ -125,15 +128,23 @@ class TestSmokeConfig:
         assert config.initial_epochs == 2
         assert config.resume_epochs == 1
         assert config.lr == 0.0001
-        assert config.device == "cuda"
+        assert config.device == "cpu"
 
     def test_config_as_dict(self):
-        config = SmokeConfig()
+        config = SmokeConfig(
+            seed=42,
+            batch_size=4,
+            initial_epochs=1,
+            resume_epochs=1,
+            lr=0.001,
+            weight_decay=0.0001,
+            device="cpu",
+        )
         d = config.as_dict()
 
         assert isinstance(d, dict)
-        assert d["seed"] == DEFAULT_SEED
-        assert d["batch_size"] == DEFAULT_BATCH_SIZE
+        assert d["seed"] == 42
+        assert d["batch_size"] == 4
 
 
 # ---------------------------------------------------------------------------
@@ -542,3 +553,313 @@ class TestSmokeVerification:
 
         assert result.success is False
         assert len(result.verification_failures) == 2
+
+
+# ---------------------------------------------------------------------------
+# Test: Reload consistency (real comparison, no hardcoded True)
+# ---------------------------------------------------------------------------
+
+
+class TestReloadConsistency:
+    """Test that reload_consistent is the result of a real comparison."""
+
+    def test_reload_consistent_same_model(self):
+        """A model loaded from a checkpoint should produce identical logits."""
+        model = Slp8TinyFcn(n_classes=N_CLASSES)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_path = Path(tmpdir) / "test.pt"
+            payload = build_payload(
+                model=model,
+                optimizer=optimizer,
+                epoch=1,
+                model_config={"test": "config"},
+                seed=42,
+            )
+            save_checkpoint(ckpt_path, payload)
+
+            # Load into fresh model
+            fresh = Slp8TinyFcn(n_classes=N_CLASSES)
+            loaded = load_checkpoint(ckpt_path)
+            validate_checkpoint(loaded)
+            fresh.load_state_dict(loaded["model_state_dict"])
+            fresh.eval()
+
+            # Use same input
+            reference_batch = {
+                "pressure": torch.randn(2, 1, 192, 84, dtype=torch.float32),
+            }
+
+            result = check_reload_consistency(model, fresh, reference_batch)
+
+            assert result["consistent"] is True
+            assert result["max_abs_diff"] < 1e-5
+
+    def test_reload_inconsistent_modified_model(self):
+        """A model with different weights should fail the consistency check."""
+        model = Slp8TinyFcn(n_classes=N_CLASSES)
+        # Create a "fresh" model and modify one parameter
+        fresh = Slp8TinyFcn(n_classes=N_CLASSES)
+        with torch.no_grad():
+            fresh.conv1.weight.fill_(99.0)
+
+        reference_batch = {
+            "pressure": torch.randn(2, 1, 192, 84, dtype=torch.float32),
+        }
+
+        result = check_reload_consistency(model, fresh, reference_batch)
+
+        # Consistency must fail
+        assert result["consistent"] is False
+        assert result["max_abs_diff"] > 1.0
+
+    def test_runner_does_not_hardcode_reload_true(self):
+        """The smoke runner must not use a hardcoded ``reload_consistent = True``.
+
+        The test checks that the run_smoke_test function actually performs
+        a comparison and only sets reload_consistent=True when the result is
+        consistent.  If reload_consistent is hardcoded, this test would fail
+        because a freshly-modified model should cause the comparison to fail.
+        """
+        # This is verified structurally: the smoke.py source must not
+        # contain the pattern "reload_consistent = True" as a hardcoded
+        # assignment.
+        smoke_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/topper_perception/neural/slp8_region_smoke.py"
+        )
+        source = smoke_path.read_text(encoding="utf-8")
+        # Strip docstring/comments by splitting on '#'
+        code_lines = []
+        for line in source.splitlines():
+            stripped = line.split("#", 1)[0]
+            code_lines.append(stripped)
+        code = "\n".join(code_lines)
+
+        forbidden = [
+            "reload_consistent = True",
+            "reload_consistent = (",
+            "reload_consistent =  True",
+        ]
+        for pattern in forbidden:
+            assert pattern not in code, (
+                f"Runner has hardcoded reload_consistent = True: {pattern!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Test: Config validation
+# ---------------------------------------------------------------------------
+
+
+class TestConfigValidation:
+    """Test fail-closed config validation in the CLI runner."""
+
+    def test_valid_config_passes(self):
+        from scripts.run_slp8_region_smoke import _validate_config
+
+        cfg = {
+            "config_version": "slp8_pm_region_smoke_v0.1",
+            "task_id": "TASK-SLP-B03-PM-ONLY-REGION-SMOKE-v0.1",
+            "smoke_version": "slp8_region_smoke_v0.1",
+            "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "raw_semantics": "raw_pmarray_response",
+            "model": {
+                "n_classes": 9,
+                "input_shape": [192, 84],
+            },
+            "training": {
+                "seed": 42,
+                "device": "cpu",
+                "batch_size": 4,
+                "lr": 0.001,
+                "weight_decay": 0.0001,
+                "epochs": {"initial": 1, "resume": 1},
+            },
+            "dataset": {
+                "smoke_subset": {
+                    "n_train_subjects": 2,
+                    "n_val_subjects": 1,
+                    "seed": 42,
+                },
+                "normalization": {
+                    "method": "raw_passthrough_with_minmax_reference",
+                    "fit_split": "train",
+                    "raw_semantics": "raw_pmarray_response",
+                },
+            },
+        }
+
+        # Should not raise
+        _validate_config(cfg)
+
+    def test_wrong_n_classes_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        cfg["model"]["n_classes"] = 5
+
+        with pytest.raises(ConfigValidationError, match="n_classes must be 9"):
+            _validate_config(cfg)
+
+    def test_invalid_device_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        cfg["training"]["device"] = "tpu"
+
+        with pytest.raises(ConfigValidationError, match="device must be one of"):
+            _validate_config(cfg)
+
+    def test_wrong_n_train_subjects_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        cfg["dataset"]["smoke_subset"]["n_train_subjects"] = 5
+
+        with pytest.raises(ConfigValidationError, match="n_train_subjects"):
+            _validate_config(cfg)
+
+    def test_wrong_n_val_subjects_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        cfg["dataset"]["smoke_subset"]["n_val_subjects"] = 0
+
+        with pytest.raises(ConfigValidationError, match="n_val_subjects"):
+            _validate_config(cfg)
+
+    def test_missing_field_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        del cfg["training"]["seed"]
+
+        with pytest.raises(ConfigValidationError, match="seed"):
+            _validate_config(cfg)
+
+    def test_wrong_type_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        cfg["training"]["batch_size"] = "4"  # Should be int
+
+        with pytest.raises(ConfigValidationError, match="batch_size"):
+            _validate_config(cfg)
+
+    def test_zero_epochs_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        cfg["training"]["epochs"]["initial"] = 0
+
+        with pytest.raises(ConfigValidationError, match="initial"):
+            _validate_config(cfg)
+
+    def test_wrong_provenance_rejected(self):
+        from scripts.run_slp8_region_smoke import (
+            _validate_config,
+            ConfigValidationError,
+        )
+
+        cfg = self._build_valid_config()
+        cfg["provenance"] = "OTHER_PROVENANCE"
+
+        with pytest.raises(ConfigValidationError, match="provenance"):
+            _validate_config(cfg)
+
+    def _build_valid_config(self) -> dict[str, Any]:
+        return {
+            "config_version": "slp8_pm_region_smoke_v0.1",
+            "task_id": "TASK-SLP-B03-PM-ONLY-REGION-SMOKE-v0.1",
+            "smoke_version": "slp8_region_smoke_v0.1",
+            "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "raw_semantics": "raw_pmarray_response",
+            "model": {
+                "n_classes": 9,
+                "input_shape": [192, 84],
+            },
+            "training": {
+                "seed": 42,
+                "device": "cpu",
+                "batch_size": 4,
+                "lr": 0.001,
+                "weight_decay": 0.0001,
+                "epochs": {"initial": 1, "resume": 1},
+            },
+            "dataset": {
+                "smoke_subset": {
+                    "n_train_subjects": 2,
+                    "n_val_subjects": 1,
+                    "seed": 42,
+                },
+                "normalization": {
+                    "method": "raw_passthrough_with_minmax_reference",
+                    "fit_split": "train",
+                    "raw_semantics": "raw_pmarray_response",
+                },
+            },
+        }
+
+
+# ---------------------------------------------------------------------------
+# Test: Real config file integration
+# ---------------------------------------------------------------------------
+
+
+class TestRealConfigIntegration:
+    """Verify the committed config file passes validation and parses correctly."""
+
+    def test_committed_config_validates(self):
+        from scripts.run_slp8_region_smoke import _validate_config
+
+        config_path = (
+            Path(__file__).resolve().parents[1]
+            / "configs/experiments/slp8_pm_region_smoke_v0.1.json"
+        )
+        assert config_path.is_file(), f"committed config missing: {config_path}"
+
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        # Should not raise
+        _validate_config(cfg)
+
+    def test_committed_config_values(self):
+        """Parsed values must match the JSON exactly."""
+        from scripts.run_slp8_region_smoke import _build_smoke_config
+
+        config_path = (
+            Path(__file__).resolve().parents[1]
+            / "configs/experiments/slp8_pm_region_smoke_v0.1.json"
+        )
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+
+        smoke_config = _build_smoke_config(cfg, device_override="cpu")
+
+        assert smoke_config.seed == cfg["training"]["seed"]
+        assert smoke_config.batch_size == cfg["training"]["batch_size"]
+        assert smoke_config.initial_epochs == cfg["training"]["epochs"]["initial"]
+        assert smoke_config.resume_epochs == cfg["training"]["epochs"]["resume"]
+        assert smoke_config.lr == cfg["training"]["lr"]
+        assert smoke_config.weight_decay == cfg["training"]["weight_decay"]
+        assert smoke_config.device == "cpu"

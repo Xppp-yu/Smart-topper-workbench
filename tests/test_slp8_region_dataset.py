@@ -204,7 +204,13 @@ class TestConstants:
 
 
 class TestNormalizationStats:
-    """Test NormalizationStats."""
+    """Test NormalizationStats.
+
+    Method ``raw_passthrough_with_minmax_reference`` means raw values are
+    passed through unchanged; only the dtype and channel dimension are
+    modified.  The min/max are recorded only for reference and are NOT
+    applied as a Min-Max transformation.
+    """
 
     def test_from_b01_stats(self):
         stats_dict = {
@@ -224,29 +230,61 @@ class TestNormalizationStats:
         assert stats.global_min == 0.0
         assert stats.global_max == 100.0
 
-    def test_apply_normalization(self):
+    def test_apply_raw_passthrough(self):
         stats = NormalizationStats(
             global_min=0.0,
-            global_max=100.0,
-            global_mean=50.0,
-            global_std=25.0,
+            global_max=255.0,
+            global_mean=1.5698,
+            global_std=6.8229,
             method="raw_passthrough_with_minmax_reference",
             raw_semantics="raw_pmarray_response",
             fit_split="train",
             epsilon=1e-12,
         )
 
-        # Raw pressure (192, 84) float64
-        pressure = np.full((192, 84), 50.0, dtype=np.float64)
+        # Raw pressure (192, 84) float64 with arbitrary values
+        rng = np.random.default_rng(seed=42)
+        pressure = rng.random((192, 84)).astype(np.float64) * 200.0
 
-        # Normalized output (1, 192, 84) float32
+        # Apply normalization
         normalized = stats.apply(pressure)
 
+        # Output must have shape (1, 192, 84) and dtype float32
         assert normalized.shape == (1, 192, 84)
         assert normalized.dtype == np.float32
-        assert np.allclose(normalized, 0.5)
 
-    def test_apply_normalization_edge_cases(self):
+        # Values must be equal to float32 cast of input (raw passthrough)
+        expected = pressure.astype(np.float32)
+        assert np.array_equal(normalized[0], expected)
+        # Not Min-Max scaled
+        assert not np.allclose(normalized.min(), 0.0)
+        assert not np.allclose(normalized.max(), 1.0)
+
+    def test_apply_raw_passthrough_no_minmax(self):
+        """Min/Max values should NOT be transformed to [0, 1] range."""
+        stats = NormalizationStats(
+            global_min=0.0,
+            global_max=255.0,
+            global_mean=1.0,
+            global_std=1.0,
+            method="raw_passthrough_with_minmax_reference",
+            raw_semantics="raw_pmarray_response",
+            fit_split="train",
+            epsilon=1e-12,
+        )
+
+        # Test specific values: 50 should remain 50
+        pressure_50 = np.full((192, 84), 50.0, dtype=np.float64)
+        normalized_50 = stats.apply(pressure_50)
+        assert np.allclose(normalized_50[0], 50.0)
+
+        # 100 should remain 100
+        pressure_100 = np.full((192, 84), 100.0, dtype=np.float64)
+        normalized_100 = stats.apply(pressure_100)
+        assert np.allclose(normalized_100[0], 100.0)
+
+    def test_apply_dtype_check(self):
+        """Reject input with wrong dtype."""
         stats = NormalizationStats(
             global_min=0.0,
             global_max=100.0,
@@ -258,15 +296,79 @@ class TestNormalizationStats:
             epsilon=1e-12,
         )
 
-        # Test min value
-        pressure_min = np.zeros((192, 84), dtype=np.float64)
-        normalized_min = stats.apply(pressure_min)
-        assert np.allclose(normalized_min, 0.0)
+        # float32 input should be rejected (must be float64)
+        pressure = np.zeros((192, 84), dtype=np.float32)
+        with pytest.raises(Exception, match="dtype"):
+            stats.apply(pressure)
 
-        # Test max value
-        pressure_max = np.full((192, 84), 100.0, dtype=np.float64)
-        normalized_max = stats.apply(pressure_max)
-        assert np.allclose(normalized_max, 1.0)
+    def test_apply_shape_check(self):
+        """Reject input with wrong shape."""
+        stats = NormalizationStats(
+            global_min=0.0,
+            global_max=100.0,
+            global_mean=50.0,
+            global_std=25.0,
+            method="raw_passthrough_with_minmax_reference",
+            raw_semantics="raw_pmarray_response",
+            fit_split="train",
+            epsilon=1e-12,
+        )
+
+        # Wrong shape should be rejected
+        pressure = np.zeros((100, 100), dtype=np.float64)
+        with pytest.raises(Exception, match="shape"):
+            stats.apply(pressure)
+
+    def test_apply_wrong_method_rejected(self):
+        """Reject method other than raw_passthrough_with_minmax_reference."""
+        stats = NormalizationStats(
+            global_min=0.0,
+            global_max=100.0,
+            global_mean=50.0,
+            global_std=25.0,
+            method="min_max_normalization",
+            raw_semantics="raw_pmarray_response",
+            fit_split="train",
+            epsilon=1e-12,
+        )
+
+        pressure = np.zeros((192, 84), dtype=np.float64)
+        with pytest.raises(Exception, match="Unsupported normalization method"):
+            stats.apply(pressure)
+
+    def test_apply_wrong_raw_semantics_rejected(self):
+        """Reject non-raw_pmarray_response semantics."""
+        stats = NormalizationStats(
+            global_min=0.0,
+            global_max=100.0,
+            global_mean=50.0,
+            global_std=25.0,
+            method="raw_passthrough_with_minmax_reference",
+            raw_semantics="kPa",
+            fit_split="train",
+            epsilon=1e-12,
+        )
+
+        pressure = np.zeros((192, 84), dtype=np.float64)
+        with pytest.raises(Exception, match="raw_semantics"):
+            stats.apply(pressure)
+
+    def test_apply_wrong_fit_split_rejected(self):
+        """Reject normalization fit on val/test."""
+        stats = NormalizationStats(
+            global_min=0.0,
+            global_max=100.0,
+            global_mean=50.0,
+            global_std=25.0,
+            method="raw_passthrough_with_minmax_reference",
+            raw_semantics="raw_pmarray_response",
+            fit_split="val",
+            epsilon=1e-12,
+        )
+
+        pressure = np.zeros((192, 84), dtype=np.float64)
+        with pytest.raises(Exception, match="fit_split"):
+            stats.apply(pressure)
 
 
 # ---------------------------------------------------------------------------
