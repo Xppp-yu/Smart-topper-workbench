@@ -3,9 +3,10 @@
 **TASK-ID:** `TASK-SLP-B03-PM-ONLY-REGION-SMOKE-v0.1`
 **Stage:** S2-B03
 **日期:** 2026-08-27 (R03)
-**状态:** DONE — R03 收口完成
+**状态:** DONE_WITH_LIMITATIONS — 已通过 Codex Reviewer 独立验收
 **EXP-ID:** `EXP-SLP-B03-PM-REGION-SMOKE-20260827-R03`
 **R02 Commit:** `885b04a`
+**R03 Commit:** `8979c6f`
 
 ---
 
@@ -195,9 +196,9 @@ Header 用于防止不同 shape 但相同 byte 内容的碰撞。
 
 ### 下一步
 
-1. **Codex Reviewer 最终验收 R03**
-2. **可选：SLP Mini/Full Run**
-3. **可选：进入 S2-B04**
+1. **S2-B04 已解锁为 READY**
+2. 先冻结 Mini 协议、候选、指标、资源和停止条件
+3. 未经 Owner 授权，不直接运行 GPU Mini/Full 或读取 TEST
 
 ---
 
@@ -210,7 +211,7 @@ Header 用于防止不同 shape 但相同 byte 内容的碰撞。
 | B02 Merge | `ccbd539` ✅ |
 | R01 commit | `6219411` |
 | R02 commit | `885b04a` |
-| R03 commit | 见 HEAD |
+| R03 commit | `8979c6f` |
 | seed | 42 |
 | Python | 3.12.13 |
 | PyTorch | CPU |

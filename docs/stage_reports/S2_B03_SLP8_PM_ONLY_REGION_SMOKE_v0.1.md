@@ -3,10 +3,10 @@
 **TASK-ID:** `TASK-SLP-B03-PM-ONLY-REGION-SMOKE-v0.1`
 **Stage:** S2-B03
 **日期:** 2026-08-27 (R03)
-**状态:** DONE — R03 收口完成，全部测试通过且真实 CPU Smoke 已运行
+**状态:** DONE_WITH_LIMITATIONS — R03 已通过 Codex Reviewer 独立验收
 **EXP-ID:** `EXP-SLP-B03-PM-REGION-SMOKE-20260827-R03`
 **R02 Commit:** `885b04a`
-**R03 Commit:** 见 Git log（HEAD）
+**R03 Commit:** `8979c6f`
 
 ---
 
@@ -364,8 +364,8 @@ Input [N, 1, 192, 84]
 | Gate | 前置 | 状态 |
 |------|------|------|
 | S2-G03 | B03 Smoke DONE | ✅ 通过（R03） |
-| S2-G04 | B03 Reviewer ACCEPT | ⏳ 待 Codex Reviewer |
-| S2-G05 | SLP Mini Run | 可选 |
+| S2-G04 | B03 Reviewer ACCEPT | ✅ 通过（2026-08-27） |
+| S2-G05 | SLP B04 Mini 协议冻结与执行 | READY；须先冻结协议，不直接扩跑 |
 | S2-G06 | SLP Full Run | 可选 |
 
 ---
@@ -379,10 +379,21 @@ Input [N, 1, 192, 84]
 | B02 Merge | `ccbd539` ✅ |
 | R01 commit | `6219411` |
 | R02 commit | `885b04a` |
-| R03 commit | 见 HEAD |
+| R03 commit | `8979c6f` |
 
 ---
 
 **Report 版本:** v0.1-R03
 **生成时间:** 2026-08-27
 **维护者:** Mavis (MiniMax Code)
+
+---
+
+## 17. Codex Reviewer 最终验收
+
+- 独立测试：B03 定向 `108 passed`；neural/experiment infrastructure `112 passed`；B01/B02/pressure infrastructure `259 passed, 2 skipped`。
+- 独立真实运行：`EXP-SLP-B03-PM-REGION-SMOKE-20260827-REVIEW-R03`，CPU，TRAIN 90 / VAL 45 / TEST 0，`status=DONE`。
+- R03 与 Reviewer 运行的 270 行 `predictions_manifest.csv` 逐行一致；真实 sample ID、subject ID、label SHA-256、prediction SHA-256 均完整。
+- 两次运行的 loss 与 initial/resumed IoU 完全一致；独立 reload `consistent=true`、`max_abs_diff=0.0`。
+- 输出目录防覆盖通过，提交文件与运行产物中未发现本机绝对路径。
+- 验收结论：`ACCEPT / DONE_WITH_LIMITATIONS`。限制仍为 NOT_REVIEWED、非人工像素级 GT、danaLab uncover-only、raw PMarray response（非 kPa）、未读取 TEST、Smoke 不用于模型排名或产品结论。
