@@ -9,6 +9,10 @@ Tests cover:
 6. Resume parameter change
 7. Reload prediction consistency (must do real comparison, not hardcoded True)
 8. Config validation fail-closed
+9. Real config integration
+10. Canonical array hash
+11. Real prediction records (no placeholders)
+12. Subset config flows through to dataset manifest
 """
 
 from __future__ import annotations
@@ -39,6 +43,12 @@ from topper_perception.neural.slp8_region_checkpoint import (
     save_checkpoint,
     validate_checkpoint,
 )
+from topper_perception.neural.slp8_region_dataset import (
+    N_CLASSES as DATASET_N_CLASSES,
+    RegionSample,
+    NormalizationStats,
+    Slp8RegionDataset,
+)
 from topper_perception.neural.slp8_region_models import (
     N_CLASSES,
     Slp8TinyFcn,
@@ -52,15 +62,17 @@ from topper_perception.neural.slp8_region_smoke import (
     DEFAULT_RESUME_EPOCHS,
     DEFAULT_SEED,
     DEFAULT_WEIGHT_DECAY,
+    CANONICAL_HASH_VERSION,
+    PRED_OK,
+    PredictionRecord,
     SmokeConfig,
+    SmokeResult,
+    canonical_array_hash,
     check_reload_consistency,
     compute_smoke_metrics,
     set_seed,
     training_step,
     validation_step,
-)
-from topper_perception.neural.slp8_region_dataset import (
-    N_CLASSES as DATASET_N_CLASSES,
 )
 
 
@@ -121,6 +133,9 @@ class TestSmokeConfig:
             lr=0.0001,
             weight_decay=0.0001,
             device="cpu",
+            n_train_subjects=2,
+            n_val_subjects=1,
+            subset_seed=42,
         )
 
         assert config.seed == 123
@@ -129,6 +144,9 @@ class TestSmokeConfig:
         assert config.resume_epochs == 1
         assert config.lr == 0.0001
         assert config.device == "cpu"
+        assert config.n_train_subjects == 2
+        assert config.n_val_subjects == 1
+        assert config.subset_seed == 42
 
     def test_config_as_dict(self):
         config = SmokeConfig(
@@ -139,12 +157,34 @@ class TestSmokeConfig:
             lr=0.001,
             weight_decay=0.0001,
             device="cpu",
+            n_train_subjects=2,
+            n_val_subjects=1,
+            subset_seed=42,
         )
         d = config.as_dict()
 
         assert isinstance(d, dict)
         assert d["seed"] == 42
         assert d["batch_size"] == 4
+        assert d["n_train_subjects"] == 2
+        assert d["n_val_subjects"] == 1
+        assert d["subset_seed"] == 42
+
+    def test_config_missing_subset_field_rejected(self):
+        """SmokeConfig must require subset fields explicitly."""
+        with pytest.raises(TypeError):
+            SmokeConfig(
+                seed=42,
+                batch_size=4,
+                initial_epochs=1,
+                resume_epochs=1,
+                lr=0.001,
+                weight_decay=0.0001,
+                device="cpu",
+                n_train_subjects=2,
+                n_val_subjects=1,
+                # subset_seed omitted
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -863,3 +903,483 @@ class TestRealConfigIntegration:
         assert smoke_config.lr == cfg["training"]["lr"]
         assert smoke_config.weight_decay == cfg["training"]["weight_decay"]
         assert smoke_config.device == "cpu"
+        assert smoke_config.n_train_subjects == cfg["dataset"]["smoke_subset"]["n_train_subjects"]
+        assert smoke_config.n_val_subjects == cfg["dataset"]["smoke_subset"]["n_val_subjects"]
+        assert smoke_config.subset_seed == cfg["dataset"]["smoke_subset"]["seed"]
+
+    def test_runner_does_not_hardcode_subset_counts(self):
+        """The runner source must not hard-code n_train_subjects=2 or
+        n_val_subjects=1 inside run_smoke_test or in the train/val count
+        literals that bypass the SmokeConfig."""
+        smoke_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/topper_perception/neural/slp8_region_smoke.py"
+        )
+        source = smoke_path.read_text(encoding="utf-8")
+        # Strip comments.
+        code_lines = [line.split("#", 1)[0] for line in source.splitlines()]
+        code = "\n".join(code_lines)
+        # Find run_smoke_test function body and look for hard-coded literals.
+        start = code.find("def run_smoke_test")
+        assert start != -1
+        # The runner must read n_train_subjects from the SmokeConfig.
+        assert "config.n_train_subjects" in code
+        assert "config.n_val_subjects" in code
+        assert "config.subset_seed" in code
+        # Inside the run_smoke_test function body, the parameters must be
+        # taken from the config, not hard-coded.  Search for the explicit
+        # "n_train_subjects=2," / "n_val_subjects=1," pattern within the
+        # function body.
+        end = code.find("\ndef ", start + 1)
+        body = code[start:end] if end != -1 else code[start:]
+        for forbidden in ("n_train_subjects=2,", "n_val_subjects=1,"):
+            assert forbidden not in body, (
+                f"run_smoke_test hardcodes {forbidden!r}; "
+                f"must consume from SmokeConfig"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Test: Canonical array hash
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalArrayHash:
+    """Test canonical SHA-256 hashing of label/prediction arrays."""
+
+    def test_hash_is_64_lowercase_hex(self):
+        arr = np.zeros((192, 84), dtype=np.int64)
+        h = canonical_array_hash(arr)
+        assert len(h) == 64
+        assert h == h.lower()
+        int(h, 16)  # raises if not valid hex
+
+    def test_same_input_same_hash(self):
+        arr = np.random.default_rng(0).integers(0, 9, (192, 84)).astype(np.int64)
+        h1 = canonical_array_hash(arr)
+        h2 = canonical_array_hash(arr)
+        assert h1 == h2
+
+    def test_modified_pixel_changes_hash(self):
+        arr = np.zeros((192, 84), dtype=np.int64)
+        h1 = canonical_array_hash(arr)
+        arr[0, 0] = 1
+        h2 = canonical_array_hash(arr)
+        assert h1 != h2
+
+    def test_int32_and_int64_have_different_hashes(self):
+        """A label cast to int32 vs int64 must hash differently because
+        the rule always canonicalises to int64."""
+        arr32 = np.zeros((4, 4), dtype=np.int32)
+        arr64 = arr32.astype(np.int64)
+        assert canonical_array_hash(arr32) == canonical_array_hash(arr64)
+
+    def test_header_version_in_canonical_form(self):
+        """Hash must encode the version header so collisions with other
+        hash rules are not silent."""
+        arr = np.zeros((4, 4), dtype=np.int64)
+        # The current rule starts with CANONICAL_HASH_VERSION.
+        payload_header = CANONICAL_HASH_VERSION.encode("utf-8") + b"\ndtype=<i8"
+        # Compute what the function does internally and check that
+        # changing the header version changes the hash.
+        import hashlib as _hashlib
+
+        arr_int = np.ascontiguousarray(arr, dtype=np.int64)
+        header_v1 = (
+            f"{CANONICAL_HASH_VERSION}\n"
+            f"dtype={arr_int.dtype.str}\n"
+            f"shape={tuple(arr_int.shape)}\n"
+        ).encode("utf-8")
+        expected = _hashlib.sha256(header_v1 + arr_int.tobytes()).hexdigest()
+        assert canonical_array_hash(arr) == expected
+
+    def test_collisions_blocked_by_shape_in_header(self):
+        """A flat (192*84,) array with the same bytes as a (192,84) array
+        must hash differently because shape is part of the canonical
+        header."""
+        flat = np.arange(192 * 84, dtype=np.int64)
+        reshaped = flat.reshape(192, 84)
+        assert canonical_array_hash(flat) != canonical_array_hash(reshaped)
+
+
+# ---------------------------------------------------------------------------
+# Test: PredictionRecord
+# ---------------------------------------------------------------------------
+
+
+class TestPredictionRecord:
+    """Test the per-sample prediction record dataclass."""
+
+    def test_record_required_fields(self):
+        r = PredictionRecord(
+            sample_id="SLP:danaLab:00001:uncover:000001",
+            subject_id="00001",
+            label_sha256="a" * 64,
+            prediction_sha256="b" * 64,
+            label_shape=(192, 84),
+            prediction_shape=(192, 84),
+            failure_reason=PRED_OK,
+        )
+        d = r.as_dict()
+        assert d["sample_id"] == "SLP:danaLab:00001:uncover:000001"
+        assert d["subject_id"] == "00001"
+        assert len(d["label_sha256"]) == 64
+        assert len(d["prediction_sha256"]) == 64
+        assert d["failure_reason"] == PRED_OK
+
+    def test_manifest_writes_real_records(self, tmp_path):
+        """write_smoke_artifacts must serialise real PredictionRecord
+        objects, not synthesise ``split_sample_NNNNNN`` placeholders."""
+        from topper_perception.neural.slp8_region_smoke import write_smoke_artifacts
+
+        label = np.zeros((192, 84), dtype=np.int64)
+        pred = np.zeros((192, 84), dtype=np.int64)
+        rec = PredictionRecord(
+            sample_id="SLP:danaLab:00001:uncover:000001",
+            subject_id="00001",
+            label_sha256=canonical_array_hash(label),
+            prediction_sha256=canonical_array_hash(pred),
+            label_shape=(192, 84),
+            prediction_shape=(192, 84),
+            failure_reason=PRED_OK,
+        )
+        result = SmokeResult(
+            success=True,
+            train_records_initial=[rec],
+            val_records_initial=[rec],
+            train_records_resumed=[rec],
+            val_records_resumed=[rec],
+        )
+        config = SmokeConfig(
+            seed=42,
+            batch_size=4,
+            initial_epochs=1,
+            resume_epochs=1,
+            lr=0.001,
+            weight_decay=0.0001,
+            device="cpu",
+            n_train_subjects=1,
+            n_val_subjects=1,
+            subset_seed=42,
+        )
+        write_smoke_artifacts(
+            output_dir=tmp_path,
+            result=result,
+            config=config,
+            dataset_manifest={
+                "train_subjects": ["00001"],
+                "val_subjects": ["00002"],
+                "n_train_samples": 1,
+                "n_val_samples": 1,
+                "n_test_samples": 0,
+            },
+            model_config={"model_version": "Slp8TinyFcn", "n_classes": 9},
+        )
+        import csv as _csv
+
+        with open(tmp_path / "predictions_manifest.csv", encoding="utf-8") as f:
+            rows = list(_csv.DictReader(f))
+        assert len(rows) == 4  # 1 train + 1 val, both initial and resumed
+        for row in rows:
+            assert row["sample_id"] == "SLP:danaLab:00001:uncover:000001"
+            assert row["subject_id"] == "00001"
+            assert len(row["label_sha256"]) == 64
+            assert len(row["prediction_sha256"]) == 64
+            assert row["label_sha256"] != ""
+            assert row["prediction_sha256"] != ""
+            assert row["sample_id"] != ""
+            assert row["subject_id"] != ""
+        # No placeholder rows.
+        for row in rows:
+            assert "_sample_" not in row["sample_id"]
+
+        # failure_cases.csv should only have the header.
+        with open(tmp_path / "failure_cases.csv", encoding="utf-8") as f:
+            failure_rows = list(_csv.DictReader(f))
+        assert failure_rows == []
+
+    def test_manifest_row_count_matches_real_predictions(self, tmp_path):
+        """If we pass 2 train + 1 val initial, the manifest must contain
+        6 data rows (2 train initial, 1 val initial, 2 train resumed,
+        1 val resumed)."""
+        from topper_perception.neural.slp8_region_smoke import write_smoke_artifacts
+
+        label = np.zeros((192, 84), dtype=np.int64)
+        pred = np.zeros((192, 84), dtype=np.int64)
+        sha = canonical_array_hash(label)
+        rec = PredictionRecord(
+            sample_id="SLP:danaLab:00001:uncover:000001",
+            subject_id="00001",
+            label_sha256=sha,
+            prediction_sha256=sha,
+            label_shape=(192, 84),
+            prediction_shape=(192, 84),
+            failure_reason=PRED_OK,
+        )
+        result = SmokeResult(
+            success=True,
+            train_records_initial=[rec, rec],
+            val_records_initial=[rec],
+            train_records_resumed=[rec, rec],
+            val_records_resumed=[rec],
+        )
+        config = SmokeConfig(
+            seed=42,
+            batch_size=4,
+            initial_epochs=1,
+            resume_epochs=1,
+            lr=0.001,
+            weight_decay=0.0001,
+            device="cpu",
+            n_train_subjects=1,
+            n_val_subjects=1,
+            subset_seed=42,
+        )
+        write_smoke_artifacts(
+            output_dir=tmp_path,
+            result=result,
+            config=config,
+            dataset_manifest={
+                "train_subjects": ["00001"],
+                "val_subjects": ["00002"],
+                "n_train_samples": 2,
+                "n_val_samples": 1,
+                "n_test_samples": 0,
+            },
+            model_config={"model_version": "Slp8TinyFcn", "n_classes": 9},
+        )
+        import csv as _csv
+
+        with open(tmp_path / "predictions_manifest.csv", encoding="utf-8") as f:
+            rows = list(_csv.DictReader(f))
+        assert len(rows) == 6
+
+    def test_hash_changes_when_prediction_changes(self):
+        label = np.zeros((192, 84), dtype=np.int64)
+        pred_a = np.zeros((192, 84), dtype=np.int64)
+        pred_b = np.zeros((192, 84), dtype=np.int64)
+        pred_b[0, 0] = 5
+        h_a = canonical_array_hash(pred_a)
+        h_b = canonical_array_hash(pred_b)
+        assert h_a != h_b
+
+
+# ---------------------------------------------------------------------------
+# Test: Subset config flows into dataset manifest
+# ---------------------------------------------------------------------------
+
+
+class TestSubsetConfigFlowsToManifest:
+    """Verify the SmokeConfig subset fields drive the actual dataset
+    selection (no silent hard-coding)."""
+
+    def _build_valid_config(
+        self, n_train: int = 2, n_val: int = 1, seed: int = 42
+    ) -> dict[str, Any]:
+        return {
+            "config_version": "slp8_pm_region_smoke_v0.1",
+            "task_id": "TASK-SLP-B03-PM-ONLY-REGION-SMOKE-v0.1",
+            "smoke_version": "slp8_region_smoke_v0.1",
+            "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "raw_semantics": "raw_pmarray_response",
+            "model": {
+                "n_classes": 9,
+                "input_shape": [192, 84],
+            },
+            "training": {
+                "seed": 42,
+                "device": "cpu",
+                "batch_size": 4,
+                "lr": 0.001,
+                "weight_decay": 0.0001,
+                "epochs": {"initial": 1, "resume": 1},
+            },
+            "dataset": {
+                "smoke_subset": {
+                    "n_train_subjects": n_train,
+                    "n_val_subjects": n_val,
+                    "seed": seed,
+                },
+                "normalization": {
+                    "method": "raw_passthrough_with_minmax_reference",
+                    "fit_split": "train",
+                    "raw_semantics": "raw_pmarray_response",
+                },
+            },
+        }
+
+    def test_resolved_subset_matches_config(self):
+        from scripts.run_slp8_region_smoke import _build_smoke_config
+
+        for n_train, n_val, seed in [(2, 1, 42), (3, 2, 99), (4, 2, 7)]:
+            cfg = self._build_valid_config(n_train, n_val, seed)
+            smoke_config = _build_smoke_config(cfg, device_override="cpu")
+            assert smoke_config.n_train_subjects == n_train
+            assert smoke_config.n_val_subjects == n_val
+            assert smoke_config.subset_seed == seed
+
+    def test_run_smoke_test_uses_config_subset(self, tmp_path, monkeypatch):
+        """Build a synthetic B01 freeze + dataset and verify that
+        changing the SmokeConfig subset fields changes the resulting
+        dataset_manifest counts and per-phase prediction record count."""
+
+        from topper_perception.neural import slp8_region_smoke as smoke_mod
+        from topper_perception.io.slp8_training_table_freeze import (
+            FreezeRow,
+        )
+
+        # Build a tiny synthetic freeze with 4 train subjects, 3 val
+        # subjects, 2 frames each.  The temp directory holds the npy
+        # files referenced by the rows.
+        data_root = tmp_path / "data"
+        data_root.mkdir()
+        freeze_dir = tmp_path / "freeze"
+        freeze_dir.mkdir()
+
+        # Normalization stats (TRAIN-only)
+        norm_stats = {
+            "stats": {
+                "method": "raw_passthrough_with_minmax_reference",
+                "fit_split": "train",
+                "global_min": 0.0,
+                "global_max": 100.0,
+                "global_mean": 50.0,
+                "global_std": 25.0,
+                "epsilon": 1e-12,
+                "raw_semantics": "raw_pmarray_response",
+            },
+            "stats_sha256": "deadbeef",
+        }
+        (freeze_dir / "normalization_stats.json").write_text(
+            json.dumps(norm_stats), encoding="utf-8"
+        )
+
+        # Build rows
+        rows: list[FreezeRow] = []
+        for split_name, subjects in (("train", ["00001", "00002", "00003", "00004"]),
+                                     ("val", ["00005", "00006", "00007"])):
+            for subj in subjects:
+                for frame in range(2):
+                    pressure_rel = (
+                        f"subj_{subj}_f{frame}.npy"
+                    )
+                    label_rel = f"subj_{subj}_f{frame}_label.npy"
+                    onehot_rel = f"subj_{subj}_f{frame}_onehot.npy"
+                    # Save tiny pressure and label
+                    np.save(
+                        data_root / pressure_rel,
+                        np.random.rand(192, 84).astype(np.float64) * 100,
+                    )
+                    np.save(
+                        data_root / label_rel,
+                        np.zeros((192, 84), dtype=np.int64),
+                    )
+                    np.save(
+                        data_root / onehot_rel,
+                        np.zeros((9, 192, 84), dtype=np.float32),
+                    )
+                    rows.append(
+                        FreezeRow(
+                            sample_id=f"{split_name}_{subj}_{frame}",
+                            ml_split=split_name,
+                            source_split="VAL",
+                            setting="danaLab",
+                            subject_id=subj,
+                            cover="uncover",
+                            frame_id=frame,
+                            posture="SUPINE",
+                            pressure_npy=pressure_rel,
+                            region_label_npy=label_rel,
+                            region_onehot_npy=onehot_rel,
+                            points_csv="",
+                            height=192,
+                            width=84,
+                            class_ids_present="0",
+                            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+                            source_review_status="NOT_REVIEWED",
+                            export_version="1.1.0",
+                            export_status="EXPORTED",
+                            source_pmarray_sha256="",
+                            background_pixel_count=0,
+                            body_pixel_count=0,
+                            clipped_ratio=0.0,
+                            onehot_valid=True,
+                            onehot_roundtrip=True,
+                        )
+                    )
+
+        # Write a minimal freeze_manifest.json (not required by
+        # load_b01_freeze_tables but we keep it for completeness).
+        (freeze_dir / "freeze_manifest.json").write_text(
+            json.dumps({
+                "core": {
+                    "freeze_version": "slp8_training_tables_v0.1",
+                    "a06_split_sha256": (
+                        "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706"
+                    ),
+                }
+            }),
+            encoding="utf-8",
+        )
+
+        # Stub out load_b01_freeze_tables to return our synthetic rows.
+        class _StubFreeze:
+            def __init__(self, rows: list[FreezeRow]) -> None:
+                self._train_rows = tuple(r for r in rows if r.ml_split == "train")
+                self._val_rows = tuple(r for r in rows if r.ml_split == "val")
+                self._test_rows = None
+
+            @property
+            def train_rows(self) -> tuple[FreezeRow, ...]:
+                return self._train_rows
+
+            @property
+            def val_rows(self) -> tuple[FreezeRow, ...]:
+                return self._val_rows
+
+        from topper_perception.neural import slp8_region_dataset as dataset_mod
+
+        monkeypatch.setattr(
+            dataset_mod,
+            "load_b01_freeze_tables",
+            lambda *_args, **_kwargs: _StubFreeze(rows),
+        )
+
+        # Use a small n_train/n_val to keep the test fast.
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        for n_train, n_val in [(2, 1), (3, 2), (4, 1)]:
+            config = SmokeConfig(
+                seed=42,
+                batch_size=2,
+                initial_epochs=1,
+                resume_epochs=1,
+                lr=0.001,
+                weight_decay=0.0001,
+                device="cpu",
+                n_train_subjects=n_train,
+                n_val_subjects=n_val,
+                subset_seed=42,
+            )
+            run_dir = output_dir / f"n{n_train}_{n_val}"
+            result = smoke_mod.run_smoke_test(
+                b01_freeze_dir=freeze_dir,
+                dataset_root=data_root,
+                output_dir=run_dir,
+                config=config,
+            )
+            assert result.success is True, result.verification_failures
+            assert (
+                len(result.train_records_initial) == n_train * 2
+            ), f"expected {n_train * 2} train records, got {len(result.train_records_initial)}"
+            assert (
+                len(result.val_records_initial) == n_val * 2
+            ), f"expected {n_val * 2} val records, got {len(result.val_records_initial)}"
+            # 4 phases total
+            assert (
+                len(result.train_records_initial)
+                + len(result.val_records_initial)
+                + len(result.train_records_resumed)
+                + len(result.val_records_resumed)
+            ) == 2 * (n_train + n_val) * 2

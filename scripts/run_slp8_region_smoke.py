@@ -324,7 +324,13 @@ def _validate_config(cfg: dict[str, Any]) -> None:
 
 
 def _build_smoke_config(cfg: dict[str, Any], device_override: str) -> SmokeConfig:
-    """Build SmokeConfig from the validated nested config."""
+    """Build SmokeConfig from the validated nested config.
+
+    The subset parameters (``n_train_subjects``, ``n_val_subjects``,
+    ``subset_seed``) are read from the config and passed to the
+    SmokeConfig, so the runner cannot silently fall back to hard-coded
+    defaults.
+    """
     return SmokeConfig(
         seed=int(cfg["training"]["seed"]),
         batch_size=int(cfg["training"]["batch_size"]),
@@ -333,6 +339,9 @@ def _build_smoke_config(cfg: dict[str, Any], device_override: str) -> SmokeConfi
         lr=float(cfg["training"]["lr"]),
         weight_decay=float(cfg["training"]["weight_decay"]),
         device=device_override,
+        n_train_subjects=int(cfg["dataset"]["smoke_subset"]["n_train_subjects"]),
+        n_val_subjects=int(cfg["dataset"]["smoke_subset"]["n_val_subjects"]),
+        subset_seed=int(cfg["dataset"]["smoke_subset"]["seed"]),
     )
 
 

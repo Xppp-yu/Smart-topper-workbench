@@ -114,7 +114,10 @@ class SmokeConfig:
     """Configuration for SLP8 region segmentation smoke test.
 
     All fields are required to be explicitly provided.  No default-based
-    masking of missing config is allowed.
+    masking of missing config is allowed.  The subset parameters
+    (``n_train_subjects`` / ``n_val_subjects`` / ``subset_seed``) are
+    consumed by ``run_smoke_test`` directly; they are NOT allowed to be
+    silently overridden with hard-coded values inside the smoke runner.
     """
 
     seed: int
@@ -124,6 +127,9 @@ class SmokeConfig:
     lr: float
     weight_decay: float
     device: str
+    n_train_subjects: int
+    n_val_subjects: int
+    subset_seed: int
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -360,6 +366,11 @@ class SmokeResult:
     reload_max_abs_diff: float | None = None
     training_time_seconds: float = 0.0
     verification_failures: list[str] = field(default_factory=list)
+    # Real per-sample prediction records (one record per sample per phase).
+    train_records_initial: list[PredictionRecord] = field(default_factory=list)
+    val_records_initial: list[PredictionRecord] = field(default_factory=list)
+    train_records_resumed: list[PredictionRecord] = field(default_factory=list)
+    val_records_resumed: list[PredictionRecord] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -367,22 +378,77 @@ class SmokeResult:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class PredictionRecord:
+    """One per-sample prediction record used to build the manifest."""
+
+    sample_id: str
+    subject_id: str
+    label_sha256: str
+    prediction_sha256: str
+    label_shape: tuple[int, int]
+    prediction_shape: tuple[int, int]
+    failure_reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "sample_id": self.sample_id,
+            "subject_id": self.subject_id,
+            "label_sha256": self.label_sha256,
+            "prediction_sha256": self.prediction_sha256,
+            "label_shape": str(self.label_shape),
+            "prediction_shape": str(self.prediction_shape),
+            "failure_reason": self.failure_reason,
+        }
+
+
+def _classify_failure(
+    label: np.ndarray,
+    pressure: np.ndarray | None = None,
+) -> str:
+    """Return one of the per-prediction failure-reason tokens.
+
+    A prediction is ``ok`` when:
+    * the pressure tensor is finite
+    * the label values are within ``[0, N_CLASSES)``
+
+    A non-finite pressure is reported as ``PRED_NON_FINITE``; an
+    out-of-range label is reported as ``PRED_LABEL_OUT_OF_RANGE``.
+    """
+    if pressure is not None and not np.isfinite(pressure).all():
+        return PRED_NON_FINITE
+    if not ((label >= 0) & (label < N_CLASSES)).all():
+        return PRED_LABEL_OUT_OF_RANGE
+    return PRED_OK
+
+
 def _collect_predictions(
     model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     device: str,
-) -> tuple[list[np.ndarray], list[np.ndarray], list[str], list[str]]:
-    """Run inference on a dataloader and return label/pred lists and IDs.
+) -> tuple[
+    list[np.ndarray],
+    list[np.ndarray],
+    list[str],
+    list[str],
+    list[PredictionRecord],
+]:
+    """Run inference on a dataloader and return per-sample evidence.
 
     Returns
     -------
-    tuple[list[np.ndarray], list[np.ndarray], list[str], list[str]]
-        (labels, predictions, sample_ids, subject_ids)
+    tuple
+        (labels, predictions, sample_ids, subject_ids, records)
+        where ``records`` is a list of :class:`PredictionRecord` containing
+        the canonical SHA-256 of the label and prediction arrays plus
+        the per-sample failure reason.  Every record has non-empty
+        sample_id, subject_id, and SHA-256 fields.
     """
     labels: list[np.ndarray] = []
     predictions: list[np.ndarray] = []
     sample_ids: list[str] = []
     subject_ids: list[str] = []
+    records: list[PredictionRecord] = []
 
     model.eval()
     with torch.no_grad():
@@ -391,13 +457,29 @@ def _collect_predictions(
             logits = model(pressure)
             preds = logits.argmax(dim=1).cpu().numpy()
             labs = batch["label"].cpu().numpy()
+            pressure_cpu = pressure.cpu().numpy()
             for i in range(len(preds)):
-                labels.append(labs[i].astype(np.int64))
-                predictions.append(preds[i].astype(np.int64))
-                sample_ids.append(batch["sample_id"][i])
-                subject_ids.append(batch["subject_id"][i])
+                lab = labs[i].astype(np.int64)
+                pred = preds[i].astype(np.int64)
+                pres = pressure_cpu[i]
+                failure = _classify_failure(lab, pres)
+                records.append(
+                    PredictionRecord(
+                        sample_id=str(batch["sample_id"][i]),
+                        subject_id=str(batch["subject_id"][i]),
+                        label_sha256=canonical_array_hash(lab),
+                        prediction_sha256=canonical_array_hash(pred),
+                        label_shape=tuple(lab.shape),
+                        prediction_shape=tuple(pred.shape),
+                        failure_reason=failure,
+                    )
+                )
+                labels.append(lab)
+                predictions.append(pred)
+                sample_ids.append(str(batch["sample_id"][i]))
+                subject_ids.append(str(batch["subject_id"][i]))
 
-    return labels, predictions, sample_ids, subject_ids
+    return labels, predictions, sample_ids, subject_ids, records
 
 
 # ---------------------------------------------------------------------------
@@ -441,14 +523,32 @@ def run_smoke_test(
 
     # -----------------------------------------------------------------------
     # Build datasets
+    #
+    # NOTE: the n_train_subjects / n_val_subjects / seed are read from the
+    # SmokeConfig (which is built from the validated config JSON) and are
+    # NOT hard-coded in the runner.  Any future change to the smoke subset
+    # must come from the config file, not from this function.
     # -----------------------------------------------------------------------
     train_dataset, val_dataset, dataset_manifest = build_smoke_dataset(
         b01_freeze_dir=b01_freeze_dir,
         dataset_root=dataset_root,
-        seed=config.seed,
-        n_train_subjects=2,
-        n_val_subjects=1,
+        seed=config.subset_seed,
+        n_train_subjects=config.n_train_subjects,
+        n_val_subjects=config.n_val_subjects,
     )
+
+    # Fail-closed: the actual subjects selected must match the config
+    # (defends against accidental rebuilds that ignore config values).
+    if len(dataset_manifest["train_subjects"]) != config.n_train_subjects:
+        verification_failures.append(
+            f"Selected TRAIN subjects ({len(dataset_manifest['train_subjects'])}) "
+            f"do not match config.n_train_subjects ({config.n_train_subjects})"
+        )
+    if len(dataset_manifest["val_subjects"]) != config.n_val_subjects:
+        verification_failures.append(
+            f"Selected VAL subjects ({len(dataset_manifest['val_subjects'])}) "
+            f"do not match config.n_val_subjects ({config.n_val_subjects})"
+        )
 
     if not verify_subject_isolation(
         dataset_manifest["train_subjects"],
@@ -531,12 +631,20 @@ def run_smoke_test(
     # -----------------------------------------------------------------------
     # Predictions after initial training
     # -----------------------------------------------------------------------
-    train_labels_init, train_preds_init, train_sids_init, train_subids_init = (
-        _collect_predictions(model, train_dataloader, config.device)
-    )
-    val_labels_init, val_preds_init, val_sids_init, val_subids_init = (
-        _collect_predictions(model, val_dataloader, config.device)
-    )
+    (
+        train_labels_init,
+        train_preds_init,
+        train_sids_init,
+        train_subids_init,
+        train_records_init,
+    ) = _collect_predictions(model, train_dataloader, config.device)
+    (
+        val_labels_init,
+        val_preds_init,
+        val_sids_init,
+        val_subids_init,
+        val_records_init,
+    ) = _collect_predictions(model, val_dataloader, config.device)
     train_metrics_initial = compute_smoke_metrics(train_labels_init, train_preds_init)
     val_metrics_initial = compute_smoke_metrics(val_labels_init, val_preds_init)
 
@@ -640,12 +748,20 @@ def run_smoke_test(
     # -----------------------------------------------------------------------
     # Predictions after resume
     # -----------------------------------------------------------------------
-    train_labels_rsm, train_preds_rsm, train_sids_rsm, train_subids_rsm = (
-        _collect_predictions(resumed_model, train_dataloader, config.device)
-    )
-    val_labels_rsm, val_preds_rsm, val_sids_rsm, val_subids_rsm = (
-        _collect_predictions(resumed_model, val_dataloader, config.device)
-    )
+    (
+        train_labels_rsm,
+        train_preds_rsm,
+        train_sids_rsm,
+        train_subids_rsm,
+        train_records_rsm,
+    ) = _collect_predictions(resumed_model, train_dataloader, config.device)
+    (
+        val_labels_rsm,
+        val_preds_rsm,
+        val_sids_rsm,
+        val_subids_rsm,
+        val_records_rsm,
+    ) = _collect_predictions(resumed_model, val_dataloader, config.device)
     train_metrics_resumed = compute_smoke_metrics(train_labels_rsm, train_preds_rsm)
     val_metrics_resumed = compute_smoke_metrics(val_labels_rsm, val_preds_rsm)
 
@@ -708,6 +824,10 @@ def run_smoke_test(
         reload_max_abs_diff=reload_max_abs_diff,
         training_time_seconds=t_end - t_start,
         verification_failures=verification_failures,
+        train_records_initial=train_records_init,
+        val_records_initial=val_records_init,
+        train_records_resumed=train_records_rsm,
+        val_records_resumed=val_records_rsm,
     )
 
 
@@ -731,9 +851,48 @@ def _json_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def _hash_array(arr: np.ndarray) -> str:
-    """SHA-256 of a numpy array, content-only."""
-    return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
+# ---------------------------------------------------------------------------
+# Canonical array hash
+# ---------------------------------------------------------------------------
+
+
+CANONICAL_HASH_VERSION = "slp8_canonical_array_hash_v0.1"
+
+
+def canonical_array_hash(arr: np.ndarray) -> str:
+    """Compute a stable SHA-256 hex digest of a numpy array.
+
+    The rule is::
+
+        1. Cast to int64 (C-contiguous, native byte order, no copy if
+           already int64) so the byte payload is well-defined for
+           integer label/prediction maps.
+        2. Encode as a small canonical header
+           ``slp8_canonical_array_hash_v0.1\\ndtype=int64\\nshape=(H,W)\\n``
+           followed by the raw C-order bytes of the int64 array.
+        3. SHA-256 the concatenation and return the lower-case hex digest.
+
+    The header prevents collisions between arrays that happen to share the
+    same byte layout (e.g. a flat 192*84 buffer vs a (192,84) array with
+    the same content but different metadata).
+
+    Returns
+    -------
+    str
+        64-character lower-case hex digest.
+    """
+    arr_int = np.ascontiguousarray(arr, dtype=np.int64)
+    header = (
+        f"{CANONICAL_HASH_VERSION}\n"
+        f"dtype={arr_int.dtype.str}\n"
+        f"shape={tuple(arr_int.shape)}\n"
+    ).encode("utf-8")
+    payload = header + arr_int.tobytes()
+    return hashlib.sha256(payload).hexdigest()
+
+
+# Backwards-compatible alias.
+_hash_array = canonical_array_hash
 
 
 def write_smoke_artifacts(
@@ -775,6 +934,10 @@ def write_smoke_artifacts(
         "reload_consistent": result.reload_consistent,
         "reload_max_abs_diff": result.reload_max_abs_diff,
         "training_time_seconds": result.training_time_seconds,
+        "n_train_records_initial": len(result.train_records_initial),
+        "n_val_records_initial": len(result.val_records_initial),
+        "n_train_records_resumed": len(result.train_records_resumed),
+        "n_val_records_resumed": len(result.val_records_resumed),
     }
     with open(output_dir / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False, default=_json_default)
@@ -868,23 +1031,42 @@ def write_smoke_artifacts(
                     "present_in_gt": region["present_in_gt"],
                 })
 
-    # ---- failure_cases.csv (always present, header only if no failures) ----
+    # ---- failure_cases.csv (only rows with non-ok failure_reason) ----
     failure_path = output_dir / "failure_cases.csv"
     failure_headers = [
         "split",
         "phase",
         "sample_id",
         "subject_id",
+        "label_sha256",
+        "prediction_sha256",
         "failure_reason",
     ]
-    # Note: per-sample failures are not currently tracked in this smoke; the
-    # CSV will only contain the header row to record zero failures.
+    failure_rows: list[dict[str, Any]] = []
+    for split, records, phase in (
+        ("train", result.train_records_initial, "initial"),
+        ("val", result.val_records_initial, "initial"),
+        ("train", result.train_records_resumed, "resumed"),
+        ("val", result.val_records_resumed, "resumed"),
+    ):
+        for record in records:
+            if record.failure_reason != PRED_OK:
+                failure_rows.append({
+                    "split": split,
+                    "phase": phase,
+                    "sample_id": record.sample_id,
+                    "subject_id": record.subject_id,
+                    "label_sha256": record.label_sha256,
+                    "prediction_sha256": record.prediction_sha256,
+                    "failure_reason": record.failure_reason,
+                })
     with open(failure_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=failure_headers)
         writer.writeheader()
+        for row in failure_rows:
+            writer.writerow(row)
 
-    # ---- predictions_manifest.csv ----
-    # Summary metadata only; no full pixel predictions are persisted.
+    # ---- predictions_manifest.csv (real per-sample evidence) ----
     pred_path = output_dir / "predictions_manifest.csv"
     pred_headers = [
         "split",
@@ -897,36 +1079,40 @@ def write_smoke_artifacts(
         "prediction_shape",
         "failure_reason",
     ]
+    n_manifest_rows = 0
     with open(pred_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=pred_headers)
         writer.writeheader()
-        # We intentionally do not save per-sample pixel predictions to git.
-        # Record only a sample-count line per (split, phase) so the artefact
-        # is still present and reproducible.
-        for split, count, phase in (
-            ("train", dataset_manifest.get("n_train_samples", 0), "initial"),
-            ("val", dataset_manifest.get("n_val_samples", 0), "initial"),
-            ("train", dataset_manifest.get("n_train_samples", 0), "resumed"),
-            ("val", dataset_manifest.get("n_val_samples", 0), "resumed"),
+        for split, records, phase in (
+            ("train", result.train_records_initial, "initial"),
+            ("val", result.val_records_initial, "initial"),
+            ("train", result.train_records_resumed, "resumed"),
+            ("val", result.val_records_resumed, "resumed"),
         ):
-            for i in range(count):
+            for record in records:
                 writer.writerow({
                     "split": split,
                     "phase": phase,
-                    "sample_id": f"{split}_sample_{i:06d}",
-                    "subject_id": "",
-                    "label_sha256": "",
-                    "prediction_sha256": "",
-                    "label_shape": str(INPUT_SHAPE),
-                    "prediction_shape": str(INPUT_SHAPE),
-                    "failure_reason": PRED_OK,
+                    "sample_id": record.sample_id,
+                    "subject_id": record.subject_id,
+                    "label_sha256": record.label_sha256,
+                    "prediction_sha256": record.prediction_sha256,
+                    "label_shape": str(record.label_shape),
+                    "prediction_shape": str(record.prediction_shape),
+                    "failure_reason": record.failure_reason,
                 })
+                n_manifest_rows += 1
 
     # ---- logs/run.log ----
     log_lines = [
         f"task_id={TASK_ID}",
         f"smoke_version={SMOKE_VERSION}",
         f"status={'DONE' if result.success else 'FAILED'}",
+        f"train_subjects={dataset_manifest.get('train_subjects')}",
+        f"val_subjects={dataset_manifest.get('val_subjects')}",
+        f"n_train={dataset_manifest.get('n_train_samples')} "
+        f"n_val={dataset_manifest.get('n_val_samples')} "
+        f"n_test={dataset_manifest.get('n_test_samples')}",
         f"train_loss_initial={result.train_loss_initial}",
         f"val_loss_initial={result.val_loss_initial}",
         f"train_loss_resumed={result.train_loss_resumed}",
@@ -940,6 +1126,8 @@ def write_smoke_artifacts(
         f"checkpoint_sha_initial={result.checkpoint_sha_initial}",
         f"checkpoint_sha_resumed={result.checkpoint_sha_resumed}",
         f"training_time_seconds={result.training_time_seconds}",
+        f"predictions_manifest_rows={n_manifest_rows}",
+        f"failure_cases_rows={len(failure_rows)}",
     ]
     if result.verification_failures:
         log_lines.append("verification_failures:")
@@ -955,6 +1143,7 @@ def write_smoke_artifacts(
                     "status": "SUCCEEDED",
                     "task_id": TASK_ID,
                     "training_time_seconds": result.training_time_seconds,
+                    "n_predictions_manifest_rows": n_manifest_rows,
                     "ended_at_utc": datetime.now(timezone.utc).isoformat(),
                 },
                 f,
@@ -968,6 +1157,7 @@ def write_smoke_artifacts(
                     "status": "FAILED",
                     "task_id": TASK_ID,
                     "verification_failures": result.verification_failures,
+                    "n_predictions_manifest_rows": n_manifest_rows,
                     "ended_at_utc": datetime.now(timezone.utc).isoformat(),
                 },
                 f,
