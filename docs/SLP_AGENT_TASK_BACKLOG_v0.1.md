@@ -216,10 +216,10 @@ Reviewer checklist:
 
 ### TASK-SLP-B04：单模态 Region Mini
 
-- 状态：`READY_AFTER_B03`（B03 已通过 Reviewer Gate；执行前仍需冻结 Mini 协议并取得 Owner 运行授权）。
+- 状态：`PROTOCOL_AND_RUNNER_ACCEPTED / REAL_MINI_AWAITING_OWNER_AUTHORIZATION`（协议与 Runner 已通过 Reviewer Gate；真实 B01 Mini 尚未运行）。
 - 目标：每模态保留最多1–2个可行候选。
 - 指标：region IoU/Dice、中心误差、逐区域、逐 posture、worst subject；当前仅 uncover。
-- Gate：只淘汰不可行候选，不用小样本宣布冠军。
+- Gate：Owner 明确授权 + CUDA 12 GB peak 环境后才可运行真实 Mini；只淘汰不可行候选，不用小样本宣布冠军。真实产物经 Reviewer 接受前，B07 继续保持阻塞。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 

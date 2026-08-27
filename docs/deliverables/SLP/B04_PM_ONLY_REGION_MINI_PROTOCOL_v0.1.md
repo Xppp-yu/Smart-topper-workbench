@@ -292,3 +292,5 @@ python scripts/run_slp8_region_mini.py --config configs/experiments/slp8_pm_regi
 ```
 
 真实 B01 运行仍需 Owner 授权和 CUDA 12 GB peak 环境；不可读取 TEST，且不得覆盖已有 EXP-ID 输出。
+
+Reviewer 最终验收：B04 定向测试 **158 passed**；联合回归 **1342 passed, 4 skipped**；协议与 Runner 状态为 `PROTOCOL_AND_RUNNER_ACCEPTED`。真实 B01 Mini、CUDA/GPU 和 TEST 均为 `NOT RUN`。

@@ -292,3 +292,31 @@ torch.set_num_threads(1)
 2. Owner 明确授权并提供满足 CUDA 12 GB 峰值的环境；
 3. 才能运行真实 B01 Mini，随后由 Codex 审核真实产物；
 4. 仅在该审核通过后，才讨论 B07 Full 协议。
+
+### Reviewer 最终验收
+
+- `pytest -q tests/test_slp8_region_mini.py`：**158 passed**（340.11 秒）。
+- `pytest -q tests/ --ignore=tests/test_slp_8region_pressure_dataset.py`：**1342 passed, 4 skipped**（1249.08 秒）；4 个 skip 均为缺少真实 evidence/data 或 A05 CSV 的既有环境条件。
+- `py_compile` 与 `git diff --check`：通过。
+- 结论：`TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1` 通过 Reviewer Gate；状态为 `PROTOCOL_AND_RUNNER_ACCEPTED`。
+- 未验证边界不变：真实 B01 Mini、CUDA/GPU 与 TEST 均为 `NOT RUN`。
+
+### Verified
+
+- 协议、Runner、冻结合同、合成生命周期与软件回归已经 Reviewer 独立验证。
+
+### Inferred
+
+- 无模型效果推断。
+
+### Unverified
+
+- 真实 B01 Mini、CUDA/GPU、TEST 和真实数据恢复均未运行。
+
+### Limitations
+
+- 合成 smoke 只证明工程链路，不能与 B02 比较，也不能形成产品或硬件结论。
+
+### Next Gate
+
+- Owner 明确授权真实 B01 Mini 并提供 CUDA 12 GB peak 环境；真实结果经 Reviewer 接受前，B07 保持阻塞。
