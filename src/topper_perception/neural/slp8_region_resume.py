@@ -252,11 +252,18 @@ def restore_rng_state(state: Mapping[str, Any]) -> None:
 
 @dataclass
 class EarlyStopperState:
-    """The serializable state of the B04 :class:`_EarlyStopper`."""
+    """The serializable state of the B04 :class:`_EarlyStopper`.
+
+    ``patience`` is the **configured** cap; ``current_patience`` is the
+    live counter that has been incrementing on non-improving epochs.
+    Persisting both is what makes resume a true continuation of the
+    run rather than a fresh start of the patience budget.
+    """
 
     best_metric: float | None
     best_epoch: int | None
     patience: int
+    current_patience: int
     min_delta: float
     min_epochs: int
     mode: str
@@ -271,6 +278,7 @@ class EarlyStopperState:
                 int(self.best_epoch) if self.best_epoch is not None else None
             ),
             "patience": int(self.patience),
+            "current_patience": int(self.current_patience),
             "min_delta": float(self.min_delta),
             "min_epochs": int(self.min_epochs),
             "mode": str(self.mode),
@@ -291,6 +299,7 @@ class EarlyStopperState:
                 else None
             ),
             patience=int(payload["patience"]),
+            current_patience=int(payload.get("current_patience", 0)),
             min_delta=float(payload["min_delta"]),
             min_epochs=int(payload["min_epochs"]),
             mode=str(payload["mode"]),

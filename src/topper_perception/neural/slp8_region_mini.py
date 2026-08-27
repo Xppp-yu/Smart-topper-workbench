@@ -98,6 +98,7 @@ from topper_perception.neural.slp8_region_b01_contract import (
     verify_b01_contract,
 )
 from topper_perception.neural.slp8_region_budget import (
+    BudgetAccumulatorState,
     BudgetCheck,
     ResourceBudget,
     ResourceBudgetState,
@@ -1307,15 +1308,14 @@ def _build_checkpoint_payload(
     identity: CheckpointIdentity | None = None,
     input_manifest_hashes: Mapping[str, Any] | None = None,
     rng_state: Mapping[str, Any] | None = None,
+    budget_state: "BudgetAccumulatorState | None" = None,
 ) -> dict[str, Any]:
     """Assemble a versioned B04 checkpoint payload.
 
     R02 expands the payload with the full B04 identity block,
     the early-stopper state, the metric history, the input-hash
-    snapshot, and the captured RNG state.  The payload is
-    ``weights_only=True`` safe because every value is either a
-    primitive, a ``numpy`` / ``torch`` tensor, or a JSON-safe dict /
-    list.
+    snapshot, and the captured RNG state.  R03 also persists the
+    budget accumulator so resume does not double-count time.
     """
 
     payload: dict[str, Any] = {
@@ -1344,6 +1344,8 @@ def _build_checkpoint_payload(
         payload["input_manifest_hashes"] = dict(input_manifest_hashes)
     if rng_state is not None:
         payload["rng_state"] = dict(rng_state)
+    if budget_state is not None:
+        payload["budget_state"] = budget_state.as_dict()
     return payload
 
 
@@ -1568,6 +1570,7 @@ class _EarlyStopper:
             best_metric=self.best,
             best_epoch=self.best_epoch,
             patience=self.patience,
+            current_patience=self._patience,
             min_delta=self.min_delta,
             min_epochs=self.min_epochs,
             mode=self.mode,
@@ -1588,10 +1591,14 @@ class _EarlyStopper:
             raise ResumeIdentityError(
                 "early-stopper hyperparameter mismatch on resume"
             )
+        if state.current_patience < 0 or state.current_patience > self.patience:
+            raise ResumeIdentityError(
+                f"early-stopper current_patience {state.current_patience} "
+                f"is outside [0, patience={self.patience}]"
+            )
         self.best = state.best_metric
         self.best_epoch = state.best_epoch
-        # _patience is implicit from history (no need to restore).
-        self._patience = 0
+        self._patience = int(state.current_patience)
 
 
 # ---------------------------------------------------------------------------
@@ -1761,6 +1768,15 @@ def run_one_candidate(
         epoch_metrics = [
             EpochMetricsRow(**row) for row in payload.get("epoch_metrics", [])
         ]
+        if "budget_state" in payload:
+            try:
+                budget_state.restore(
+                    BudgetAccumulatorState.from_dict(payload["budget_state"])
+                )
+            except Exception as exc:
+                raise ResumeIdentityError(
+                    f"resume budget state restore failed: {exc}"
+                )
         resume_checkpoint_payload = payload
         start_epoch = int(payload.get("epoch", 0)) + 1
         # best.pt may have been written previously; re-load its SHA so
@@ -1862,6 +1878,7 @@ def run_one_candidate(
             identity=identity,
             input_manifest_hashes=dict(input_manifest_hashes),
             rng_state=capture_rng_state(),
+            budget_state=budget_state.snapshot(),
         )
         last_sha = _save_checkpoint(last_path, payload)
 
@@ -2309,6 +2326,19 @@ def run_mini(
                 raise OutputCollisionError(
                     f"checkpoint {cand_dir / name} already exists; refusing to overwrite"
                 )
+        # The identity block needs a real config SHA; ``MiniConfig``
+        # carries the absolute path of the JSON file.  When the
+        # caller built the config programmatically (no file on disk)
+        # the field is empty and we refuse to emit a checkpoint with
+        # an empty identity SHA.
+        config_path_str = getattr(config, "config_path", "") or ""
+        if not config_path_str:
+            raise MiniProtocolError(
+                "MiniConfig.config_path is empty; refusing to emit a "
+                "checkpoint with an empty identity SHA.  Build MiniConfig "
+                "via build_mini_config(..., config_path=<absolute path>)."
+            )
+        config_sha = file_sha256(Path(config_path_str))
         identity = CheckpointIdentity(
             task_id=config.task_id,
             candidate=candidate_name,
@@ -2316,7 +2346,7 @@ def run_mini(
             seed=int(config.seed),
             n_classes=int(N_CLASSES),
             image_shape=tuple(PRESSURE_SHAPE),
-            config_sha256=file_sha256(Path(config.config_path)) if hasattr(config, "config_path") else "",
+            config_sha256=config_sha,
             a06_split_sha256=str(config.b01_a06_split_sha256_expected),
             freeze_manifest_sha256=str(input_hashes.get("freeze_manifest_sha256", "")),
             train_class_stats_sha256=str(input_hashes.get("train_class_stats_sha256", "")),

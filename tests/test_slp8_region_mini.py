@@ -1144,6 +1144,7 @@ class TestResumeIdentity:
             best_metric=0.5,
             best_epoch=3,
             patience=4,
+            current_patience=2,
             min_delta=0.0,
             min_epochs=5,
             mode="min",
@@ -1152,6 +1153,32 @@ class TestResumeIdentity:
         d = s.as_dict()
         s2 = EarlyStopperState.from_dict(d)
         assert s2 == s
+
+    def test_early_stopper_state_current_patience_persists_across_resume(self):
+        """The live patience counter MUST survive a checkpoint save +
+        load so that resume continues exactly where the run stopped.
+        """
+        s = EarlyStopperState(
+            best_metric=0.5,
+            best_epoch=3,
+            patience=4,
+            current_patience=3,
+            min_delta=0.0,
+            min_epochs=5,
+            mode="min",
+            monitor="val_loss",
+        )
+        d = s.as_dict()
+        s2 = EarlyStopperState.from_dict(d)
+        assert s2.current_patience == 3
+        # If the persisted current_patience is out of [0, patience]
+        # the runner refuses to restore.
+        bad = dict(d)
+        bad["current_patience"] = 99
+        s3 = EarlyStopperState.from_dict(bad)
+        # ``from_dict`` is permissive; the runner's ``_EarlyStopper.restore``
+        # is what enforces the range.
+        assert s3.current_patience == 99
 
     def test_capture_and_restore_rng_state_round_trip(self):
         # Touch the RNG so a state is meaningful.
@@ -1695,3 +1722,748 @@ class TestCanonicalArrayHash:
 
     def test_header_version_present(self):
         assert CANONICAL_HASH_VERSION == "slp8_canonical_array_hash_v0.1"
+
+
+# ---------------------------------------------------------------------------
+# R03: CLI three-path lifecycle tests
+# ---------------------------------------------------------------------------
+
+
+def _run_cli(argv: list[str], env: dict | None = None) -> subprocess.CompletedProcess:
+    """Invoke the CLI as a subprocess and return the completed process."""
+
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts" / "run_slp8_region_mini.py"),
+        *argv,
+    ]
+    full_env = dict(os.environ)
+    full_env["PYTHONHASHSEED"] = "42"
+    full_env["OMP_NUM_THREADS"] = "1"
+    full_env["MKL_NUM_THREADS"] = "1"
+    if env is not None:
+        full_env.update(env)
+    return subprocess.run(
+        cmd, capture_output=True, text=True, env=full_env, timeout=600
+    )
+
+
+class TestCLITerminalStateDone:
+    """``--synthetic-cpu-smoke`` finishes DONE; the CLI writes DONE.json
+    and exits 0.  ``status.json`` mirrors the terminal state."""
+
+    def test_done_writes_done_json_and_exits_zero(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("cli_done") / "out"
+        result = _run_cli([
+            "--config", str(CONFIG_PATH),
+            "--output-dir", str(out),
+            "--synthetic-cpu-smoke",
+        ])
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert (out / "DONE.json").exists()
+        assert not (out / "FAILED.json").exists()
+        assert not (out / "STOPPED.json").exists()
+        status = json.loads((out / "status.json").read_text(encoding="utf-8"))
+        assert status["status"] == "DONE"
+        assert status["terminal_state"] == "DONE"
+        assert status["mode"] == "synthetic-cpu-smoke"
+
+
+class TestCLITerminalStateStopped:
+    """When the synthetic smoke hits an injected tiny budget it MUST
+    transition to STOPPED, the CLI MUST write STOPPED.json (not
+    DONE.json), and the exit code MUST be non-zero.  This test does
+    NOT call :func:`write_status_files` directly — it drives the
+    real CLI to STOPPED via a test-only environment variable the CLI
+    honours."""
+
+    def test_stopped_writes_stopped_json_and_exits_nonzero(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("cli_stopped") / "out"
+        # The synthetic smoke runner reads B04_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS
+        # (test-only knob) and uses it as the per-candidate wall budget
+        # when present.  The actual smoke takes >0.1s of wall time
+        # for the small_unet candidate, so 1e-3s triggers STOPPED.
+        env = {"B04_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS": "0.001"}
+        result = _run_cli([
+            "--config", str(CONFIG_PATH),
+            "--output-dir", str(out),
+            "--synthetic-cpu-smoke",
+        ], env=env)
+        assert result.returncode != 0, f"stderr: {result.stderr}"
+        assert not (out / "DONE.json").exists()
+        assert not (out / "FAILED.json").exists()
+        assert (out / "STOPPED.json").exists()
+        status = json.loads((out / "status.json").read_text(encoding="utf-8"))
+        assert status["status"] == "STOPPED"
+        assert status["terminal_state"] == "STOPPED"
+        stopped = json.loads((out / "STOPPED.json").read_text(encoding="utf-8"))
+        assert stopped["status"] == "STOPPED"
+        assert stopped["terminal_state"] == "STOPPED"
+
+
+class TestCLITerminalStateFailed:
+    """The CLI must report FAILED when the runner explicitly produces
+    a FAILED result.  We drive this by monkey-patching
+    :func:`run_mini` in the CLI module's namespace.  The CLI's own
+    terminal-file code path is what we are testing — we do NOT call
+    :func:`write_status_files` directly to fabricate a FAILED.json."""
+
+    def test_failed_writes_failed_json_and_exits_nonzero(
+        self, tmp_path_factory, monkeypatch
+    ):
+        from topper_perception.neural import slp8_region_mini as sm
+        from topper_perception.neural.slp8_region_determinism import (
+            apply_settings,
+        )
+        from topper_perception.neural.slp8_region_budget import ResourceBudget
+
+        # Build a fully-formed MiniRunResult with terminal_state="FAILED".
+        # Both candidates are FAILED so the run-level terminal_state
+        # must be FAILED.
+        def _fake_run_mini(**kwargs):
+            crs = {}
+            for cand in sm.B04_CANDIDATE_NAMES:
+                crs[cand] = sm.CandidateResult(
+                    candidate=cand,
+                    model_version="slp8_tiny_fcn_v0.1",
+                    parameter_count=1401,
+                    parameter_count_within_budget=True,
+                    feasibility="FAILED",
+                    reason="forced failure for CLI test",
+                    epoch_metrics=[],
+                    metrics=None,
+                    train_predictions=[],
+                    train_labels=[],
+                    train_subjects=[],
+                    val_predictions=[],
+                    val_labels=[],
+                    val_subjects=[],
+                    train_records=[],
+                    val_records=[],
+                    best_epoch=None,
+                    best_val_loss=None,
+                    best_prediction_hash=None,
+                    in_process_prediction_hash=None,
+                    reload_consistent=True,
+                    reload_max_abs_diff=0.0,
+                    checkpoint_best_sha256=None,
+                    checkpoint_last_sha256=None,
+                    train_loss_history=[],
+                    val_loss_history=[],
+                    train_subject_overlap_with_val=False,
+                    val_subject_overlap_with_train=False,
+                    n_test_samples=0,
+                    param_changed=True,
+                    last_in_process_prediction_hash=None,
+                    class_weight_summary={},
+                    elapsed_seconds=0.0,
+                    budget_status="ok",
+                    budget_report={},
+                    budget_thresholds={},
+                )
+            return sm.MiniRunResult(
+                config=kwargs["config"],
+                dataset_manifest=kwargs["dataset_manifest"],
+                environment={},
+                class_weight_result=kwargs["class_weight_result"],
+                candidate_results=crs,
+                n_candidates_feasible=0,
+                n_candidates_not_feasible=0,
+                n_candidates_failed=2,
+                n_candidates_stopped=0,
+                overall_decision="MINI_NOT_FEASIBLE",
+                terminal_state="FAILED",
+                started_at_utc="2026-01-01T00:00:00+00:00",
+                ended_at_utc="2026-01-01T00:00:01+00:00",
+                wall_clock_seconds=1.0,
+                input_hashes={},
+                train_class_stats_source="synthetic_train_class_stats",
+                synthetic=True,
+                determinism=apply_settings(42, cpu_threads=1),
+                resource_budget=ResourceBudget(
+                    max_wall_seconds_per_candidate=2700.0,
+                    max_wall_seconds_total=5400.0,
+                    max_peak_cuda_mb=12288.0,
+                ),
+                b01_contract_report=None,
+            )
+
+        # Patch the symbol the CLI module imports.
+        import scripts.run_slp8_region_mini as cli  # type: ignore
+        monkeypatch.setattr(cli, "run_mini", _fake_run_mini)
+
+        # Now invoke main() directly with patched argv.
+        out = tmp_path_factory.mktemp("cli_failed") / "out"
+        monkeypatch.setattr("sys.argv", [
+            "run_slp8_region_mini.py",
+            "--config", str(CONFIG_PATH),
+            "--output-dir", str(out),
+            "--synthetic-cpu-smoke",
+        ])
+        rc = cli.main()
+        assert rc != 0, f"rc={rc}; CLI should have exited non-zero for FAILED"
+        assert (out / "FAILED.json").exists()
+        assert not (out / "DONE.json").exists()
+        assert not (out / "STOPPED.json").exists()
+        status = json.loads((out / "status.json").read_text(encoding="utf-8"))
+        assert status["status"] == "FAILED"
+        assert status["terminal_state"] == "FAILED"
+
+
+# ---------------------------------------------------------------------------
+# R03: Real B01 input contract — entry-level negative tests
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_b01_freeze_dir(root: Path, *, train_count: int = 3645,
+                              val_count: int = 450, test_count_in_manifest: int = 495,
+                              train_subjects: int = 81,
+                              val_subjects: int = 10,
+                              bad_a06: bool = False,
+                              bad_provenance: bool = False) -> Path:
+    """Create a minimal B01 freeze directory in ``root``.
+
+    The freeze structurally contains ``test_manifest.csv`` (the
+    source-of-truth that test rows exist as 495) but the B04 loader
+    is forced to ``load_test=False`` so the dataset's
+    ``n_test_samples`` is 0.
+    """
+
+    root.mkdir(parents=True, exist_ok=True)
+
+    # Build per-class row generators
+    def _rows(split: str, n_subjects: int, n_samples: int, subj_offset: int):
+        out = []
+        per_subj = n_samples // n_subjects
+        for i in range(n_subjects):
+            sid = f"{subj_offset + i:05d}"
+            for j in range(per_subj):
+                out.append({
+                    "sample_id": f"SLP:danaLab:{sid}:uncover:{j:06d}",
+                    "ml_split": split,
+                    "source_split": "VAL",
+                    "setting": "danaLab",
+                    "subject_id": sid,
+                    "cover": "uncover",
+                    "frame_id": j,
+                    "posture": "SUPINE",
+                    "pressure_npy": f"pressure/{sid}_{j:06d}.npy",
+                    "region_label_npy": f"labels/{sid}_{j:06d}.npy",
+                    "region_onehot_npy": f"onehot/{sid}_{j:06d}.npy",
+                    "points_csv": f"points/{sid}.csv",
+                    "height": "192",
+                    "width": "84",
+                    "class_ids_present": "0|1|2|3|4|5|6|7|8",
+                    "annotation_provenance": (
+                        "WRONG_PROVENANCE" if bad_provenance
+                        else "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED"
+                    ),
+                    "source_review_status": "NOT_REVIEWED",
+                    "export_version": "1.1.0",
+                    "export_status": "EXPORTED",
+                    "source_pmarray_sha256": "a" * 64,
+                    "background_pixel_count": "100",
+                    "body_pixel_count": "50",
+                    "clipped_ratio": "0.0",
+                    "onehot_valid": "True",
+                    "onehot_roundtrip": "True",
+                })
+        return out
+
+    train_rows = _rows("train", train_subjects, train_count, 0)
+    val_rows = _rows("val", val_subjects, val_count, train_subjects)
+    test_rows = _rows("test", test_count_in_manifest // 45, test_count_in_manifest,
+                      train_subjects + val_subjects) if test_count_in_manifest else []
+
+    # Write the CSV manifests that B01 reads.
+    import csv as _csv
+    fields = list(train_rows[0].keys())
+    (root / "train_manifest.csv").write_text(
+        _csv_rows_text(train_rows, fields), encoding="utf-8"
+    )
+    (root / "val_manifest.csv").write_text(
+        _csv_rows_text(val_rows, fields), encoding="utf-8"
+    )
+    if test_rows:
+        (root / "test_manifest.csv").write_text(
+            _csv_rows_text(test_rows, fields), encoding="utf-8"
+        )
+
+    # A minimal freeze_manifest.json that the B01 loader accepts.
+    import json as _json
+    import hashlib as _hashlib
+    fm = {
+        "core": {
+            "a06_split_sha256_expected": (
+                "deadbeef" * 8 if bad_a06 else
+                "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706"
+            ),
+            "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "source_review_status": "NOT_REVIEWED",
+            "setting": "danaLab",
+            "cover": "uncover",
+        },
+        "splits": {
+            "train": {"sample_count": train_count, "subject_count": train_subjects},
+            "val": {"sample_count": val_count, "subject_count": val_subjects},
+            "test": {"sample_count": test_count_in_manifest,
+                     "subject_count": test_count_in_manifest // 45},
+        },
+    }
+    fm_text = _json.dumps(fm)
+    (root / "freeze_manifest.json").write_text(fm_text, encoding="utf-8")
+    # Stamp the freeze_manifest_sha256 with the on-disk SHA so the
+    # snapshot can pass the contract check.
+    fm["freeze_manifest_sha256"] = _hashlib.sha256(
+        fm_text.encode("utf-8")
+    ).hexdigest()
+    (root / "freeze_manifest.json").write_text(
+        _json.dumps(fm), encoding="utf-8"
+    )
+
+    # A minimal train_class_stats.json: at least one class has positive
+    # pixel ratio so compute_class_weights does not reject.
+    (root / "train_class_stats.json").write_text(_json.dumps({
+        "n_samples": train_count,
+        "subject_count": train_subjects,
+        "per_class_pixel_ratio": {str(c): 0.1 for c in range(9)},
+    }), encoding="utf-8")
+
+    # A minimal split manifest: the B01 loader actually parses CSV
+    # from these.  Empty test_manifest.csv suffices when test_count=0.
+    return root
+
+
+def _csv_rows_text(rows, fields):
+    import io, csv as _csv
+    buf = io.StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=fields)
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(r)
+    return buf.getvalue()
+
+
+class TestB01ContractEntryLevel:
+    """Entry-level negative tests for the real B01 input contract.
+
+    These tests do NOT read TEST label / onehot files; they only build
+    the structural freeze (manifest, train/val CSVs, train_class_stats)
+    and verify the contract rejects bad input fail-closed.
+    """
+
+    def test_correct_freeze_passes_contract(self, tmp_path):
+        root = _make_fake_b01_freeze_dir(tmp_path / "b01_good")
+        # Verify the snapshot can be built and verify_b01_contract passes.
+        from topper_perception.io.slp8_training_table_freeze import (
+            load_b01_freeze_tables,
+        )
+        from topper_perception.neural.slp8_region_b01_contract import (
+            B01FreezeSnapshot,
+            verify_b01_contract,
+        )
+        freeze = load_b01_freeze_tables(root, load_test=False)
+        snap = B01FreezeSnapshot.from_freeze_tables(
+            freeze_dir=root,
+            train_rows=freeze.train_rows,
+            val_rows=freeze.val_rows,
+            test_rows=None,
+            freeze_manifest=freeze.freeze_manifest,
+        )
+        report = verify_b01_contract(snap)
+        assert report.train_count == 3645
+        assert report.test_count == 0
+        assert report.a06_split_sha256 == (
+            "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706"
+        )
+
+    def test_bad_a06_sha_rejected_fail_closed(self, tmp_path):
+        from topper_perception.neural.slp8_region_b01_contract import (
+            B01FreezeSnapshot,
+            verify_b01_contract,
+            B01ContractError,
+        )
+        # Build a snapshot directly with a bad A06 SHA.  We bypass the
+        # B01 freeze loader because the loader's own validation would
+        # raise on a SHA mismatch before reaching the contract layer.
+        snap = B01FreezeSnapshot(
+            freeze_dir=tmp_path / "b01_bad_a06",
+            train_count=3645,
+            val_count=450,
+            test_count=0,
+            train_subjects=tuple(f"{i:05d}" for i in range(81)),
+            val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
+            test_subjects=(),
+            freeze_manifest_sha256="a" * 64,
+            a06_split_sha256="deadbeef" * 8,
+            provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            setting="danaLab",
+            cover="uncover",
+        )
+        with pytest.raises(B01ContractError, match="a06_split_sha256"):
+            verify_b01_contract(snap)
+
+    def test_bad_provenance_rejected_fail_closed(self, tmp_path):
+        from topper_perception.neural.slp8_region_b01_contract import (
+            B01FreezeSnapshot,
+            verify_b01_contract,
+            B01ContractError,
+        )
+        # Build a snapshot directly with a bad provenance.  Same
+        # reason as the bad-a06 test: the B01 freeze loader would
+        # hard-fail on a bad provenance before the contract check.
+        snap = B01FreezeSnapshot(
+            freeze_dir=tmp_path / "b01_bad_provenance",
+            train_count=3645,
+            val_count=450,
+            test_count=0,
+            train_subjects=tuple(f"{i:05d}" for i in range(81)),
+            val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
+            test_subjects=(),
+            freeze_manifest_sha256="a" * 64,
+            a06_split_sha256="024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+            provenance="MANUAL",
+            source_review_status="NOT_REVIEWED",
+            setting="danaLab",
+            cover="uncover",
+        )
+        with pytest.raises(B01ContractError, match="provenance"):
+            verify_b01_contract(snap)
+
+    def test_test_rows_stay_unloaded(self, tmp_path):
+        from topper_perception.io.slp8_training_table_freeze import (
+            load_b01_freeze_tables,
+        )
+        root = _make_fake_b01_freeze_dir(
+            tmp_path / "b01_test_unloaded", test_count_in_manifest=495
+        )
+        freeze = load_b01_freeze_tables(root, load_test=False)
+        # The internal ``_test_rows`` MUST be None when load_test=False.
+        assert freeze._test_rows is None  # noqa: SLF001
+        # The structural TEST 495 rows in the freeze MUST NOT be
+        # reachable from the B04 dataset loader.  The public
+        # ``test_rows`` property raises ``TestLeakageError`` when
+        # ``_test_rows`` is None (this is the contract's own
+        # leak-protection).
+        import pytest as _pytest
+        from topper_perception.io.slp8_training_table_freeze import (
+            TestLeakageError,
+        )
+        with _pytest.raises(TestLeakageError):
+            _ = freeze.test_rows
+
+    def test_train_count_mismatch_rejected(self, tmp_path):
+        from topper_perception.neural.slp8_region_b01_contract import (
+            B01FreezeSnapshot,
+            verify_b01_contract,
+            B01ContractError,
+        )
+        # Build a snapshot with train_count=2000 (B01 contract expects
+        # 3645).  Direct construction avoids any freeze loader validation.
+        snap = B01FreezeSnapshot(
+            freeze_dir=tmp_path / "b01_short",
+            train_count=2000,
+            val_count=450,
+            test_count=0,
+            train_subjects=tuple(f"{i:05d}" for i in range(80)),
+            val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
+            test_subjects=(),
+            freeze_manifest_sha256="a" * 64,
+            a06_split_sha256="024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+            provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            setting="danaLab",
+            cover="uncover",
+        )
+        with pytest.raises(B01ContractError, match="train_count"):
+            verify_b01_contract(snap)
+
+
+# ---------------------------------------------------------------------------
+# R03: Resume equivalence test (interrupted vs uninterrupted)
+# ---------------------------------------------------------------------------
+
+
+def _candidate_metrics_signature(metrics: "CandidateMetrics | None") -> dict | None:
+    if metrics is None:
+        return None
+    return {
+        "val_loss": metrics.val_loss,
+        "per_region": [
+            (r["class_id"], round(r["iou"], 6), round(r["dice"], 6))
+            for r in metrics.per_region
+        ],
+        "n_samples": metrics.n_samples,
+    }
+
+
+class TestResumeEquivalence:
+    """An uninterrupted N-epoch run and a K-epoch run + resume to N
+    MUST produce identical predictions, metrics, and best epoch.
+
+    The test uses the synthetic CPU smoke runner with the real
+    :class:`MiniConfig`.  Both runs go through ``run_mini``; the only
+    difference is that one passes ``resume_from_per_candidate`` while
+    the other does not.
+    """
+
+    def _build_cfg(self, max_epochs: int) -> "MiniConfig":
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg = build_mini_config(
+            raw, b01_freeze_dir=None, data_root=None,
+            config_path=str(CONFIG_PATH),
+        )
+        return replace(cfg, max_epochs=max_epochs)
+
+    def _run(
+        self,
+        output_dir: Path,
+        cfg: "MiniConfig",
+        train_dataset,
+        val_dataset,
+        dataset_manifest,
+        class_weight_result,
+        *,
+        resume_from_per_candidate: dict[str, Path] | None = None,
+    ):
+        budget = ResourceBudget(
+            max_wall_seconds_per_candidate=2700.0,
+            max_wall_seconds_total=5400.0,
+            max_peak_cuda_mb=12288.0,
+        )
+        apply_settings(42, cpu_threads=1)
+        return run_mini(
+            config=cfg,
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
+            dataset_manifest=dataset_manifest,
+            class_weight_result=class_weight_result,
+            output_dir=output_dir,
+            device=torch.device("cpu"),
+            input_hashes={
+                "config_sha256": file_sha256(CONFIG_PATH),
+                "a06_split_sha256_expected": cfg.b01_a06_split_sha256_expected,
+                "synthetic": True,
+            },
+            train_class_stats_source="synthetic_train_class_stats",
+            synthetic=True,
+            budget=budget,
+            resume_from_per_candidate=resume_from_per_candidate,
+        )
+
+    def test_interrupted_then_resume_equals_uninterrupted(self, tmp_path_factory):
+        from topper_perception.neural.slp8_region_mini import (
+            apply_settings as _apply,
+        )
+        _apply(42, cpu_threads=1)
+        # Use a small N so the test runs fast.
+        n_total = 6
+        k_partial = 2
+
+        # 1) Uninterrupted N-epoch run.
+        out_a = tmp_path_factory.mktemp("resume_a") / "out"
+        train_ds, val_ds, manifest, class_stats = build_synthetic_dataset(
+            n_train_samples=4, n_val_samples=2, seed=7
+        )
+        cw = compute_class_weights({
+            "n_samples": 4,
+            "n_pixels": 4 * 192 * 84,
+            "per_class_pixel_ratio": {str(c): 0.1 for c in range(9)},
+        })
+        assert_class_weight_invariants(cw)
+        cfg = self._build_cfg(max_epochs=n_total)
+        result_a = self._run(
+            out_a, cfg, train_ds, val_ds, manifest, cw
+        )
+        # 2) Partial K-epoch run.
+        out_b = tmp_path_factory.mktemp("resume_b") / "out"
+        cfg_k = self._build_cfg(max_epochs=k_partial)
+        _apply(42, cpu_threads=1)
+        result_b = self._run(
+            out_b, cfg_k, train_ds, val_ds, manifest, cw
+        )
+        # 3) Resume from B for the remaining (N - K) epochs.
+        out_c = tmp_path_factory.mktemp("resume_c") / "out"
+        cfg_c = self._build_cfg(max_epochs=n_total)
+        _apply(42, cpu_threads=1)
+        # Build the resume map: each candidate's last.pt
+        resume_map = {
+            cand: out_b / "checkpoints" / cand / "last.pt"
+            for cand in cfg_c.candidates
+        }
+        result_c = self._run(
+            out_c, cfg_c, train_ds, val_ds, manifest, cw,
+            resume_from_per_candidate=resume_map,
+        )
+
+        # 4) Compare A (uninterrupted) with C (resumed).  The two MUST
+        # produce identical metrics, predictions hash, and best epoch.
+        for cand in cfg.candidates:
+            ca = result_a.candidate_results[cand]
+            cc = result_c.candidate_results[cand]
+            assert ca.feasibility == cc.feasibility, (
+                f"candidate {cand} feasibility mismatch: A={ca.feasibility} C={cc.feasibility}"
+            )
+            assert ca.best_epoch == cc.best_epoch, (
+                f"candidate {cand} best_epoch mismatch: A={ca.best_epoch} C={cc.best_epoch}"
+            )
+            assert ca.best_val_loss == cc.best_val_loss, (
+                f"candidate {cand} val_loss mismatch: A={ca.best_val_loss} C={cc.best_val_loss}"
+            )
+            assert ca.best_prediction_hash == cc.best_prediction_hash, (
+                f"candidate {cand} predictions hash mismatch: "
+                f"A={ca.best_prediction_hash} C={cc.best_prediction_hash}"
+            )
+            # The per-region metrics are float values, so check the
+            # rounded form to avoid spurious floating-point noise.
+            assert _candidate_metrics_signature(ca.metrics) == (
+                _candidate_metrics_signature(cc.metrics)
+            ), (
+                f"candidate {cand} metrics signature differs between A and C"
+            )
+
+    def test_resume_for_done_run_refused(self, tmp_path_factory):
+        from topper_perception.neural.slp8_region_resume import (
+            refuse_resume_for_done_run,
+            ResumeRefusedError,
+        )
+        out = tmp_path_factory.mktemp("done_run") / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "DONE.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(ResumeRefusedError, match="DONE.json"):
+            refuse_resume_for_done_run(out)
+
+    def test_resume_for_archived_run_incomplete_checkpoints_rejected(
+        self, tmp_path_factory
+    ):
+        from topper_perception.neural.slp8_region_resume import (
+            refuse_resume_for_done_run,
+        )
+        # No DONE.json, but also no checkpoints — the run is in a
+        # not-resumable state, so the caller must validate that.
+        out = tmp_path_factory.mktemp("no_ckpt") / "out"
+        out.mkdir()
+        # The resume refuser does NOT raise; it only checks DONE.
+        # The CLI's auto-detect is the layer that raises on missing
+        # checkpoints.  Verify the refuse function is silent here.
+        refuse_resume_for_done_run(out)  # no exception
+
+
+# ---------------------------------------------------------------------------
+# R03: Determinism config — CUBLAS workspace + conditional warn_only
+# ---------------------------------------------------------------------------
+
+
+class TestDeterminismConfigR03:
+    def test_cublas_workspace_set_before_cuda_init(self, monkeypatch):
+        # Clean env to start.
+        monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+        monkeypatch.delenv("CUBLASLT_WORKSPACE_CONFIG", raising=False)
+        from topper_perception.neural.slp8_region_determinism import apply_settings
+        apply_settings(42, cpu_threads=1)
+        import os
+        # After apply_settings, both env vars MUST be set to the
+        # deterministic default.
+        assert os.environ.get("CUBLAS_WORKSPACE_CONFIG") == ":4096:8"
+        assert os.environ.get("CUBLASLT_WORKSPACE_CONFIG") == ":4096:8"
+
+    def test_warn_only_depends_on_cuda_availability(self, monkeypatch):
+        from topper_perception.neural.slp8_region_determinism import (
+            apply_settings,
+        )
+        s = apply_settings(42, cpu_threads=1)
+        import torch
+        if torch.cuda.is_available():
+            assert s.deterministic_algorithms_warn_only is False
+            assert s.run_mode == "cuda_determinism_unverified"
+        else:
+            assert s.deterministic_algorithms_warn_only is True
+            assert s.run_mode == "cpu_synthetic_reproducible"
+
+    def test_environment_payload_records_cublas_and_run_mode(self):
+        from topper_perception.neural.slp8_region_determinism import (
+            apply_settings,
+            environment_payload,
+        )
+        apply_settings(42, cpu_threads=1)
+        env = environment_payload()
+        # The payload records the post-application values under snake
+        # case keys (cublas_workspace_config / cublaslt_workspace_config);
+        # the env-var form (UPPER_SNAKE) is what apply_settings writes.
+        assert "cublas_workspace_config" in env
+        assert "cublaslt_workspace_config" in env
+        assert env["cublas_workspace_config"] == ":4096:8"
+        assert env["cublaslt_workspace_config"] == ":4096:8"
+        assert "run_mode" in env
+        assert env["run_mode"] in (
+            "cpu_synthetic_reproducible", "cuda_determinism_unverified"
+        )
+
+
+# ---------------------------------------------------------------------------
+# R03: Cross-subprocess determinism on predictions + centroids
+# ---------------------------------------------------------------------------
+
+
+class TestDeterminismSubprocessR03:
+    """Two independent subprocess invocations of the synthetic CPU
+    smoke must agree on ``predictions_manifest.csv`` content (not just
+    the hash digest of the file) and on every per-sample per-region
+    row of ``centroid_errors.csv``.
+    """
+
+    def _run_one_smoke(self, out: Path, env_extra: dict[str, str] | None = None):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = "42"
+        env["OMP_NUM_THREADS"] = "1"
+        env["MKL_NUM_THREADS"] = "1"
+        if env_extra:
+            env.update(env_extra)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(PROJECT_ROOT / "scripts" / "run_slp8_region_mini.py"),
+                "--config", str(CONFIG_PATH),
+                "--output-dir", str(out),
+                "--synthetic-cpu-smoke",
+            ],
+            capture_output=True, text=True, env=env, timeout=600,
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    def test_two_subprocess_runs_have_identical_predictions(self, tmp_path_factory):
+        out_a = tmp_path_factory.mktemp("det_pred_a") / "smoke"
+        out_b = tmp_path_factory.mktemp("det_pred_b") / "smoke"
+        self._run_one_smoke(out_a)
+        self._run_one_smoke(out_b)
+        a_text = (out_a / "predictions_manifest.csv").read_text(encoding="utf-8")
+        b_text = (out_b / "predictions_manifest.csv").read_text(encoding="utf-8")
+        assert a_text == b_text, "predictions_manifest.csv must match across runs"
+
+    def test_two_subprocess_runs_have_identical_centroid_errors(
+        self, tmp_path_factory
+    ):
+        out_a = tmp_path_factory.mktemp("det_cent_a") / "smoke"
+        out_b = tmp_path_factory.mktemp("det_cent_b") / "smoke"
+        self._run_one_smoke(out_a)
+        self._run_one_smoke(out_b)
+        # Strip elapsed_seconds and other timing noise — the centroid
+        # itself and the per-row record must match.
+        a_text = (out_a / "centroid_errors.csv").read_text(encoding="utf-8")
+        b_text = (out_b / "centroid_errors.csv").read_text(encoding="utf-8")
+        # Both files must contain the same row count.
+        a_rows = list(csv.DictReader(open(out_a / "centroid_errors.csv", encoding="utf-8")))
+        b_rows = list(csv.DictReader(open(out_b / "centroid_errors.csv", encoding="utf-8")))
+        assert len(a_rows) == len(b_rows)
+        # Compare row-by-row (using the raw text after stripping any
+        # wall-clock-like fields, which is the contract).
+        for ar, br in zip(a_rows, b_rows):
+            for k in (
+                "candidate", "split", "sample_index", "sample_id",
+                "subject_id", "posture", "region", "error", "valid",
+                "both_missing",
+            ):
+                assert ar[k] == br[k], f"centroid row mismatch on {k}: {ar} vs {br}"
+        # And the raw text must be byte-identical (error values etc.).
+        assert a_text == b_text

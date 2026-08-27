@@ -146,6 +146,35 @@ class ResourceBudgetState:
         self._t_candidate_start = now
         self._peak_cuda_mb = 0.0
 
+    def snapshot(self) -> BudgetAccumulatorState:
+        """Return the persisted accumulated state for the checkpoint."""
+
+        return BudgetAccumulatorState(
+            candidate_seconds_consumed=float(self._candidate_seconds_consumed),
+            last_candidate_peak_cuda_mb=float(self._peak_cuda_mb),
+        )
+
+    def restore(self, state: BudgetAccumulatorState) -> None:
+        """Restore the accumulated state from a checkpoint.
+
+        The wall-clock is reset to "now" because the previous run's
+        absolute time stamps are meaningless; only the cumulative
+        spent budget and the last-candidate peak memory are carried
+        over so the resumed run inherits the same effective budget.
+        """
+
+        if state.candidate_seconds_consumed < 0:
+            raise ValueError(
+                f"negative accumulated time {state.candidate_seconds_consumed}; refusing to restore"
+            )
+        if state.last_candidate_peak_cuda_mb < 0:
+            raise ValueError(
+                f"negative peak CUDA MiB {state.last_candidate_peak_cuda_mb}; refusing to restore"
+            )
+        self._candidate_seconds_consumed = float(state.candidate_seconds_consumed)
+        self._peak_cuda_mb = float(state.last_candidate_peak_cuda_mb)
+        self._t_candidate_start = time.monotonic()
+
     @property
     def total_elapsed_seconds(self) -> float:
         """Sum of all per-candidate elapseds plus the current candidate's."""
@@ -284,3 +313,37 @@ def resource_budget_from_config(payload: Mapping[str, Any]) -> ResourceBudget:
         max_wall_seconds_total=float(payload["max_total_wall_minutes"]) * 60.0,
         max_peak_cuda_mb=float(payload["max_peak_cuda_mb"]),
     )
+
+
+# ---------------------------------------------------------------------------
+# Snapshot of accumulated budget state (R03)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BudgetAccumulatorState:
+    """The serializable accumulated state of :class:`ResourceBudgetState`.
+
+    Persisted into every checkpoint so a resume does not double-count
+    time across the previous (interrupted) run and the new run.
+    """
+
+    candidate_seconds_consumed: float
+    last_candidate_peak_cuda_mb: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_seconds_consumed": float(self.candidate_seconds_consumed),
+            "last_candidate_peak_cuda_mb": float(self.last_candidate_peak_cuda_mb),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "BudgetAccumulatorState":
+        return cls(
+            candidate_seconds_consumed=float(
+                payload.get("candidate_seconds_consumed", 0.0)
+            ),
+            last_candidate_peak_cuda_mb=float(
+                payload.get("last_candidate_peak_cuda_mb", 0.0)
+            ),
+        )
