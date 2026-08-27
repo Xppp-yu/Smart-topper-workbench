@@ -2746,12 +2746,6 @@ def write_mini_artifacts(
                         if rec.sample_index < len(postures)
                         else ""
                     )
-                    if rec.both_missing:
-                        valid = False
-                        invalid_reason = "both_gt_and_pred_absent"
-                    else:
-                        valid = True
-                        invalid_reason = ""
                     writer.writerow({
                         "candidate": cand_name,
                         "split": split_name,
@@ -2761,8 +2755,8 @@ def write_mini_artifacts(
                         "posture": posture,
                         "region": rec.region_id,
                         "error": rec.error,
-                        "valid": valid,
-                        "invalid_reason": invalid_reason,
+                        "valid": rec.valid,
+                        "invalid_reason": rec.invalid_reason,
                         "both_missing": rec.both_missing,
                     })
 

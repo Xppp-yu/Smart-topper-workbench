@@ -757,8 +757,11 @@ class TestCentroidErrorContract:
         pred = np.zeros((192, 84), dtype=np.int64)
         records = compute_centroid_errors([lab], [pred], ["x"])
         assert all(r.both_missing for r in records)
+        assert all(not r.valid for r in records)
+        assert all(r.invalid_reason == "both_gt_and_pred_absent" for r in records)
         summary = summarize_centroid_errors(records)
         assert summary.overall_mean == 0.0
+        assert summary.n_invalid == len(FOREGROUND_CLASS_IDS)
         for cid in FOREGROUND_CLASS_IDS:
             assert summary.per_region_mean[cid] == 0.0
             assert summary.per_region_count[cid] == 0
@@ -772,7 +775,24 @@ class TestCentroidErrorContract:
         for rec in records:
             if rec.region_id == 1:
                 assert not rec.both_missing
+                assert rec.valid
                 assert rec.error == 1.0
+
+    def test_prediction_only_is_invalid_and_excluded(self):
+        H, W = DEFAULT_IMAGE_SHAPE
+        lab = np.zeros((H, W), dtype=np.int64)
+        pred = np.zeros((H, W), dtype=np.int64)
+        pred[10:50, 10:40] = 1
+
+        records = compute_centroid_errors([lab], [pred], ["x"])
+        region = next(rec for rec in records if rec.region_id == 1)
+
+        assert not region.valid
+        assert not region.both_missing
+        assert region.invalid_reason == "gt_absent_pred_present"
+        summary = summarize_centroid_errors(records)
+        assert summary.per_region_count[1] == 0
+        assert summary.per_region_mean[1] == 0.0
 
     def test_both_present_records_distance_normalized(self):
         H, W = DEFAULT_IMAGE_SHAPE
@@ -784,6 +804,7 @@ class TestCentroidErrorContract:
         for rec in records:
             if rec.region_id == 1:
                 assert rec.error == 0.0
+                assert rec.valid
                 assert not rec.both_missing
 
     def test_offset_centroid_error_is_positive(self):
