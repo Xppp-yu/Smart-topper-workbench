@@ -64,14 +64,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from topper_perception.neural.slp8_region_b01_contract import (
-    EXPECTED_TRAIN_SAMPLES,
-    EXPECTED_VAL_SAMPLES,
-    EXPECTED_TEST_SAMPLES,
-    EXPECTED_TRAIN_SUBJECTS,
-    EXPECTED_VAL_SUBJECTS,
-    EXPECTED_TEST_SUBJECTS,
     B01ContractError,
+    B01ContractExpected,
     B01FreezeSnapshot,
+    B01FreezeStructuralTest,
+    build_b01_contract_expected,
     check_freeze_manifest_file_consistency,
     verify_b01_contract,
 )
@@ -187,24 +184,119 @@ def tmp_output_dir() -> Path:
     shutil.rmtree(d, ignore_errors=True)
 
 
-def _make_snapshot(**overrides: Any) -> B01FreezeSnapshot:
-    base = dict(
-        freeze_dir=Path("/fake"),
-        train_count=3645,
-        val_count=450,
-        test_count=0,
-        train_subjects=tuple(f"{i:05d}" for i in range(81)),
-        val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
-        test_subjects=(),
-        freeze_manifest_sha256="a" * 64,
-        a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
-        provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
-        source_review_status="NOT_REVIEWED",
-        setting="danaLab",
-        cover="uncover",
+def _make_expected(
+    *,
+    train_count: int = 3645,
+    val_count: int = 450,
+    test_count: int = 0,
+    train_subjects: int = 81,
+    val_subjects: int = 10,
+    test_subjects: int = 0,
+    a06_split_sha256: str = A06_SPLIT_SHA256_EXPECTED,
+    provenance: str = "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+    source_review_status: str = "NOT_REVIEWED",
+    setting: str = "danaLab",
+    cover: str = "uncover",
+    freeze_manifest_core_sha256: str = "f" * 64,
+    structural_test_samples: int = 495,
+    structural_test_subjects: int = 11,
+) -> B01ContractExpected:
+    return B01ContractExpected(
+        train_count=train_count,
+        val_count=val_count,
+        test_count=test_count,
+        train_subjects=train_subjects,
+        val_subjects=val_subjects,
+        test_subjects=test_subjects,
+        a06_split_sha256=a06_split_sha256,
+        provenance=provenance,
+        source_review_status=source_review_status,
+        setting=setting,
+        cover=cover,
+        freeze_manifest_core_sha256=freeze_manifest_core_sha256,
+        structural_test_samples=structural_test_samples,
+        structural_test_subjects=structural_test_subjects,
     )
-    base.update(overrides)
-    return B01FreezeSnapshot(**base)
+
+
+def _make_a06_split() -> "A06Split":
+    """Helper to build a minimal A06Split instance for tests."""
+    from topper_perception.io.slp8_training_table_freeze import A06Split
+    return A06Split(
+        raw={},
+        subject_to_ml_split={"00000": "train"},
+        subject_to_setting={"00000": "danaLab"},
+        split_counts_subjects={"train": 1},
+        split_counts_samples={"train": 1, "val": 0, "test": 0},
+        sha256="0" * 64,
+    )
+
+
+def _make_normalization_stats():
+    from topper_perception.io.slp8_training_table_freeze import NormalizationStats
+    return NormalizationStats(
+        n_samples=0, n_pixels=0,
+        finite_pixel_count=0, non_finite_pixel_count=0,
+        global_min=0.0, global_max=0.0, global_mean=0.0, global_std=0.0,
+        method="raw_passthrough_with_minmax_reference",
+        epsilon=1e-12, raw_dtype="float64",
+        raw_semantics="raw_pmarray_response", fit_split="train",
+        subject_count=0, per_subject_count_min=0, per_subject_count_max=0,
+        fitted_at_utc="2026-01-01T00:00:00+00:00",
+    )
+
+
+def _make_class_stats():
+    from topper_perception.io.slp8_training_table_freeze import ClassStats
+    return ClassStats(
+        n_samples=0, n_pixels=0,
+        per_class_pixel_count={}, per_class_pixel_ratio={},
+        missing_class_samples={}, per_posture_count={},
+        per_subject_count_min=0, per_subject_count_max=0,
+        subject_count=0, small_region_sample_count=0,
+        tiny_region_sample_count=0, onehot_roundtrip_ok_count=0,
+    )
+
+
+def _make_snapshot(
+    *,
+    freeze_manifest_sha256: str = "f" * 64,
+    a06_split_sha256: str = A06_SPLIT_SHA256_EXPECTED,
+    observed_settings: tuple[str, ...] = ("danaLab",),
+    observed_covers: tuple[str, ...] = ("uncover",),
+    observed_provenances: tuple[str, ...] = (
+        "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+    ),
+    observed_review_statuses: tuple[str, ...] = ("NOT_REVIEWED",),
+    train_count: int = 3645,
+    val_count: int = 450,
+    structural_sample_count: int = 495,
+    structural_subject_count: int = 11,
+) -> B01FreezeSnapshot:
+    train_subjects = tuple(f"{i:05d}" for i in range(81))
+    val_subjects = tuple(f"{i:05d}" for i in range(100, 110))
+    return B01FreezeSnapshot(
+        freeze_dir=Path("/fake"),
+        train_count=train_count,
+        val_count=val_count,
+        train_subjects=train_subjects,
+        val_subjects=val_subjects,
+        train_manifest_sha256="b" * 64,
+        val_manifest_sha256="c" * 64,
+        observed_settings=observed_settings,
+        observed_covers=observed_covers,
+        observed_provenances=observed_provenances,
+        observed_review_statuses=observed_review_statuses,
+        structural_test=B01FreezeStructuralTest(
+            sample_count=structural_sample_count,
+            subject_count=structural_subject_count,
+            manifest_sha256="d" * 64,
+        ),
+        a06_split_sha256=a06_split_sha256,
+        freeze_manifest_core_sha256=freeze_manifest_sha256,
+        core_train_manifest_sha256="b" * 64,
+        core_val_manifest_sha256="c" * 64,
+    )
 
 
 def _build_identity(candidate: str = MODEL_VERSION) -> CheckpointIdentity:
@@ -1058,47 +1150,145 @@ class TestDeterminism:
 class TestB01Contract:
     def test_valid_snapshot_passes(self):
         s = _make_snapshot()
-        report = verify_b01_contract(s)
-        assert report.train_count == EXPECTED_TRAIN_SAMPLES
-        assert report.val_count == EXPECTED_VAL_SAMPLES
-        assert report.test_count == EXPECTED_TEST_SAMPLES
+        expected = _make_expected()
+        report = verify_b01_contract(s, expected)
+        assert report.actual["train_count"] == 3645
+        assert report.actual["val_count"] == 450
+        assert report.actual["a06_split_sha256"] == A06_SPLIT_SHA256_EXPECTED
 
     def test_wrong_train_count_rejected(self):
+        s = _make_snapshot(train_count=2000)
+        expected = _make_expected()
         with pytest.raises(B01ContractError, match="train_count"):
-            verify_b01_contract(_make_snapshot(train_count=2000))
+            verify_b01_contract(s, expected)
 
     def test_wrong_val_count_rejected(self):
+        s = _make_snapshot(val_count=100)
+        expected = _make_expected()
         with pytest.raises(B01ContractError, match="val_count"):
-            verify_b01_contract(_make_snapshot(val_count=100))
+            verify_b01_contract(s, expected)
 
-    def test_nonzero_test_count_rejected(self):
-        with pytest.raises(B01ContractError, match="test_count"):
-            verify_b01_contract(_make_snapshot(test_count=495))
+    def test_wrong_train_subjects_rejected(self):
+        s = B01FreezeSnapshot(
+            freeze_dir=Path("/fake"),
+            train_count=3645, val_count=450,
+            train_subjects=tuple(f"{i:05d}" for i in range(80)),  # only 80
+            val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
+            train_manifest_sha256="b" * 64,
+            val_manifest_sha256="c" * 64,
+            observed_settings=("danaLab",),
+            observed_covers=("uncover",),
+            observed_provenances=("V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",),
+            observed_review_statuses=("NOT_REVIEWED",),
+            structural_test=B01FreezeStructuralTest(495, 11, "d" * 64),
+            a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            freeze_manifest_core_sha256="f" * 64,
+            core_train_manifest_sha256="b" * 64,
+            core_val_manifest_sha256="c" * 64,
+        )
+        with pytest.raises(B01ContractError, match="train_subjects"):
+            verify_b01_contract(s, _make_expected())
+
+    def test_structural_test_mismatch_rejected(self):
+        s = _make_snapshot(structural_sample_count=494)  # 1 off from 495
+        with pytest.raises(B01ContractError, match="structural test sample_count"):
+            verify_b01_contract(s, _make_expected())
 
     def test_wrong_a06_sha_rejected(self):
+        s = _make_snapshot(a06_split_sha256="deadbeef" * 8)
         with pytest.raises(B01ContractError, match="a06_split_sha256"):
-            verify_b01_contract(_make_snapshot(a06_split_sha256="deadbeef" * 8))
+            verify_b01_contract(s, _make_expected())
 
-    def test_wrong_provenance_rejected(self):
-        with pytest.raises(B01ContractError, match="provenance"):
-            verify_b01_contract(_make_snapshot(provenance="MANUAL"))
+    def test_setting_must_be_singleton_danaLab(self):
+        s = _make_snapshot(observed_settings=("simLab",))
+        with pytest.raises(B01ContractError, match="observed_settings"):
+            verify_b01_contract(s, _make_expected())
 
-    def test_wrong_setting_rejected(self):
-        with pytest.raises(B01ContractError, match="setting"):
-            verify_b01_contract(_make_snapshot(setting="simLab"))
+    def test_setting_must_be_consistent_across_rows(self):
+        # Two different observed values is also rejected (must be singleton).
+        s = _make_snapshot(observed_settings=("danaLab", "simLab"))
+        with pytest.raises(B01ContractError, match="observed_settings"):
+            verify_b01_contract(s, _make_expected())
 
-    def test_wrong_cover_rejected(self):
-        with pytest.raises(B01ContractError, match="cover"):
-            verify_b01_contract(_make_snapshot(cover="cover1"))
+    def test_cover_must_be_singleton_uncover(self):
+        s = _make_snapshot(observed_covers=("cover1",))
+        with pytest.raises(B01ContractError, match="observed_covers"):
+            verify_b01_contract(s, _make_expected())
 
-    def test_bad_freeze_sha_rejected(self):
-        with pytest.raises(B01ContractError, match="freeze_manifest_sha256"):
-            verify_b01_contract(_make_snapshot(freeze_manifest_sha256="not-hex"))
+    def test_provenance_must_be_in_observed(self):
+        s = _make_snapshot(observed_provenances=("MANUAL",))
+        with pytest.raises(B01ContractError, match="observed_provenances"):
+            verify_b01_contract(s, _make_expected())
+
+    def test_review_status_must_be_in_observed(self):
+        s = _make_snapshot(observed_review_statuses=("REVIEWED",))
+        with pytest.raises(B01ContractError, match="observed_review_statuses"):
+            verify_b01_contract(s, _make_expected())
+
+    def test_freeze_manifest_core_sha_mismatch_rejected(self):
+        s = _make_snapshot(freeze_manifest_sha256="a" * 64)
+        expected = _make_expected(freeze_manifest_core_sha256="b" * 64)
+        with pytest.raises(B01ContractError, match="freeze_manifest core sha256"):
+            verify_b01_contract(s, expected)
+
+    def test_train_manifest_sha_mismatch_rejected(self):
+        # Construct a snapshot whose train_manifest_sha does not match
+        # the recorded core value.  We build a fresh snapshot from real
+        # rows and then patch the train_manifest_sha to be a different
+        # value.  The validator must detect the mismatch.
+        from topper_perception.io.slp8_training_table_freeze import (
+            FreezeRow, manifest_sha256,
+        )
+        train_rows = [
+            FreezeRow(
+                sample_id=f"SLP:danaLab:{i:05d}:uncover:000000",
+                ml_split="train", source_split="VAL", setting="danaLab",
+                subject_id=f"{i:05d}", cover="uncover", frame_id=0,
+                posture="SUPINE", pressure_npy="p", region_label_npy="l",
+                region_onehot_npy="o", points_csv="c", height="192", width="84",
+                class_ids_present="0|1|2|3|4|5|6|7|8",
+                annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+                source_review_status="NOT_REVIEWED",
+                export_version="1.1.0", export_status="EXPORTED",
+                source_pmarray_sha256="z" * 64,
+                background_pixel_count="1", body_pixel_count="1",
+                clipped_ratio="0.0", onehot_valid="True",
+                onehot_roundtrip="True",
+            ) for i in range(2)
+        ]
+        s = B01FreezeSnapshot(
+            freeze_dir=Path("/fake"),
+            train_count=2, val_count=2,
+            train_subjects=("00000", "00001"),
+            val_subjects=("00100", "00101"),
+            # Set train_manifest_sha to a different value than what
+            # was computed from the actual rows.
+            train_manifest_sha256="0" * 64,
+            val_manifest_sha256=manifest_sha256([]),
+            observed_settings=("danaLab",),
+            observed_covers=("uncover",),
+            observed_provenances=("V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",),
+            observed_review_statuses=("NOT_REVIEWED",),
+            structural_test=B01FreezeStructuralTest(495, 11, "d" * 64),
+            a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            freeze_manifest_core_sha256="f" * 64,
+            core_train_manifest_sha256="b" * 64,
+            core_val_manifest_sha256=manifest_sha256([]),
+        )
+        with pytest.raises(B01ContractError, match="manifest sha256"):
+            verify_b01_contract(s, _make_expected())
 
     def test_freeze_manifest_file_consistency_raises_on_mismatch(self, tmp_output_dir):
+        # Build a manifest with a real core; its computed core SHA
+        # will NOT match the caller-supplied SHA so the check fails.
         manifest_path = tmp_output_dir / "freeze_manifest.json"
-        manifest_path.write_text("{}", encoding="utf-8")
-        with pytest.raises(B01ContractError, match="freeze_manifest SHA mismatch"):
+        core = {"task_id": "x", "a06_split_sha256": "0" * 64}
+        import json as _json_for_test
+        manifest_path.write_text(
+            _json_for_test.dumps({"core": core, "meta": {}}),
+            encoding="utf-8",
+        )
+        with pytest.raises(B01ContractError, match="core SHA mismatch"):
             check_freeze_manifest_file_consistency(
                 tmp_output_dir, freeze_manifest_sha256="a" * 64
             )
@@ -1108,6 +1298,47 @@ class TestB01Contract:
             check_freeze_manifest_file_consistency(
                 tmp_output_dir, freeze_manifest_sha256="a" * 64
             )
+
+    def test_freeze_manifest_file_consistency_raises_on_missing_core(self, tmp_output_dir):
+        # File exists but has no 'core' key — fail-closed.
+        manifest_path = tmp_output_dir / "freeze_manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+        with pytest.raises(B01ContractError, match="missing 'core' key"):
+            check_freeze_manifest_file_consistency(
+                tmp_output_dir, freeze_manifest_sha256="a" * 64
+            )
+
+
+class TestB01ContractExpected:
+    def test_build_from_config_validates_required_fields(self, fresh_config):
+        # Without b01_freeze_manifest_core_sha256_expected: fail.
+        bad = {k: v for k, v in fresh_config.items()
+               if k != "b01_freeze_manifest_core_sha256_expected"}
+        with pytest.raises(B01ContractError, match="b01_freeze_manifest_core_sha256_expected"):
+            build_b01_contract_expected(bad)
+        # Without b01_structural_test: fail.
+        bad2 = {k: v for k, v in fresh_config.items() if k != "b01_structural_test"}
+        with pytest.raises(B01ContractError, match="b01_structural_test"):
+            build_b01_contract_expected(bad2)
+        # Without structural sample_count: fail.
+        bad3 = {**fresh_config, "b01_structural_test": {"subject_count": 11}}
+        with pytest.raises(B01ContractError, match="sample_count"):
+            build_b01_contract_expected(bad3)
+        # Without structural subject_count: fail.
+        bad4 = {**fresh_config, "b01_structural_test": {"sample_count": 495}}
+        with pytest.raises(B01ContractError, match="subject_count"):
+            build_b01_contract_expected(bad4)
+
+    def test_build_from_valid_config(self, fresh_config):
+        expected = build_b01_contract_expected(fresh_config)
+        assert expected.train_count == fresh_config["expected_split_counts"]["train"]
+        assert expected.val_count == fresh_config["expected_split_counts"]["val"]
+        assert expected.freeze_manifest_core_sha256 == fresh_config[
+            "b01_freeze_manifest_core_sha256_expected"
+        ]
+        assert expected.structural_test_samples == fresh_config[
+            "b01_structural_test"
+        ]["sample_count"]
 
 
 # ---------------------------------------------------------------------------
@@ -1799,6 +2030,10 @@ class TestCLITerminalStateStopped:
         stopped = json.loads((out / "STOPPED.json").read_text(encoding="utf-8"))
         assert stopped["status"] == "STOPPED"
         assert stopped["terminal_state"] == "STOPPED"
+        # STOPPED is only resumable if each candidate completed an epoch
+        # and persisted its checkpoint before the budget transition.
+        for candidate in B04_CANDIDATE_NAMES:
+            assert (out / "checkpoints" / candidate / "last.pt").is_file()
 
 
 class TestCLITerminalStateFailed:
@@ -1929,45 +2164,47 @@ def _make_fake_b01_freeze_dir(root: Path, *, train_count: int = 3645,
     ``n_test_samples`` is 0.
     """
 
+    from topper_perception.io.slp8_training_table_freeze import (
+        FreezeRow, manifest_sha256 as _b01_manifest_sha256,
+    )
     root.mkdir(parents=True, exist_ok=True)
 
-    # Build per-class row generators
     def _rows(split: str, n_subjects: int, n_samples: int, subj_offset: int):
         out = []
         per_subj = n_samples // n_subjects
         for i in range(n_subjects):
             sid = f"{subj_offset + i:05d}"
             for j in range(per_subj):
-                out.append({
-                    "sample_id": f"SLP:danaLab:{sid}:uncover:{j:06d}",
-                    "ml_split": split,
-                    "source_split": "VAL",
-                    "setting": "danaLab",
-                    "subject_id": sid,
-                    "cover": "uncover",
-                    "frame_id": j,
-                    "posture": "SUPINE",
-                    "pressure_npy": f"pressure/{sid}_{j:06d}.npy",
-                    "region_label_npy": f"labels/{sid}_{j:06d}.npy",
-                    "region_onehot_npy": f"onehot/{sid}_{j:06d}.npy",
-                    "points_csv": f"points/{sid}.csv",
-                    "height": "192",
-                    "width": "84",
-                    "class_ids_present": "0|1|2|3|4|5|6|7|8",
-                    "annotation_provenance": (
+                out.append(FreezeRow(
+                    sample_id=f"SLP:danaLab:{sid}:uncover:{j:06d}",
+                    ml_split=split,
+                    source_split="VAL",
+                    setting="danaLab",
+                    subject_id=sid,
+                    cover="uncover",
+                    frame_id=j,
+                    posture="SUPINE",
+                    pressure_npy=f"pressure/{sid}_{j:06d}.npy",
+                    region_label_npy=f"labels/{sid}_{j:06d}.npy",
+                    region_onehot_npy=f"onehot/{sid}_{j:06d}.npy",
+                    points_csv=f"points/{sid}.csv",
+                    height="192",
+                    width="84",
+                    class_ids_present="0|1|2|3|4|5|6|7|8",
+                    annotation_provenance=(
                         "WRONG_PROVENANCE" if bad_provenance
                         else "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED"
                     ),
-                    "source_review_status": "NOT_REVIEWED",
-                    "export_version": "1.1.0",
-                    "export_status": "EXPORTED",
-                    "source_pmarray_sha256": "a" * 64,
-                    "background_pixel_count": "100",
-                    "body_pixel_count": "50",
-                    "clipped_ratio": "0.0",
-                    "onehot_valid": "True",
-                    "onehot_roundtrip": "True",
-                })
+                    source_review_status="NOT_REVIEWED",
+                    export_version="1.1.0",
+                    export_status="EXPORTED",
+                    source_pmarray_sha256="a" * 64,
+                    background_pixel_count="100",
+                    body_pixel_count="50",
+                    clipped_ratio="0.0",
+                    onehot_valid="True",
+                    onehot_roundtrip="True",
+                ))
         return out
 
     train_rows = _rows("train", train_subjects, train_count, 0)
@@ -1975,39 +2212,94 @@ def _make_fake_b01_freeze_dir(root: Path, *, train_count: int = 3645,
     test_rows = _rows("test", test_count_in_manifest // 45, test_count_in_manifest,
                       train_subjects + val_subjects) if test_count_in_manifest else []
 
-    # Write the CSV manifests that B01 reads.
+    # Write the CSV manifests that B01 reads.  The CSV format
+    # follows the A09R layout (strings for scalar fields,
+    # pipe-joined list for ``class_ids_present``).
+    def _row_to_csv_dict(row: "FreezeRow") -> dict[str, str]:
+        d = row.to_dict()
+        return {
+            "sample_id": d["sample_id"],
+            "ml_split": d["ml_split"],
+            "source_split": d["source_split"],
+            "setting": d["setting"],
+            "subject_id": d["subject_id"],
+            "cover": d["cover"],
+            "frame_id": str(d["frame_id"]),
+            "posture": d["posture"],
+            "pressure_npy": d["pressure_npy"],
+            "region_label_npy": d["region_label_npy"],
+            "region_onehot_npy": d["region_onehot_npy"],
+            "points_csv": d["points_csv"],
+            "height": str(d["height"]),
+            "width": str(d["width"]),
+            "class_ids_present": "".join(str(x) for x in d["class_ids_present"]),
+            "annotation_provenance": d["annotation_provenance"],
+            "source_review_status": d["source_review_status"],
+            "export_version": d["export_version"],
+            "export_status": d["export_status"],
+            "source_pmarray_sha256": d["source_pmarray_sha256"],
+            "background_pixel_count": str(d["background_pixel_count"]),
+            "body_pixel_count": str(d["body_pixel_count"]),
+            "clipped_ratio": str(d["clipped_ratio"]),
+            "onehot_valid": str(d["onehot_valid"]),
+            "onehot_roundtrip": str(d["onehot_roundtrip"]),
+        }
+
     import csv as _csv
-    fields = list(train_rows[0].keys())
+    fields = list(FreezeRow.__dataclass_fields__.keys())
     (root / "train_manifest.csv").write_text(
-        _csv_rows_text(train_rows, fields), encoding="utf-8"
+        _csv_rows_text([_row_to_csv_dict(r) for r in train_rows], fields), encoding="utf-8"
     )
     (root / "val_manifest.csv").write_text(
-        _csv_rows_text(val_rows, fields), encoding="utf-8"
+        _csv_rows_text([_row_to_csv_dict(r) for r in val_rows], fields), encoding="utf-8"
     )
     if test_rows:
         (root / "test_manifest.csv").write_text(
-            _csv_rows_text(test_rows, fields), encoding="utf-8"
+            _csv_rows_text([_row_to_csv_dict(r) for r in test_rows], fields), encoding="utf-8"
         )
 
     # A minimal freeze_manifest.json that the B01 loader accepts.
+    # The split manifest SHAs MUST be computed from the parsed CSV
+    # rows so they match what ``from_freeze_tables`` will compute.
+    # We achieve that by writing the CSVs first, then using the B01
+    # freeze manifest SHA on the parsed rows.
     import json as _json
     import hashlib as _hashlib
+    from topper_perception.io.slp8_training_table_freeze import (
+        load_b01_freeze_tables,
+    )
+    a06 = (
+        "deadbeef" * 8 if bad_a06
+        else "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706"
+    )
+
+    # Pre-write the manifest with placeholder SHAs; we'll update
+    # below once the CSVs are on disk and re-loaded.
     fm = {
         "core": {
-            "a06_split_sha256_expected": (
-                "deadbeef" * 8 if bad_a06 else
-                "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706"
+            "a06_split_sha256": a06,
+            "expected_provenance": (
+                "WRONG_PROVENANCE" if bad_provenance
+                else "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED"
             ),
-            "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
-            "source_review_status": "NOT_REVIEWED",
-            "setting": "danaLab",
-            "cover": "uncover",
-        },
-        "splits": {
-            "train": {"sample_count": train_count, "subject_count": train_subjects},
-            "val": {"sample_count": val_count, "subject_count": val_subjects},
-            "test": {"sample_count": test_count_in_manifest,
-                     "subject_count": test_count_in_manifest // 45},
+            "expected_review_status": "NOT_REVIEWED",
+            "splits": {
+                "train": {
+                    "sample_count": train_count,
+                    "subject_count": train_subjects,
+                    "manifest_sha256": "0" * 64,
+                },
+                "val": {
+                    "sample_count": val_count,
+                    "subject_count": val_subjects,
+                    "manifest_sha256": "0" * 64,
+                },
+                "test": {
+                    "sample_count": test_count_in_manifest,
+                    "subject_count": test_count_in_manifest // 45,
+                    "manifest_sha256": "0" * 64,
+                },
+            },
         },
     }
     fm_text = _json.dumps(fm)
@@ -2029,8 +2321,36 @@ def _make_fake_b01_freeze_dir(root: Path, *, train_count: int = 3645,
         "per_class_pixel_ratio": {str(c): 0.1 for c in range(9)},
     }), encoding="utf-8")
 
-    # A minimal split manifest: the B01 loader actually parses CSV
-    # from these.  Empty test_manifest.csv suffices when test_count=0.
+    # Re-load the freeze so we can patch the manifest with the
+    # loader-computed split manifest SHAs (which are derived from the
+    # parsed rows, not from the original FreezeRow objects).
+    freeze = load_b01_freeze_tables(root, load_test=False)
+    fm_path = root / "freeze_manifest.json"
+    fm = _json.loads(fm_path.read_text(encoding="utf-8"))
+    fm["core"]["splits"]["train"]["manifest_sha256"] = (
+        freeze.train_manifest_sha256
+    )
+    fm["core"]["splits"]["val"]["manifest_sha256"] = (
+        freeze.val_manifest_sha256
+    )
+    # test_manifest_sha256 is NOT taken from the loader property
+    # because the B01 freeze loader's test_manifest_sha256 uses the
+    # legacy flat-manifest format (no "core" wrapper).  Compute the
+    # SHA directly from the test rows we created so the contract
+    # check can verify the manifest's recorded value matches.
+    if test_count_in_manifest > 0:
+        fm["core"]["splits"]["test"]["manifest_sha256"] = (
+            _b01_manifest_sha256(test_rows)
+        )
+    # Re-stamp the core SHA.
+    fm.pop("freeze_manifest_sha256", None)
+    fm_text = _json.dumps(fm)
+    fm_path.write_text(fm_text, encoding="utf-8")
+    fm["freeze_manifest_sha256"] = _hashlib.sha256(
+        fm_text.encode("utf-8")
+    ).hexdigest()
+    fm_path.write_text(_json.dumps(fm), encoding="utf-8")
+
     return root
 
 
@@ -2047,20 +2367,40 @@ def _csv_rows_text(rows, fields):
 class TestB01ContractEntryLevel:
     """Entry-level negative tests for the real B01 input contract.
 
-    These tests do NOT read TEST label / onehot files; they only build
-    the structural freeze (manifest, train/val CSVs, train_class_stats)
+    These tests do NOT read TEST label / onehot files.  They build
+    a structural freeze (manifest, train/val CSVs, train_class_stats)
     and verify the contract rejects bad input fail-closed.
+
+    Where the B01 freeze loader itself accepts the data, the tests
+    drive the failure through ``from_freeze_tables`` (the real
+    contract entry point).  Where the loader would reject the data
+    first, the tests build a synthetic manifest + FreezeRow lists
+    and pass them through ``from_freeze_tables`` to exercise the
+    real contract path.
     """
+
+    def _good_expected(self, *, core_sha256: str) -> B01ContractExpected:
+        return B01ContractExpected(
+            train_count=3645,
+            val_count=450,
+            test_count=0,
+            train_subjects=81,
+            val_subjects=10,
+            test_subjects=0,
+            a06_split_sha256="024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+            provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            setting="danaLab",
+            cover="uncover",
+            freeze_manifest_core_sha256=core_sha256,
+            structural_test_samples=495,
+            structural_test_subjects=11,
+        )
 
     def test_correct_freeze_passes_contract(self, tmp_path):
         root = _make_fake_b01_freeze_dir(tmp_path / "b01_good")
-        # Verify the snapshot can be built and verify_b01_contract passes.
         from topper_perception.io.slp8_training_table_freeze import (
             load_b01_freeze_tables,
-        )
-        from topper_perception.neural.slp8_region_b01_contract import (
-            B01FreezeSnapshot,
-            verify_b01_contract,
         )
         freeze = load_b01_freeze_tables(root, load_test=False)
         snap = B01FreezeSnapshot.from_freeze_tables(
@@ -2070,70 +2410,326 @@ class TestB01ContractEntryLevel:
             test_rows=None,
             freeze_manifest=freeze.freeze_manifest,
         )
-        report = verify_b01_contract(snap)
-        assert report.train_count == 3645
-        assert report.test_count == 0
-        assert report.a06_split_sha256 == (
+        report = verify_b01_contract(
+            snap, self._good_expected(core_sha256=snap.freeze_manifest_core_sha256)
+        )
+        assert report.actual["train_count"] == 3645
+        assert report.structural_test["sample_count"] == 495
+        assert report.actual["a06_split_sha256"] == (
             "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706"
         )
 
-    def test_bad_a06_sha_rejected_fail_closed(self, tmp_path):
-        from topper_perception.neural.slp8_region_b01_contract import (
-            B01FreezeSnapshot,
-            verify_b01_contract,
-            B01ContractError,
+    def test_missing_a06_in_core_rejected(self, tmp_path):
+        # Build a synthetic manifest that omits a06_split_sha256 from
+        # core.  We can't drive this through the real B01 freeze loader
+        # because the loader does not check this — it only carries
+        # the value through.  We exercise the real ``from_freeze_tables``
+        # + ``verify_b01_contract`` path.
+        from topper_perception.io.slp8_training_table_freeze import (
+            FreezeRow, build_freeze_manifest, A06Split,
+            NormalizationStats, ClassStats,
         )
-        # Build a snapshot directly with a bad A06 SHA.  We bypass the
-        # B01 freeze loader because the loader's own validation would
-        # raise on a SHA mismatch before reaching the contract layer.
-        snap = B01FreezeSnapshot(
-            freeze_dir=tmp_path / "b01_bad_a06",
-            train_count=3645,
-            val_count=450,
-            test_count=0,
-            train_subjects=tuple(f"{i:05d}" for i in range(81)),
-            val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
-            test_subjects=(),
-            freeze_manifest_sha256="a" * 64,
-            a06_split_sha256="deadbeef" * 8,
+        a06 = _make_a06_split()
+        norm = _make_normalization_stats()
+        train_stats = _make_class_stats()
+        val_stats = _make_class_stats()
+        # Build one minimal FreezeRow; we don't actually need real
+        # rows for this test because the failure is in the manifest.
+        from topper_perception.io.slp8_training_table_freeze import (
+            FreezeRow as _FR,
+        )
+        train_row = _FR(
+            sample_id="SLP:danaLab:00000:uncover:000000",
+            ml_split="train", source_split="VAL", setting="danaLab",
+            subject_id="00000", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        val_row = _FR(
+            sample_id="SLP:danaLab:00100:uncover:000000",
+            ml_split="val", source_split="VAL", setting="danaLab",
+            subject_id="00100", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        # The builder writes a06_split_sha256 into the core; we cannot
+        # omit it from the B01 builder output.  Instead, mutate the
+        # builder's output core to remove the field before constructing
+        # the snapshot — this exercises the real contract path.
+        fm = build_freeze_manifest(
+            train_rows=[train_row],
+            val_rows=[val_row],
+            test_rows=[],
+            a06_split=a06,
+            source_manifest_sha256="0" * 64,
+            stats=norm,
+            train_stats=train_stats, val_stats=val_stats,
+        )
+        # Remove the a06_split_sha256 field from the core to simulate
+        # a missing field.  Use pop() and cast to a dict (FrozenMap
+        # may need careful handling).
+        core = dict(fm.core)
+        core.pop("a06_split_sha256", None)
+        freeze_manifest = {"core": core, "meta": fm.meta}
+        with pytest.raises(B01ContractError, match="a06_split_sha256"):
+            B01FreezeSnapshot.from_freeze_tables(
+                freeze_dir=tmp_path / "b01_no_a06",
+                train_rows=[train_row],
+                val_rows=[val_row],
+                test_rows=None,
+                freeze_manifest=freeze_manifest,
+            )
+
+    def test_missing_provenance_in_core_rejected(self, tmp_path):
+        from topper_perception.io.slp8_training_table_freeze import (
+            build_freeze_manifest, A06Split, NormalizationStats, ClassStats,
+            FreezeRow,
+        )
+        a06 = _make_a06_split()
+        norm = _make_normalization_stats()
+        cs = _make_class_stats()
+        row = FreezeRow(
+            sample_id="SLP:danaLab:00000:uncover:000000",
+            ml_split="train", source_split="VAL", setting="danaLab",
+            subject_id="00000", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        fm = build_freeze_manifest(
+            train_rows=[row], val_rows=[], test_rows=[],
+            a06_split=a06, source_manifest_sha256="0" * 64,
+            stats=norm, train_stats=cs, val_stats=cs,
+        )
+        core = dict(fm.core)
+        core.pop("expected_provenance", None)
+        freeze_manifest = {"core": core, "meta": fm.meta}
+        with pytest.raises(B01ContractError, match="expected_provenance"):
+            B01FreezeSnapshot.from_freeze_tables(
+                freeze_dir=tmp_path / "b01_no_provenance",
+                train_rows=[row],
+                val_rows=[],
+                test_rows=None,
+                freeze_manifest=freeze_manifest,
+            )
+
+    def test_missing_review_status_in_core_rejected(self, tmp_path):
+        from topper_perception.io.slp8_training_table_freeze import (
+            build_freeze_manifest, A06Split, NormalizationStats, ClassStats,
+            FreezeRow,
+        )
+        a06 = _make_a06_split()
+        norm = _make_normalization_stats()
+        cs = _make_class_stats()
+        row = FreezeRow(
+            sample_id="SLP:danaLab:00000:uncover:000000",
+            ml_split="train", source_split="VAL", setting="danaLab",
+            subject_id="00000", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        fm = build_freeze_manifest(
+            train_rows=[row], val_rows=[], test_rows=[],
+            a06_split=a06, source_manifest_sha256="0" * 64,
+            stats=norm, train_stats=cs, val_stats=cs,
+        )
+        core = dict(fm.core)
+        core.pop("expected_review_status", None)
+        freeze_manifest = {"core": core, "meta": fm.meta}
+        with pytest.raises(B01ContractError, match="expected_review_status"):
+            B01FreezeSnapshot.from_freeze_tables(
+                freeze_dir=tmp_path / "b01_no_review",
+                train_rows=[row],
+                val_rows=[],
+                test_rows=None,
+                freeze_manifest=freeze_manifest,
+            )
+
+    def test_missing_splits_block_rejected(self, tmp_path):
+        # Build a manifest core that omits ``splits`` entirely.
+        from topper_perception.io.slp8_training_table_freeze import (
+            FreezeRow,
+        )
+        row = FreezeRow(
+            sample_id="SLP:danaLab:00000:uncover:000000",
+            ml_split="train", source_split="VAL", setting="danaLab",
+            subject_id="00000", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        core = {
+            "task_id": "x",
+            "a06_split_sha256": "0" * 64,
+            "expected_provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "expected_review_status": "NOT_REVIEWED",
+        }
+        freeze_manifest = {"core": core, "meta": {}}
+        with pytest.raises(B01ContractError, match="splits"):
+            B01FreezeSnapshot.from_freeze_tables(
+                freeze_dir=tmp_path / "b01_no_splits",
+                train_rows=[row], val_rows=[], test_rows=None,
+                freeze_manifest=freeze_manifest,
+            )
+
+    def test_wrong_core_sha_rejected(self, tmp_path):
+        # Build a snapshot from a real B01 manifest via build_freeze_manifest,
+        # then mutate the core to a single field change so the computed
+        # core SHA is different from the frozen expected value.  The
+        # contract validator must catch this.
+        from topper_perception.io.slp8_training_table_freeze import (
+            build_freeze_manifest, A06Split, NormalizationStats, ClassStats,
+            FreezeRow, manifest_sha256,
+        )
+        a06 = _make_a06_split()
+        norm = _make_normalization_stats()
+        cs = _make_class_stats()
+        row = FreezeRow(
+            sample_id="SLP:danaLab:00000:uncover:000000",
+            ml_split="train", source_split="VAL", setting="danaLab",
+            subject_id="00000", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        fm = build_freeze_manifest(
+            train_rows=[row], val_rows=[], test_rows=[],
+            a06_split=a06, source_manifest_sha256="0" * 64,
+            stats=norm, train_stats=cs, val_stats=cs,
+        )
+        # Mutate the core so the computed SHA differs from any sane
+        # expected value, then verify the contract layer catches it.
+        core = dict(fm.core)
+        core["task_id"] = "TAMPERED"
+        freeze_manifest = {"core": core, "meta": fm.meta}
+        snap = B01FreezeSnapshot.from_freeze_tables(
+            freeze_dir=tmp_path / "b01_wrong_core",
+            train_rows=[row], val_rows=[], test_rows=None,
+            freeze_manifest=freeze_manifest,
+        )
+        expected = B01ContractExpected(
+            train_count=1, val_count=0, test_count=0,
+            train_subjects=1, val_subjects=0, test_subjects=0,
+            a06_split_sha256="0" * 64,
             provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
             source_review_status="NOT_REVIEWED",
-            setting="danaLab",
-            cover="uncover",
+            setting="danaLab", cover="uncover",
+            freeze_manifest_core_sha256="0" * 64,  # wrong expected
+            structural_test_samples=0, structural_test_subjects=0,
         )
-        with pytest.raises(B01ContractError, match="a06_split_sha256"):
-            verify_b01_contract(snap)
+        with pytest.raises(B01ContractError, match="freeze_manifest core sha256"):
+            verify_b01_contract(snap, expected)
 
-    def test_bad_provenance_rejected_fail_closed(self, tmp_path):
-        from topper_perception.neural.slp8_region_b01_contract import (
-            B01FreezeSnapshot,
-            verify_b01_contract,
-            B01ContractError,
+    def test_train_row_setting_or_cover_inconsistent_rejected(self, tmp_path):
+        # Drive the failure through the real freeze contract: build
+        # FreezeRow lists with TRAIN row setting="danaLab" and VAL row
+        # setting="simLab".  The observed unique settings are a multi-set,
+        # so the validator must reject.
+        from topper_perception.io.slp8_training_table_freeze import (
+            FreezeRow,
         )
-        # Build a snapshot directly with a bad provenance.  Same
-        # reason as the bad-a06 test: the B01 freeze loader would
-        # hard-fail on a bad provenance before the contract check.
-        snap = B01FreezeSnapshot(
-            freeze_dir=tmp_path / "b01_bad_provenance",
-            train_count=3645,
-            val_count=450,
-            test_count=0,
-            train_subjects=tuple(f"{i:05d}" for i in range(81)),
-            val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
-            test_subjects=(),
-            freeze_manifest_sha256="a" * 64,
-            a06_split_sha256="024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
-            provenance="MANUAL",
+        train_row = FreezeRow(
+            sample_id="SLP:danaLab:00000:uncover:000000",
+            ml_split="train", source_split="VAL", setting="danaLab",
+            subject_id="00000", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
             source_review_status="NOT_REVIEWED",
-            setting="danaLab",
-            cover="uncover",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
         )
-        with pytest.raises(B01ContractError, match="provenance"):
-            verify_b01_contract(snap)
+        val_row = FreezeRow(
+            sample_id="SLP:simLab:00100:uncover:000000",
+            ml_split="val", source_split="VAL", setting="simLab",
+            subject_id="00100", cover="cover1", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            source_review_status="NOT_REVIEWED",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        core = {
+            "task_id": "x",
+            "a06_split_sha256": "0" * 64,
+            "expected_provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+            "expected_review_status": "NOT_REVIEWED",
+            "splits": {
+                "train": {"sample_count": 1, "subject_count": 1,
+                          "manifest_sha256": "0" * 64},
+                "val": {"sample_count": 1, "subject_count": 1,
+                        "manifest_sha256": "0" * 64},
+                "test": {"sample_count": 0, "subject_count": 0,
+                         "manifest_sha256": "0" * 64},
+            },
+        }
+        snap = B01FreezeSnapshot.from_freeze_tables(
+            freeze_dir=tmp_path / "b01_inconsistent",
+            train_rows=[train_row], val_rows=[val_row], test_rows=None,
+            freeze_manifest={"core": core, "meta": {}},
+        )
+        with pytest.raises(B01ContractError, match="observed_settings"):
+            verify_b01_contract(
+                snap, self._good_expected(core_sha256=snap.freeze_manifest_core_sha256)
+            )
 
     def test_test_rows_stay_unloaded(self, tmp_path):
         from topper_perception.io.slp8_training_table_freeze import (
-            load_b01_freeze_tables,
+            load_b01_freeze_tables, TestLeakageError,
         )
         root = _make_fake_b01_freeze_dir(
             tmp_path / "b01_test_unloaded", test_count_in_manifest=495
@@ -2143,41 +2739,53 @@ class TestB01ContractEntryLevel:
         assert freeze._test_rows is None  # noqa: SLF001
         # The structural TEST 495 rows in the freeze MUST NOT be
         # reachable from the B04 dataset loader.  The public
-        # ``test_rows`` property raises ``TestLeakageError`` when
-        # ``_test_rows`` is None (this is the contract's own
-        # leak-protection).
-        import pytest as _pytest
-        from topper_perception.io.slp8_training_table_freeze import (
-            TestLeakageError,
-        )
-        with _pytest.raises(TestLeakageError):
+        # ``test_rows`` property raises ``TestLeakageError``.
+        with pytest.raises(TestLeakageError):
             _ = freeze.test_rows
 
     def test_train_count_mismatch_rejected(self, tmp_path):
-        from topper_perception.neural.slp8_region_b01_contract import (
-            B01FreezeSnapshot,
-            verify_b01_contract,
-            B01ContractError,
+        # Build a snapshot from a real manifest but with a deliberately
+        # wrong train_count in the structural record.  The validator
+        # must catch the mismatch.
+        from topper_perception.io.slp8_training_table_freeze import (
+            build_freeze_manifest, A06Split, NormalizationStats, ClassStats,
+            FreezeRow,
         )
-        # Build a snapshot with train_count=2000 (B01 contract expects
-        # 3645).  Direct construction avoids any freeze loader validation.
-        snap = B01FreezeSnapshot(
-            freeze_dir=tmp_path / "b01_short",
-            train_count=2000,
-            val_count=450,
-            test_count=0,
-            train_subjects=tuple(f"{i:05d}" for i in range(80)),
-            val_subjects=tuple(f"{i:05d}" for i in range(100, 110)),
-            test_subjects=(),
-            freeze_manifest_sha256="a" * 64,
-            a06_split_sha256="024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
-            provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+        a06 = _make_a06_split()
+        norm = _make_normalization_stats()
+        cs = _make_class_stats()
+        row = FreezeRow(
+            sample_id="SLP:danaLab:00000:uncover:000000",
+            ml_split="train", source_split="VAL", setting="danaLab",
+            subject_id="00000", cover="uncover", frame_id=0,
+            posture="SUPINE", pressure_npy="p", region_label_npy="l",
+            region_onehot_npy="o", points_csv="c", height="192", width="84",
+            class_ids_present="0|1|2|3|4|5|6|7|8",
+            annotation_provenance="V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
             source_review_status="NOT_REVIEWED",
-            setting="danaLab",
-            cover="uncover",
+            export_version="1.1.0", export_status="EXPORTED",
+            source_pmarray_sha256="0" * 64,
+            background_pixel_count="1", body_pixel_count="1",
+            clipped_ratio="0.0", onehot_valid="True",
+            onehot_roundtrip="True",
+        )
+        fm = build_freeze_manifest(
+            train_rows=[row], val_rows=[], test_rows=[],
+            a06_split=a06, source_manifest_sha256="0" * 64,
+            stats=norm, train_stats=cs, val_stats=cs,
+        )
+        core = dict(fm.core)
+        core["splits"]["train"]["sample_count"] = 9999  # wrong on purpose
+        freeze_manifest = {"core": core, "meta": fm.meta}
+        snap = B01FreezeSnapshot.from_freeze_tables(
+            freeze_dir=tmp_path / "b01_short",
+            train_rows=[row], val_rows=[], test_rows=None,
+            freeze_manifest=freeze_manifest,
         )
         with pytest.raises(B01ContractError, match="train_count"):
-            verify_b01_contract(snap)
+            verify_b01_contract(
+                snap, self._good_expected(core_sha256=snap.freeze_manifest_core_sha256)
+            )
 
 
 # ---------------------------------------------------------------------------

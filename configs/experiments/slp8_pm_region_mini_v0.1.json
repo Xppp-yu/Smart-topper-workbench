@@ -5,6 +5,11 @@
   "freeze_version": "slp8_training_tables_v0.1",
   "b01_task_id": "TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1",
   "b01_a06_split_sha256_expected": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+  "b01_freeze_manifest_core_sha256_expected": "3c78999551580fc46ce15229e053798b5e4c9464a5bab27e05130cb319090b1e",
+  "b01_structural_test": {
+    "sample_count": 495,
+    "subject_count": 11
+  },
   "expected_split_counts": {
     "train": 3645,
     "val": 450,

@@ -72,6 +72,7 @@ import math
 import os
 import platform
 import random
+import shutil
 import sys
 import time
 import traceback
@@ -362,6 +363,8 @@ _REQUIRED_TOP_LEVEL_KEYS: tuple[str, ...] = (
     "raw_semantics",
     "source_review_status",
     "b01_a06_split_sha256_expected",
+    "b01_freeze_manifest_core_sha256_expected",
+    "b01_structural_test",
     "candidates",
     "training",
     "dataset",
@@ -958,7 +961,13 @@ def build_synthetic_dataset(
             # class as a small rectangular block.  Deterministic per (i, subject).
             label = np.zeros(image_shape, dtype=np.int64)
             for cid in range(1, N_CLASSES):
-                seed_jitter = (hash((split, subject, i, cid)) % 13) + 4
+                # Do not use Python's salted ``hash()`` here: a synthetic
+                # smoke source must be identical across CLI processes so a
+                # checkpoint can safely resume in a later process.
+                split_offset = 0 if split == "train" else 11
+                seed_jitter = (
+                    (int(subject) * 3 + i * 5 + cid * 7 + split_offset) % 13
+                ) + 4
                 h0 = (cid * 11 + i * 3) % (image_shape[0] - seed_jitter - 1)
                 w0 = (cid * 17 + i * 5) % (image_shape[1] - seed_jitter - 1)
                 label[h0:h0 + seed_jitter, w0:w0 + seed_jitter] = cid
@@ -1779,13 +1788,29 @@ def run_one_candidate(
                 )
         resume_checkpoint_payload = payload
         start_epoch = int(payload.get("epoch", 0)) + 1
-        # best.pt may have been written previously; re-load its SHA so
-        # the manifest remains accurate.
-        if payload.get("is_best"):
-            best_sha = file_sha256(best_path) if best_path.is_file() else None
-            best_epoch = int(payload.get("epoch"))
-            best_val_loss = float(payload.get("metrics", {}).get("val_loss")) if payload.get("metrics", {}).get("val_loss") is not None else None
-        last_sha = file_sha256(last_path) if last_path.is_file() else None
+        # Carry the prior best checkpoint into the *new* output directory.
+        # ``resume_from`` points at the source ``last.pt``; its sibling
+        # ``best.pt`` is the authoritative best model from the partial run.
+        # A partial run must never be mutated by resume.
+        source_last_path = Path(resume_from)
+        source_best_path = source_last_path.with_name("best.pt")
+        if source_best_path.is_file():
+            shutil.copy2(source_best_path, best_path)
+        elif payload.get("is_best"):
+            # The last checkpoint is itself the best checkpoint; preserve a
+            # resumable best copy in the new result directory.
+            _save_checkpoint(best_path, payload)
+        else:
+            raise ResumeIdentityError(
+                "resume source has last.pt but no best.pt, and last.pt is not "
+                "marked is_best; refusing to lose the prior best model"
+            )
+        prior_best_payload = _load_checkpoint(best_path)
+        best_sha = file_sha256(best_path)
+        best_epoch = int(prior_best_payload.get("epoch", 0))
+        prior_val_loss = prior_best_payload.get("metrics", {}).get("val_loss")
+        best_val_loss = float(prior_val_loss) if prior_val_loss is not None else None
+        last_sha = file_sha256(source_last_path)
 
     budget_exceeded: bool = False
     budget_check_history: list[dict[str, Any]] = []
@@ -1827,20 +1852,6 @@ def run_one_candidate(
                 budget_report=budget_report,
                 budget_thresholds=budget_thresholds,
             )
-
-        # ------------------------------------------------------------------
-        # Resource budget check (after every validation epoch)
-        # ------------------------------------------------------------------
-        budget_state.update_cuda_peak()
-        budget_check = budget_state.check()
-        budget_check_history.append(budget_check.as_dict())
-        if budget_check.exceeded:
-            budget_status = budget_check.reason
-            budget_report = budget_check.as_dict()
-            feasibility = "STOPPED"
-            reason = f"resource budget exceeded: {budget_check.reason}"
-            budget_exceeded = True
-            break
 
         train_loss_history.append(float(train_loss))
         val_loss_history.append(float(val_loss))
@@ -1906,6 +1917,27 @@ def run_one_candidate(
             best_train_subjects = list(train_subjs)
             best_train_postures = list(train_pos)
             best_train_sample_ids = list(train_sids)
+
+        # ------------------------------------------------------------------
+        # Resource budget check (after every completed validation epoch).
+        # ``last.pt`` and (if applicable) ``best.pt`` have already been
+        # persisted above, so a STOPPED run remains genuinely resumable.
+        # Refresh the saved budget accumulator before returning STOPPED.
+        # ------------------------------------------------------------------
+        budget_state.update_cuda_peak()
+        budget_check = budget_state.check()
+        budget_check_history.append(budget_check.as_dict())
+        if budget_check.exceeded:
+            budget_status = budget_check.reason
+            budget_report = budget_check.as_dict()
+            payload["budget_state"] = budget_state.snapshot().as_dict()
+            last_sha = _save_checkpoint(last_path, payload)
+            if is_best:
+                best_sha = _save_checkpoint(best_path, payload)
+            feasibility = "STOPPED"
+            reason = f"resource budget exceeded: {budget_check.reason}"
+            budget_exceeded = True
+            break
 
         if should_stop:
             stopped_early = True
@@ -1984,6 +2016,30 @@ def run_one_candidate(
     reloaded_val_loader = _make_loader(
         val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=0,
     )
+    # When continuing from a partial run, the best checkpoint may have been
+    # selected before the resumed epoch range.  Recreate its per-sample
+    # evidence from the independently reloaded best model instead of treating
+    # the missing in-memory arrays as a failed experiment.
+    if best_val_preds is None:
+        (
+            _best_val_loss_recomputed,
+            best_val_labels,
+            best_val_preds,
+            best_val_sample_ids,
+            best_val_subjects,
+            best_val_postures,
+        ) = _validate(fresh_model, reloaded_val_loader, loss_fn, device)
+        train_reload_loader = _make_loader(
+            train_dataset, batch_size=config.batch_size, shuffle=False, num_workers=0,
+        )
+        (
+            _best_train_loss_recomputed,
+            best_train_labels,
+            best_train_preds,
+            best_train_sample_ids,
+            best_train_subjects,
+            best_train_postures,
+        ) = _validate(fresh_model, train_reload_loader, loss_fn, device)
     with torch.no_grad():
         reloaded_preds: list[np.ndarray] = []
         for batch in reloaded_val_loader:

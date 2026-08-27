@@ -1,4 +1,4 @@
-"""B04 PM-only Region Mini runner CLI (TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-v0.1).
+"""B04 PM-only Region Mini runner CLI (TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1).
 
 This script is the B04 entry point.  It enforces the B04 governance:
 
@@ -70,6 +70,7 @@ from topper_perception.io.slp8_training_table_freeze import (
 )
 from topper_perception.neural.slp8_region_b01_contract import (
     B01FreezeSnapshot,
+    build_b01_contract_expected,
     check_freeze_manifest_file_consistency,
     verify_b01_contract,
 )
@@ -607,11 +608,6 @@ def _run_real_b01(
             f"B01 freeze has zero rows for an essential split: train={n_train}, val={n_val}"
         )
 
-    # Real data path: B04 demands device='cuda'.  In a real B01 run, CUDA
-    # must be available; otherwise fail-closed.
-    device = resolve_device("cuda", allow_cpu_fallback=False)
-    _log(f"device={device}")
-
     # Hash input artefacts for the audit record.
     freeze_manifest_path = b01_freeze_dir / "freeze_manifest.json"
     train_class_stats_path = b01_freeze_dir / "train_class_stats.json"
@@ -621,12 +617,19 @@ def _run_real_b01(
         raise FileNotFoundError(f"train_class_stats.json missing in {b01_freeze_dir}")
     train_class_stats = json.loads(train_class_stats_path.read_text(encoding="utf-8"))
 
-    # Fail-closed freeze-manifest SHA consistency check.
-    fm_sha = sha256_file(freeze_manifest_path)
+    # ------------------------------------------------------------------
+    # B01 input contract — fail-closed, BEFORE the CUDA check so a
+    # Reviewer can audit any contract failure on a CPU machine.
+    # ------------------------------------------------------------------
+    b01_expected = build_b01_contract_expected(raw)
+    # Fail-closed core-SHA check.  A file SHA is observational because
+    # metadata may vary; the B01 contract is the canonical ``core`` hash.
+    # Do not compare a freshly calculated file SHA against itself.
+    fm_file_sha = sha256_file(freeze_manifest_path)
     check_freeze_manifest_file_consistency(
-        b01_freeze_dir, freeze_manifest_sha256=fm_sha
+        b01_freeze_dir,
+        freeze_manifest_sha256=b01_expected.freeze_manifest_core_sha256,
     )
-
     # Build a B01FreezeSnapshot from the loaded freeze and verify the
     # full input contract.  No constant may be substituted; if any
     # field is missing or mismatched the runner fail-closes.
@@ -637,13 +640,21 @@ def _run_real_b01(
         test_rows=None,  # explicitly None — TEST is never loaded
         freeze_manifest=freeze.freeze_manifest,
     )
-    b01_contract_report = verify_b01_contract(snapshot).as_dict()
+    b01_contract_report = verify_b01_contract(
+        snapshot, b01_expected
+    ).as_dict()
     _log(
         "B01 contract verified: "
         f"train={snapshot.train_count} val={snapshot.val_count} "
-        f"test={snapshot.test_count} "
+        f"test={snapshot.structural_test.sample_count} "
         f"a06={snapshot.a06_split_sha256[:12]}…"
     )
+
+    # Real data path: B04 demands device='cuda'.  In a real B01 run, CUDA
+    # must be available; otherwise fail-closed.  Run AFTER the
+    # B01 input contract so a Reviewer can audit on a CPU machine.
+    device = resolve_device("cuda", allow_cpu_fallback=False)
+    _log(f"device={device}")
 
     # Subject isolation sanity (B01 should already guarantee this; we
     # re-verify as a defense in depth).
@@ -688,7 +699,8 @@ def _run_real_b01(
         output_dir / "input_manifest_hashes.json",
         {
             "config_sha256": file_sha256(config_path),
-            "freeze_manifest_sha256": fm_sha,
+            "freeze_manifest_file_sha256": fm_file_sha,
+            "freeze_manifest_core_sha256": b01_expected.freeze_manifest_core_sha256,
             "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
             "b01_freeze_dir": REDACTED_LOCAL_PATH,
             "dataset_root": REDACTED_LOCAL_PATH,
@@ -718,7 +730,8 @@ def _run_real_b01(
         device=device,
         input_hashes={
             "config_sha256": file_sha256(config_path),
-            "freeze_manifest_sha256": fm_sha,
+            "freeze_manifest_sha256": b01_expected.freeze_manifest_core_sha256,
+            "freeze_manifest_file_sha256": fm_file_sha,
             "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
             "train_class_stats_sha256": sha256_file(train_class_stats_path),
         },
@@ -776,9 +789,12 @@ def _auto_detect_resume_candidates(
     The CLI takes a single ``--resume-from`` path that is the output
     directory of a previous (interrupted) B04 run.  This function
     walks the directory and returns a mapping
-    ``{candidate_name: last_pt_path}`` for every candidate the config
-    requests.  The function refuses to resume a DONE run and refuses
-    to resume a directory that has no checkpoints.
+    ``{candidate_name: last_pt_path}`` for candidates that completed at
+    least one epoch.  A serial run may be interrupted while a later
+    candidate has not started; that candidate must start fresh instead
+    of making the whole experiment non-resumable.  The function refuses
+    DONE and unknown terminal states, and refuses a source with no
+    completed-epoch checkpoint at all.
     """
 
     from topper_perception.neural.slp8_region_resume import ResumeRefusedError
@@ -792,14 +808,35 @@ def _auto_detect_resume_candidates(
             f"--resume-from path is not a directory: {resume_from}"
         )
     refuse_resume_for_done_run(resume_from)
+    status_path = resume_from / "status.json"
+    if not status_path.is_file():
+        raise MiniProtocolError(
+            f"--resume-from source lacks status.json: {resume_from}"
+        )
+    try:
+        source_status = json.loads(status_path.read_text(encoding="utf-8"))
+        source_terminal_state = str(
+            source_status.get("terminal_state", source_status.get("status", ""))
+        )
+    except Exception as exc:
+        raise MiniProtocolError(
+            f"--resume-from source status.json is unreadable: {exc}"
+        ) from exc
+    if source_terminal_state not in {"RUNNING", "FAILED", "STOPPED"}:
+        raise MiniProtocolError(
+            "--resume-from source must have terminal_state RUNNING, FAILED, "
+            f"or STOPPED; got {source_terminal_state!r}"
+        )
     result: dict[str, Path] = {}
     for cand in config.candidates:
         last_pt = resume_from / "checkpoints" / cand / "last.pt"
-        if not last_pt.is_file():
-            raise MiniProtocolError(
-                f"--resume-from: no last.pt for candidate {cand!r} under {resume_from}"
-            )
-        result[cand] = last_pt
+        if last_pt.is_file():
+            result[cand] = last_pt
+    if not result:
+        raise MiniProtocolError(
+            "--resume-from source contains no completed-epoch last.pt; "
+            "there is no safe state to resume"
+        )
     return result
 
 

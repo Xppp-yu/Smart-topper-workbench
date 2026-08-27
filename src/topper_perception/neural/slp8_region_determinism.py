@@ -225,13 +225,19 @@ def apply_settings(seed: int, *, cpu_threads: int = DEFAULT_CPU_THREADS) -> Dete
         torch.use_deterministic_algorithms(
             bool(DEFAULT_DETERMINISTIC_ALGORITHMS), warn_only=warn_only
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        if cuda_available:
+            raise RuntimeError(
+                "CUDA run cannot enable deterministic PyTorch algorithms"
+            ) from exc
     try:
         torch.backends.cudnn.deterministic = bool(DEFAULT_CUDNN_DETERMINISTIC)
         torch.backends.cudnn.benchmark = bool(DEFAULT_CUDNN_BENCHMARK)
-    except Exception:
-        pass
+    except Exception as exc:
+        if cuda_available:
+            raise RuntimeError(
+                "CUDA run cannot configure deterministic cuDNN settings"
+            ) from exc
 
     return collect_settings(int(seed))
 

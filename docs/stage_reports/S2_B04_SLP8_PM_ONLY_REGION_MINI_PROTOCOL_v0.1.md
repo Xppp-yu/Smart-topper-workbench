@@ -256,3 +256,39 @@ torch.set_num_threads(1)
 **阶段交付版本：** v0.1-R03
 **生成时间：** 2026-08-27
 **维护者：** Mavis (MiniMax Code)
+
+---
+
+## R04 收口记录（2026-08-27）
+
+本轮不运行真实 B01、GPU 或 TEST；目标是把 R03 留下的 freeze 合同与中断续跑路径收紧到可审计状态。
+
+### 已验证
+
+- B01 合同不再补默认值：TRAIN/VAL 实际行、`core.splits`、A06 SHA、唯一的 setting/cover/provenance/review-status，以及 B01 `core` 的规范化 SHA-256 都必须同时匹配；TEST 仅读取 `core.splits.test` 的结构计数（495 样本 / 11 subject），不加载 TEST 行。
+- 冻结配置显式固化 B01 `core` SHA 和 TEST 结构计数；缺任一字段时配置验证拒绝。
+- 合成数据不再使用 Python 进程随机化的 `hash()`；跨进程生成的 class-weight identity 因而稳定。
+- 极小预算真实 CLI smoke：两个候选均进入 `STOPPED`，各自落盘 `last.pt` 与 `best.pt`。
+- 在全新的输出目录执行 `--resume-from <STOPPED 输出>`：退出码 0、`DONE.json` 与 `status.json` 均为 `DONE`；两个候选完成且为 `NOT_FEASIBLE`。恢复时会复制并校验此前的 `best.pt`，避免“最佳 epoch 在中断前”时丢失证据。
+- 本轮定向回归：`pytest -q tests/test_slp8_region_mini.py -k "B01Contract or CLITerminalStateStopped or DeterminismConfigR03"` → **31 passed, 127 deselected**；`py_compile` 通过；`git diff --check` 通过。
+- CUDA 路径若无法启用确定性算法或设置 cuDNN 确定性，现抛错拒绝执行；CPU smoke 保留兼容性行为。
+
+### 推断
+
+- 无。R04 只证明协议、合同与合成 CLI 生命周期；不构成真实 Mini 的模型效果结论。
+
+### 未验证
+
+- 真实 B01 Mini、GPU/CUDA 12 GB 峰值、真实数据上的恢复，以及任何 TEST 读取：均未运行。
+
+### 限制
+
+- 当前设备无 CUDA；合成样本仅验证工程链路，不能同 B02 指标比较。
+- 本阶段仍是 `MINI_PROTOCOL_AND_RUNNER_READY_FOR_REVIEW`，不代表 Mini 完成、候选保留或 B07 解锁。
+
+### 下一 Gate
+
+1. Codex/Reviewer 验收冻结合同和 R04 回归；
+2. Owner 明确授权并提供满足 CUDA 12 GB 峰值的环境；
+3. 才能运行真实 B01 Mini，随后由 Codex 审核真实产物；
+4. 仅在该审核通过后，才讨论 B07 Full 协议。

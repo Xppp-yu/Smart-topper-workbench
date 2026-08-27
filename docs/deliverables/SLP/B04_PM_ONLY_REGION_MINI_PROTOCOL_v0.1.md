@@ -276,3 +276,19 @@ uv pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 **交付版本：** v0.1-R03
 **生成时间：** 2026-08-27
 **维护者：** Mavis (MiniMax Code)
+
+---
+
+## R04 收口补充
+
+本交付仍仅为“Mini 协议与 Runner 可审查”。R04 固化 B01 manifest **core** SHA、只允许读取 TEST 的结构计数而不加载 TEST 行，并完成真实 CLI 的 `STOPPED → --resume-from → DONE` 合成验证。该验证输出为两个候选均 `NOT_FEASIBLE`，仅说明链路可续跑；不构成真实 B01/GPU 结果，也不解锁 B07。
+
+复现命令（合成 smoke）：
+
+```powershell
+python scripts/run_slp8_region_mini.py --config configs/experiments/slp8_pm_region_mini_v0.1.json --output-dir <out-stop> --synthetic-cpu-smoke
+# 以测试专用的极小预算得到 STOPPED 后：
+python scripts/run_slp8_region_mini.py --config configs/experiments/slp8_pm_region_mini_v0.1.json --output-dir <out-resume> --synthetic-cpu-smoke --resume-from <out-stop>
+```
+
+真实 B01 运行仍需 Owner 授权和 CUDA 12 GB peak 环境；不可读取 TEST，且不得覆盖已有 EXP-ID 输出。
