@@ -882,6 +882,21 @@ class TestOutputCollisionAndStatus:
 
 
 class TestRunAuthorizedGate:
+    def test_real_runner_imports_subject_isolation_helper(self):
+        """The authorized real-data path must resolve its isolation guard."""
+        import runpy
+
+        from topper_perception.neural.slp8_region_dataset import (
+            verify_subject_isolation,
+        )
+
+        runner_globals = runpy.run_path(
+            str(PROJECT_ROOT / "scripts" / "run_slp8_region_mini.py"),
+            run_name="slp8_region_mini_runner_test",
+        )
+
+        assert runner_globals["verify_subject_isolation"] is verify_subject_isolation
+
     def test_real_paths_without_run_authorized_rejected(self, tmp_output_dir):
         out = tmp_output_dir / "real_rejected"
         env = dict(os.environ)
