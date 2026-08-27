@@ -1391,6 +1391,36 @@ def _to_device(batch: Mapping[str, Any], device: torch.device) -> dict[str, Any]
     }
 
 
+def _flatten_segmentation_for_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Flatten segmentation tensors onto the deterministic 2-D CE path.
+
+    Passing ``[B, C, H*W]`` directly to ``CrossEntropyLoss`` selects
+    PyTorch's CUDA ``nll_loss2d`` implementation, which has no strict
+    deterministic implementation.  Moving channels last and flattening
+    spatial positions produces the mathematically equivalent ``[N, C]`` /
+    ``[N]`` representation and avoids that unsupported kernel.
+    """
+
+    if logits.ndim != 4:
+        raise ValueError(f"expected logits [B,C,H,W], got {tuple(logits.shape)}")
+    if labels.ndim != 3:
+        raise ValueError(f"expected labels [B,H,W], got {tuple(labels.shape)}")
+
+    batch, classes, height, width = logits.shape
+    if tuple(labels.shape) != (batch, height, width):
+        raise ValueError(
+            "logit/label shape mismatch: "
+            f"logits={tuple(logits.shape)} labels={tuple(labels.shape)}"
+        )
+
+    logits_flat = logits.permute(0, 2, 3, 1).reshape(-1, classes)
+    labels_flat = labels.reshape(-1)
+    return logits_flat, labels_flat
+
+
 def _train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -1405,8 +1435,9 @@ def _train_one_epoch(
         batch = _to_device(batch, device)
         logits = model(batch["pressure"])
         B, C, H, W = logits.shape
-        logits_flat = logits.reshape(B, C, H * W)
-        label_flat = batch["label"].reshape(B, H * W)
+        logits_flat, label_flat = _flatten_segmentation_for_cross_entropy(
+            logits, batch["label"]
+        )
         loss = loss_fn(logits_flat, label_flat)
         if not torch.isfinite(loss):
             raise NonFiniteMetricsError(
@@ -1444,8 +1475,9 @@ def _validate(
             batch = _to_device(batch, device)
             logits = model(batch["pressure"])
             B, C, H, W = logits.shape
-            logits_flat = logits.reshape(B, C, H * W)
-            label_flat = batch["label"].reshape(B, H * W)
+            logits_flat, label_flat = _flatten_segmentation_for_cross_entropy(
+                logits, batch["label"]
+            )
             loss = loss_fn(logits_flat, label_flat)
             if not torch.isfinite(loss):
                 raise NonFiniteMetricsError(

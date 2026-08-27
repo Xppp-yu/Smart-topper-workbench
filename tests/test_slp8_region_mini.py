@@ -121,6 +121,7 @@ from topper_perception.neural.slp8_region_mini import (
     SYNTHETIC_DEFAULTS,
     TASK_ID,
     _build_checkpoint_payload,
+    _flatten_segmentation_for_cross_entropy,
     _predictions_hash,
     build_mini_config,
     build_synthetic_dataset,
@@ -687,6 +688,26 @@ class TestConfigValidation:
 
 
 class TestDeviceHandling:
+    def test_flattened_cross_entropy_is_equivalent_to_spatial_form(self):
+        generator = torch.Generator().manual_seed(42)
+        logits = torch.randn(2, N_CLASSES, 7, 5, generator=generator)
+        labels = torch.randint(
+            0, N_CLASSES, (2, 7, 5), generator=generator
+        )
+        weights = torch.linspace(0.5, 1.5, N_CLASSES)
+
+        flat_logits, flat_labels = _flatten_segmentation_for_cross_entropy(
+            logits, labels
+        )
+
+        assert flat_logits.shape == (2 * 7 * 5, N_CLASSES)
+        assert flat_labels.shape == (2 * 7 * 5,)
+        spatial_loss = nn.CrossEntropyLoss(weight=weights)(
+            logits.reshape(2, N_CLASSES, -1), labels.reshape(2, -1)
+        )
+        flat_loss = nn.CrossEntropyLoss(weight=weights)(flat_logits, flat_labels)
+        assert torch.allclose(flat_loss, spatial_loss, rtol=1e-6, atol=1e-7)
+
     def test_cuda_required_for_real_runs(self):
         from topper_perception.neural.slp8_region_mini import MiniProtocolError as _MPE
         if torch.cuda.is_available():
