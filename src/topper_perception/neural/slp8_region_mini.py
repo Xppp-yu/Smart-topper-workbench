@@ -1421,6 +1421,15 @@ def _flatten_segmentation_for_cross_entropy(
     return logits_flat, labels_flat
 
 
+def _clone_state_dict_to_cpu(model: nn.Module) -> dict[str, torch.Tensor]:
+    """Return an independent CPU snapshot for later parameter-change audit."""
+
+    return {
+        name: tensor.detach().cpu().clone()
+        for name, tensor in model.state_dict().items()
+    }
+
+
 def _train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -1723,7 +1732,7 @@ def run_one_candidate(
         num_workers=config.num_workers,
     )
 
-    initial_state = {k: v.clone() for k, v in model.state_dict().items()}
+    initial_state = _clone_state_dict_to_cpu(model)
 
     checkpoint_dir = output_dir / "checkpoints" / candidate_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -2085,7 +2094,9 @@ def run_one_candidate(
     hash_consistent = bool(in_process_hash is not None and reloaded_hash == in_process_hash)
 
     final_state_diff = float(sum(
-        (current.float() - initial_state[k].float()).pow(2).sum().sqrt().item()
+        (
+            current.detach().cpu().float() - initial_state[k].float()
+        ).pow(2).sum().sqrt().item()
         for k, current in model.state_dict().items()
     ))
     param_changed = final_state_diff > 1e-6

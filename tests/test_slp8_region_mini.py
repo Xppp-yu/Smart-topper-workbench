@@ -121,6 +121,7 @@ from topper_perception.neural.slp8_region_mini import (
     SYNTHETIC_DEFAULTS,
     TASK_ID,
     _build_checkpoint_payload,
+    _clone_state_dict_to_cpu,
     _flatten_segmentation_for_cross_entropy,
     _predictions_hash,
     build_mini_config,
@@ -688,6 +689,26 @@ class TestConfigValidation:
 
 
 class TestDeviceHandling:
+    def test_parameter_audit_snapshot_is_independent_and_cpu_resident(self):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = nn.Linear(3, 2).to(device)
+
+        snapshot = _clone_state_dict_to_cpu(model)
+        original = {name: tensor.clone() for name, tensor in snapshot.items()}
+
+        assert snapshot
+        assert all(tensor.device.type == "cpu" for tensor in snapshot.values())
+        assert all(not tensor.requires_grad for tensor in snapshot.values())
+
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.add_(1.0)
+
+        assert all(
+            torch.equal(snapshot[name], original[name])
+            for name in snapshot
+        )
+
     def test_flattened_cross_entropy_is_equivalent_to_spatial_form(self):
         generator = torch.Generator().manual_seed(42)
         logits = torch.randn(2, N_CLASSES, 7, 5, generator=generator)
