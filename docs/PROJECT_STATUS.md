@@ -1,11 +1,11 @@
 # Smart Topper Windows Research Workbench — 项目状态
 
-最后更新：2026-08-25（B02 SLP8 非学习区域基线 `DONE_WITH_LIMITATIONS`）
+最后更新：2026-08-27（B04 Mini 协议与 Runner 通过 Reviewer Gate）
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成；验收前保持 `READY_FOR_REVIEW`。
 
 ## 当前一句话状态
 
-P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族。P6/P6.1 已完成 UNKNOWN/REJECT、原始重点案例复核、温度校准与三模型一致性模拟；P7 真实 checkpoint 扰动推理仍待运行。SLP A09R 已以 `COMPLETE_WITH_LIMITATIONS` 验收：`SLP_8Region_Pressure_VAL_v1.1`（4,590 samples，102 danaLab，8 区）确立为当前项目 SLP8 pressure-only 区域分割参考 GT，8 区 schema + adapter（66 tests）+ 全量 validator（4590/4590，0 failures）和 A06 split 兼容性（3645/450/495，0 overlap）均经 Reviewer 复核；A10–A17 OpenCV/人工复核路线为 HOLD/SUPERSEDED。SLP B01、B02 均已以 `DONE_WITH_LIMITATIONS` 验收。SLP B03 PM-only Region Smoke 也已以 `DONE_WITH_LIMITATIONS` 验收：真实 CPU Smoke 使用 TRAIN 90 / VAL 45 / TEST 0，checkpoint/resume/reload、真实逐样本预测哈希和审计产物均通过，Reviewer 联合复核为 479 passed、2 skipped。B04 已解锁为 `READY`，但须先冻结 Mini 协议并取得运行授权。
+P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族。P6/P6.1 已完成 UNKNOWN/REJECT、原始重点案例复核、温度校准与三模型一致性模拟；P7 真实 checkpoint 扰动推理仍待运行。SLP A09R 已以 `COMPLETE_WITH_LIMITATIONS` 验收：`SLP_8Region_Pressure_VAL_v1.1`（4,590 samples，102 danaLab，8 区）确立为当前项目 SLP8 pressure-only 区域分割参考 GT。SLP B01、B02、B03 已验收。B04 Mini 协议与 Runner 已通过 Reviewer Gate：B04 定向测试 158 passed，联合回归 1342 passed、4 skipped，并完成合成 CLI `STOPPED → resume → DONE`；真实 B01 Mini 尚未运行，下一步仍需 Owner 明确授权和 CUDA 12 GB peak 环境。
 
 ## 阶段看板
 
@@ -38,6 +38,7 @@ P5.2-C 已接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选
 | S2_B01 | SLP8 训练表冻结 | DONE_WITH_LIMITATIONS | [S2_B01 报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)；`slp8_training_table_freeze_v0.1` 模块；`build_slp8_training_tables.py` + `validate_slp8_training_tables.py`；`tests/test_slp8_training_table_freeze.py`（82 passed）；真实数据 build 输出 3,645/450/495；full validator（含 deterministic rebuild）`ALL CHECKS PASSED in 56.0s`；287 regression tests passed，联合套件共 369 passed（1 skipped：A05 CSV 不存在）；TRAIN-only normalization（`raw_pmarray_response`、NOT kPa）；TEST 防泄漏合同（默认不读取 TEST；`enable_test_access(purpose="final_evaluation")` 后必须显式 `load_test=True` 重新加载才返回 TEST rows）；data card；gitignored 输出目录 | B02、B03 已完成；B04 `READY`；继续保留 NOT_REVIEWED、uncover-only 和非产品 GT 边界 |
 | S2_B02 | SLP8 非学习区域基线 | DONE_WITH_LIMITATIONS | [S2_B02 报告](stage_reports/S2_B02_SLP8_NON_LEARNING_REGION_BASELINE_v0.2.md)；四种 pressure-only 基线；R02 TRAIN 3,645 / VAL 450、TEST 0；VAL fixed IoU：all-background `0.000000`、train spatial prior `0.205644`、body-axis partition `0.109308`、axis-contact intersection `0.109713`；输出保留逐区域/受试者/posture 指标、预测哈希、诊断与失败审计；R03 runner fail-closed；Codex 独立复核 259 passed、2 skipped | B03 已完成；B04 `READY`；继续保留 NOT_REVIEWED、uncover-only、非产品 GT 与 TEST 默认拒绝边界 |
 | S2_B03 | SLP8 PM-only Region Smoke | DONE_WITH_LIMITATIONS | [S2_B03 报告](stage_reports/S2_B03_SLP8_PM_ONLY_REGION_SMOKE_v0.1.md)；`Slp8TinyFcn`；CPU TRAIN 90 / VAL 45 / TEST 0；initial+resume 各 1 epoch；真实 prediction manifest 270 行；checkpoint/resume/reload 一致；Reviewer 独立运行与 R03 loss、IoU、预测哈希逐行一致；联合复核 479 passed、2 skipped | B04 `READY`；先冻结 Mini 协议，不把 Smoke 指标用于排名，不读取 TEST，不形成产品结论 |
+| S2_B04 | SLP8 PM-only Region Mini 协议与 Runner | PROTOCOL_AND_RUNNER_ACCEPTED | [S2_B04 报告](stage_reports/S2_B04_SLP8_PM_ONLY_REGION_MINI_PROTOCOL_v0.1.md)；冻结两候选、资源预算、feasibility gate、B01 输入合同、TEST 防泄漏、checkpoint/resume/reload、三终态与审计产物；Reviewer 定向测试 158 passed，联合回归 1342 passed、4 skipped；合成 CLI `STOPPED → resume → DONE` | 真实 Mini **未运行**；需 Owner 授权和 CUDA 12 GB peak 环境，真实结果经 Reviewer 验收后才能解锁 B07 |
 | S2 | Canonical Sample 与受试者拆分冻结 | COMPLETE_WITH_A06_SPLIT_FROZEN | [A06 Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、manifest JSON、SHA-256 `024f5abe`；109 subjects split 81/10/18 (danaLab 81/10/11，simLab 0/0/7 TEST held-out)；quarantine 90 frames 单独统计；6 isolation tests PASS；A06 split 与 SLP8 GT 完全兼容（102 主体，0 overlap） | A18 节点基线使用此 split；B01 使用 A06 split 作为训练基础；fold 设计由 B07 Full 协议另行冻结 |
 | S3 | RGB/IR/Depth/PM 单模态关节基线 | BLOCKED_BY_S2 | 尚未开始 | 每模态保留 1–2 个候选，分开报告原始与映射标签 |
 | S4 | 身体区域伪标签 Pilot 与人工复核 | HOLD / OPTIONAL_FUTURE / SUPERSEDED_FOR_CURRENT_SLP8_GT | A09R 已将 SLP8 GT 设为默认训练合同；原 A10–A17 OpenCV/人工复核路线已改 HOLD | 不再以 A17 R2/R3 为前置；SLP8 区域训练使用已冻结 GT |

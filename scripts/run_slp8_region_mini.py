@@ -1,0 +1,985 @@
+"""B04 PM-only Region Mini runner CLI (TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1).
+
+This script is the B04 entry point.  It enforces the B04 governance:
+
+* The default mode is ``--validate-config``, which reads the frozen
+  config and writes ``status.json``/``resolved_config.json``/``DONE.json``
+  without touching any B01 data.
+* The synthetic CPU smoke mode is invoked with ``--synthetic-cpu-smoke``
+  and uses tiny deterministic synthetic (pressure, label) pairs that
+  fully exercise the runner, the registry, the class-weight formula,
+  the metrics bundle, the checkpoint save/load, and the FEASIBLE gate.
+* A real B01 run requires **both** ``--run-authorized`` and
+  ``--b01-freeze-dir`` / ``--dataset-root``; the script refuses to
+  read any real B01 path when ``--run-authorized`` is missing.  The
+  current task never exercises the real B01 path.
+
+Usage (default = --validate-config)::
+
+    uv run python scripts/run_slp8_region_mini.py \\
+        --config configs/experiments/slp8_pm_region_mini_v0.1.json \\
+        --output-dir outputs/experiments/EXP-SLP-B04-PM-REGION-MINI-20260827-VALIDATE
+
+Synthetic CPU smoke::
+
+    uv run python scripts/run_slp8_region_mini.py \\
+        --config configs/experiments/slp8_pm_region_mini_v0.1.json \\
+        --output-dir outputs/experiments/EXP-SLP-B04-PM-REGION-MINI-20260827-SYNTH \\
+        --synthetic-cpu-smoke
+
+Real run (NOT executed by B04 v0.1; requires explicit --run-authorized)::
+
+    uv run python scripts/run_slp8_region_mini.py \\
+        --config configs/experiments/slp8_pm_region_mini_v0.1.json \\
+        --output-dir outputs/experiments/EXP-SLP-B04-PM-REGION-MINI-20260827-R01 \\
+        --b01-freeze-dir <B01_FREEZE_DIR> \\
+        --dataset-root <SLP8_DATASET_ROOT> \\
+        --run-authorized
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import platform
+import sys
+import os
+import time
+import traceback
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import torch
+
+from topper_perception.io.slp8_training_table_freeze import (
+    A06_SPLIT_SHA256_EXPECTED,
+    EXPECTED_PROVENANCE,
+    EXPECTED_REVIEW_STATUS,
+    EXPECTED_SOURCE_SPLITS,
+    EXPECTED_SETTINGS,
+    EXPECTED_COVERS,
+    load_b01_freeze_tables,
+    sha256_file,
+)
+from topper_perception.neural.slp8_region_b01_contract import (
+    B01FreezeSnapshot,
+    build_b01_contract_expected,
+    check_freeze_manifest_file_consistency,
+    verify_b01_contract,
+)
+from topper_perception.neural.slp8_region_class_weights import (
+    assert_class_weight_invariants,
+    compute_class_weights,
+)
+from topper_perception.neural.slp8_region_budget import (
+    ResourceBudget,
+    resource_budget_from_config,
+)
+from topper_perception.neural.slp8_region_mini import (
+    B02_BASELINE_REFERENCE_VAL_FIXED_IOU,
+    B04_CANDIDATE_NAMES,
+    CHECKPOINT_VERSION,
+    MINI_VERSION,
+    SYNTHETIC_DEFAULTS,
+    TASK_ID,
+    MiniConfig,
+    MiniProtocolError,
+    OutputCollisionError,
+    build_mini_config,
+    build_synthetic_dataset,
+    check_output_dir_safety,
+    file_sha256,
+    resolve_device,
+    run_mini,
+    validate_mini_config,
+    write_mini_artifacts,
+    write_status_files,
+    _gather_environment,
+)
+from topper_perception.neural.slp8_region_models import (
+    B04_MAX_PARAMETERS,
+    SMALL_UNET_VERSION,
+    MODEL_VERSION,
+    get_model_builder,
+)
+from topper_perception.neural.slp8_region_resume import (
+    ResumeRefusedError,
+    refuse_resume_for_done_run,
+)
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+REDACTED_LOCAL_PATH = "REDACTED_LOCAL_PATH"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, default=_json_default),
+        encoding="utf-8",
+    )
+
+
+def _json_default(obj: Any) -> Any:
+    if isinstance(obj, (int,)):
+        return int(obj)
+    if isinstance(obj, float):
+        v = float(obj)
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    if isinstance(obj, bool):
+        return bool(obj)
+    if isinstance(obj, (list, tuple)):
+        return [_json_default(i) for i in obj]
+    if isinstance(obj, dict):
+        return {str(k): _json_default(v) for k, v in obj.items()}
+    if isinstance(obj, Path):
+        return str(obj)
+    return str(obj)
+
+
+# ---------------------------------------------------------------------------
+# Validate-only mode
+# ---------------------------------------------------------------------------
+
+
+def _run_validate_config(
+    config_path: Path, output_dir: Path
+) -> int:
+    """Validate the config (and the model registry) without running anything."""
+
+    output_dir = Path(output_dir).resolve()
+    check_output_dir_safety(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "run.log"
+
+    def _log(msg: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(f"task_id={TASK_ID}")
+    _log(f"config_path={config_path}")
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    validate_mini_config(raw)
+    _log("config validation: PASSED")
+
+    # Build a MiniConfig purely to serialize the resolved view.
+    config = build_mini_config(
+        raw,
+        b01_freeze_dir=None,
+        data_root=None,
+        config_path=str(config_path),
+    )
+    _write_json(output_dir / "resolved_config.json", config.as_dict())
+    _write_json(
+        output_dir / "input_manifest_hashes.json",
+        {
+            "config_path": str(config_path),
+            "config_sha256": file_sha256(config_path),
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "registered_candidates": list(B04_CANDIDATE_NAMES),
+            "note": "validate-only mode: no B01 freeze tables read",
+        },
+    )
+    _write_json(output_dir / "environment.json", _gather_environment())
+
+    # Verify the model registry can build both candidates (CPU) and
+    # that the parameter count cap is respected.
+    for cand in B04_CANDIDATE_NAMES:
+        builder = get_model_builder(cand)
+        model, _ = builder.factory(9, "cpu")
+        count = int(sum(p.numel() for p in model.parameters() if p.requires_grad))
+        if count > B04_MAX_PARAMETERS:
+            raise MiniProtocolError(
+                f"candidate {cand} has {count} parameters; exceeds B04 cap of "
+                f"{B04_MAX_PARAMETERS}"
+            )
+        _log(f"candidate={cand} model_version={builder.version} parameters={count}")
+
+    _write_json(
+        output_dir / "status.json",
+        {
+            "task_id": TASK_ID,
+            "config_version": MINI_VERSION,
+            "status": "VALIDATED",
+            "started_at_utc": _now_iso(),
+            "ended_at_utc": _now_iso(),
+            "mode": "validate-config",
+            "registered_candidates": list(B04_CANDIDATE_NAMES),
+            "model_parameter_cap": B04_MAX_PARAMETERS,
+        },
+    )
+    write_status_files(
+        output_dir,
+        status="DONE",
+        extra={
+            "mode": "validate-config",
+            "config_path": str(config_path),
+            "config_sha256": file_sha256(config_path),
+        },
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Synthetic CPU smoke
+# ---------------------------------------------------------------------------
+
+
+def _run_synthetic_cpu_smoke(
+    config_path: Path,
+    output_dir: Path,
+    *,
+    resume_from: Path | None = None,
+) -> int:
+    """Run the B04 Mini end-to-end on synthetic data with CPU only."""
+
+    output_dir = Path(output_dir).resolve()
+    check_output_dir_safety(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "run.log"
+
+    def _log(msg: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(f"task_id={TASK_ID} mode=synthetic-cpu-smoke")
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    validate_mini_config(raw)
+
+    # Build a synthetic-data override config (synthetic forces CPU).
+    raw["training"]["device"] = "cpu"
+    config = build_mini_config(
+        raw,
+        b01_freeze_dir="<SYNTHETIC>",
+        data_root="<SYNTHETIC>",
+        config_path=str(config_path),
+    )
+
+    device = resolve_device("cpu", allow_cpu_fallback=True)
+    if str(device) != "cpu":
+        raise MiniProtocolError("synthetic CPU smoke must run on cpu")
+
+    # Test-only budget override: when B04_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS
+    # is set, the synthetic smoke uses the supplied per-candidate wall
+    # budget (in seconds) instead of the config's 45-minute value.  This
+    # is exclusively a test hook to drive the STOPPED state in the
+    # CLI integration tests.
+    budget_override = os.environ.get("B04_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS")
+    if budget_override is not None:
+        try:
+            override_seconds = float(budget_override)
+        except ValueError:
+            raise MiniProtocolError(
+                f"B04_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS must parse as float; "
+                f"got {budget_override!r}"
+            )
+        if override_seconds <= 0:
+            raise MiniProtocolError(
+                f"B04_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS must be > 0; "
+                f"got {override_seconds}"
+            )
+        budget = ResourceBudget(
+            max_wall_seconds_per_candidate=float(override_seconds),
+            max_wall_seconds_total=float(override_seconds) * 2,
+            max_peak_cuda_mb=12288.0,
+        )
+        _log(
+            f"test-only budget override: per_candidate={override_seconds}s "
+            f"total={override_seconds * 2}s"
+        )
+    else:
+        budget = resource_budget_from_config(
+            {
+                "max_wall_minutes_per_candidate": 45,
+                "max_total_wall_minutes": 90,
+                "max_peak_cuda_mb": 12288,
+            }
+        )
+
+    _log(f"device={device}")
+
+    # Build synthetic datasets.
+    train_dataset, val_dataset, dataset_manifest, train_class_stats = build_synthetic_dataset(
+        n_train_samples=int(SYNTHETIC_DEFAULTS["n_train_samples"]),
+        n_val_samples=int(SYNTHETIC_DEFAULTS["n_val_samples"]),
+        seed=int(SYNTHETIC_DEFAULTS["seed"]),
+    )
+    if dataset_manifest["n_test_samples"] != 0:
+        raise MiniProtocolError(
+            "synthetic dataset must report n_test_samples=0; got "
+            f"{dataset_manifest['n_test_samples']}"
+        )
+    _log(
+        f"train_subjects={dataset_manifest['train_subjects']} "
+        f"n_train={dataset_manifest['n_train_samples']} "
+        f"n_val={dataset_manifest['n_val_samples']} "
+        f"n_test={dataset_manifest['n_test_samples']}"
+    )
+
+    # Compute class weights from the synthetic TRAIN-only stats.
+    class_weight_result = compute_class_weights(
+        {
+            "n_samples": int(train_class_stats["n_samples"]),
+            "n_pixels": int(train_class_stats["n_pixels"]),
+            "per_class_pixel_ratio": {
+                int(k): float(v)
+                for k, v in train_class_stats["per_class_pixel_ratio"].items()
+            },
+        }
+    )
+    assert_class_weight_invariants(class_weight_result)
+    _log(
+        "class_weights="
+        f"{[(c, round(class_weight_result.weights[c], 4)) for c in range(9)]}"
+    )
+
+    # Write the manifest and resolved config up front so the operator
+    # can audit them even if a candidate later fails.
+    _write_json(
+        output_dir / "resolved_config.json",
+        {**config.as_dict(), "mode": "synthetic-cpu-smoke"},
+    )
+    _write_json(
+        output_dir / "input_manifest_hashes.json",
+        {
+            "config_path": str(config_path),
+            "config_sha256": file_sha256(config_path),
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "registered_candidates": list(B04_CANDIDATE_NAMES),
+            "synthetic": True,
+            "synthetic_train_class_stats_sha256": _hash_dict(train_class_stats),
+        },
+    )
+    _write_json(output_dir / "environment.json", _gather_environment())
+
+    # Persist a small manifest so the reviewer can audit the run.
+    _write_json(
+        output_dir / "manifest.json",
+        {
+            "task_id": TASK_ID,
+            "config_version": MINI_VERSION,
+            "mode": "synthetic-cpu-smoke",
+            "dataset_manifest": dataset_manifest,
+            "train_class_stats": train_class_stats,
+            "class_weight_summary": class_weight_result.as_dict(),
+            "registered_candidates": list(B04_CANDIDATE_NAMES),
+            "checkpoint_version": CHECKPOINT_VERSION,
+            "b02_reference_val_fixed_iou": B02_BASELINE_REFERENCE_VAL_FIXED_IOU,
+            "b04_max_parameters": B04_MAX_PARAMETERS,
+            "started_at_utc": _now_iso(),
+        },
+    )
+
+    t_start = time.perf_counter()
+    resume_from_per_candidate: dict[str, Path] | None = None
+    if resume_from is not None:
+        from topper_perception.neural.slp8_region_resume import (
+            refuse_resume_for_done_run as _refuse,
+        )
+        _refuse(Path(resume_from))
+        cfg_for_resume = build_mini_config(
+            raw, b01_freeze_dir="<SYNTHETIC>", data_root="<SYNTHETIC>",
+            config_path=str(config_path),
+        )
+        resume_from_per_candidate = _auto_detect_resume_candidates(
+            Path(resume_from), cfg_for_resume
+        )
+        _log(
+            f"resume_from={resume_from} -> {sorted(resume_from_per_candidate.keys())}"
+        )
+    result = run_mini(
+        config=config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        dataset_manifest=dataset_manifest,
+        class_weight_result=class_weight_result,
+        output_dir=output_dir,
+        device=device,
+        input_hashes={
+            "config_sha256": file_sha256(config_path),
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "synthetic": True,
+        },
+        train_class_stats_source="synthetic_train_class_stats",
+        synthetic=True,
+        budget=budget,
+        resume_from_per_candidate=resume_from_per_candidate,
+    )
+    t_end = time.perf_counter()
+    result.wall_clock_seconds = float(t_end - t_start)
+    _log(
+        f"completed in {result.wall_clock_seconds:.2f}s; "
+        f"terminal_state={result.terminal_state} "
+        f"overall_decision={result.overall_decision}; "
+        f"feasible={result.n_candidates_feasible} "
+        f"not_feasible={result.n_candidates_not_feasible} "
+        f"failed={result.n_candidates_failed} "
+        f"stopped={result.n_candidates_stopped}"
+    )
+
+    _write_json(
+        output_dir / "manifest.json",
+        {
+            "task_id": TASK_ID,
+            "config_version": MINI_VERSION,
+            "mode": "synthetic-cpu-smoke",
+            "dataset_manifest": dataset_manifest,
+            "train_class_stats": train_class_stats,
+            "class_weight_summary": class_weight_result.as_dict(),
+            "registered_candidates": list(B04_CANDIDATE_NAMES),
+            "checkpoint_version": CHECKPOINT_VERSION,
+            "b02_reference_val_fixed_iou": B02_BASELINE_REFERENCE_VAL_FIXED_IOU,
+            "b04_max_parameters": B04_MAX_PARAMETERS,
+            "started_at_utc": result.started_at_utc,
+            "ended_at_utc": result.ended_at_utc,
+            "wall_clock_seconds": result.wall_clock_seconds,
+            "candidate_feasibility": {
+                cand: {
+                    "feasibility": cand_result.feasibility,
+                    "reason": cand_result.reason,
+                }
+                for cand, cand_result in result.candidate_results.items()
+            },
+            "terminal_state": result.terminal_state,
+            "overall_decision": result.overall_decision,
+        },
+    )
+
+    # Terminal file follows ``result.terminal_state`` exactly:
+    # DONE -> DONE.json + exit 0; FAILED -> FAILED.json + exit 1;
+    # STOPPED -> STOPPED.json + exit 1.  ``write_status_files`` keeps
+    # the three files mutually exclusive.
+    write_status_files(
+        output_dir,
+        status=result.terminal_state,
+        extra={
+            "mode": "synthetic-cpu-smoke",
+            "overall_decision": result.overall_decision,
+            "wall_clock_seconds": result.wall_clock_seconds,
+            "n_candidates_feasible": result.n_candidates_feasible,
+            "n_candidates_not_feasible": result.n_candidates_not_feasible,
+            "n_candidates_failed": result.n_candidates_failed,
+            "n_candidates_stopped": result.n_candidates_stopped,
+            "terminal_state": result.terminal_state,
+        },
+    )
+    _write_json(output_dir / "status.json", {
+        "task_id": TASK_ID,
+        "config_version": MINI_VERSION,
+        "status": result.terminal_state,
+        "mode": "synthetic-cpu-smoke",
+        "terminal_state": result.terminal_state,
+        "started_at_utc": result.started_at_utc,
+        "ended_at_utc": result.ended_at_utc,
+        "wall_clock_seconds": result.wall_clock_seconds,
+        "overall_decision": result.overall_decision,
+        "n_candidates_feasible": result.n_candidates_feasible,
+        "n_candidates_not_feasible": result.n_candidates_not_feasible,
+        "n_candidates_failed": result.n_candidates_failed,
+        "n_candidates_stopped": result.n_candidates_stopped,
+    })
+    # Terminal state machine:
+    # DONE -> exit 0; FAILED / STOPPED -> exit 1.
+    return 0 if result.terminal_state == "DONE" else 1
+
+
+def _hash_dict(payload: Any) -> str:
+    """Stable SHA-256 of a JSON payload."""
+
+    import hashlib
+
+    text = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=_json_default)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Real B01 path (gated by --run-authorized)
+# ---------------------------------------------------------------------------
+
+
+def _run_real_b01(
+    config_path: Path,
+    output_dir: Path,
+    b01_freeze_dir: Path,
+    dataset_root: Path,
+    *,
+    resume_from: Path | None = None,
+) -> int:
+    """Run the B04 Mini on real B01 freeze tables.  Requires --run-authorized.
+
+    The real B01 input contract is enforced **before** any training
+    artifact is written:
+
+    1. ``freeze_manifest.json`` and ``train_class_stats.json`` must
+       exist on disk.
+    2. The on-disk ``freeze_manifest.json`` SHA must match the SHA
+       recorded in the freeze handle (via
+       :func:`check_freeze_manifest_file_consistency`).
+    3. A :class:`B01FreezeSnapshot` is constructed and run through
+       :func:`verify_b01_contract` which fail-closes on
+       train/val/test count, subject count, A06 split SHA, provenance,
+       source review status, setting, cover, or freeze manifest SHA
+       mismatch.  The snapshot is built **from the freeze data** —
+       no constant defaults may be substituted.
+
+    The B01 freeze tables DO include the held-out TEST 495 rows in
+    their ``test_manifest.csv``.  That is a *structural* fact of the
+    freeze.  However, the B04 contract insists the loaded dataset
+    reports ``n_test_samples=0`` and TEST labels / onehots are never
+    reachable from the runner.  We explicitly do not pass TEST rows
+    to the B04 dataset builder: ``load_b01_freeze_tables(..., load_test=False)``
+    returns a freeze whose ``_test_rows`` is ``None``.
+
+    The terminal state is taken from :attr:`MiniRunResult.terminal_state`
+    so the CLI writes ``DONE.json`` / ``FAILED.json`` / ``STOPPED.json``
+    in lock-step with the runner.
+    """
+
+    output_dir = Path(output_dir).resolve()
+    b01_freeze_dir = Path(b01_freeze_dir).resolve()
+    dataset_root = Path(dataset_root).resolve()
+    check_output_dir_safety(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "run.log"
+
+    def _log(msg: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(f"task_id={TASK_ID} mode=real-b01")
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    validate_mini_config(raw)
+    config = build_mini_config(
+        raw,
+        b01_freeze_dir=str(b01_freeze_dir),
+        data_root=str(dataset_root),
+        config_path=str(config_path),
+    )
+
+    if not b01_freeze_dir.is_dir():
+        raise FileNotFoundError(f"B01 freeze directory not found: {b01_freeze_dir}")
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
+
+    # Load B01 freeze tables with TEST access explicitly off.  The
+    # freeze structurally contains TEST 495 rows in test_manifest.csv
+    # but we never read them into FreezeRow objects.
+    freeze = load_b01_freeze_tables(b01_freeze_dir, load_test=False)
+    if freeze._test_rows is not None:  # noqa: SLF001
+        raise MiniProtocolError(
+            "TEST rows were loaded by load_b01_freeze_tables(..., load_test=False); "
+            "this must not happen"
+        )
+
+    n_train = len(freeze.train_rows)
+    n_val = len(freeze.val_rows)
+    if n_train == 0 or n_val == 0:
+        raise MiniProtocolError(
+            f"B01 freeze has zero rows for an essential split: train={n_train}, val={n_val}"
+        )
+
+    # Hash input artefacts for the audit record.
+    freeze_manifest_path = b01_freeze_dir / "freeze_manifest.json"
+    train_class_stats_path = b01_freeze_dir / "train_class_stats.json"
+    if not freeze_manifest_path.is_file():
+        raise FileNotFoundError(f"freeze_manifest.json missing in {b01_freeze_dir}")
+    if not train_class_stats_path.is_file():
+        raise FileNotFoundError(f"train_class_stats.json missing in {b01_freeze_dir}")
+    train_class_stats = json.loads(train_class_stats_path.read_text(encoding="utf-8"))
+
+    # ------------------------------------------------------------------
+    # B01 input contract — fail-closed, BEFORE the CUDA check so a
+    # Reviewer can audit any contract failure on a CPU machine.
+    # ------------------------------------------------------------------
+    b01_expected = build_b01_contract_expected(raw)
+    # Fail-closed core-SHA check.  A file SHA is observational because
+    # metadata may vary; the B01 contract is the canonical ``core`` hash.
+    # Do not compare a freshly calculated file SHA against itself.
+    fm_file_sha = sha256_file(freeze_manifest_path)
+    check_freeze_manifest_file_consistency(
+        b01_freeze_dir,
+        freeze_manifest_sha256=b01_expected.freeze_manifest_core_sha256,
+    )
+    # Build a B01FreezeSnapshot from the loaded freeze and verify the
+    # full input contract.  No constant may be substituted; if any
+    # field is missing or mismatched the runner fail-closes.
+    snapshot = B01FreezeSnapshot.from_freeze_tables(
+        freeze_dir=b01_freeze_dir,
+        train_rows=freeze.train_rows,
+        val_rows=freeze.val_rows,
+        test_rows=None,  # explicitly None — TEST is never loaded
+        freeze_manifest=freeze.freeze_manifest,
+    )
+    b01_contract_report = verify_b01_contract(
+        snapshot, b01_expected
+    ).as_dict()
+    _log(
+        "B01 contract verified: "
+        f"train={snapshot.train_count} val={snapshot.val_count} "
+        f"test={snapshot.structural_test.sample_count} "
+        f"a06={snapshot.a06_split_sha256[:12]}…"
+    )
+
+    # Real data path: B04 demands device='cuda'.  In a real B01 run, CUDA
+    # must be available; otherwise fail-closed.  Run AFTER the
+    # B01 input contract so a Reviewer can audit on a CPU machine.
+    device = resolve_device("cuda", allow_cpu_fallback=False)
+    _log(f"device={device}")
+
+    # Subject isolation sanity (B01 should already guarantee this; we
+    # re-verify as a defense in depth).
+    train_subjects = sorted({row.subject_id for row in freeze.train_rows})
+    val_subjects = sorted({row.subject_id for row in freeze.val_rows})
+    if not verify_subject_isolation(train_subjects, val_subjects):
+        raise MiniProtocolError("TRAIN/VAL subject overlap detected in B01 freeze")
+
+    # Class weights from the B01 train_class_stats.json.
+    class_weight_result = compute_class_weights(train_class_stats)
+    assert_class_weight_invariants(class_weight_result)
+
+    # Build the real B01 dataset using the B03 dataset builder.
+    from topper_perception.neural.slp8_region_dataset import (
+        build_smoke_dataset,
+    )
+    train_dataset, val_dataset, dataset_manifest = build_smoke_dataset(
+        b01_freeze_dir=b01_freeze_dir,
+        dataset_root=dataset_root,
+        seed=int(raw.get("dataset", {}).get("smoke_subset", {}).get("seed", 42)),
+        n_train_subjects=int(
+            raw.get("dataset", {}).get("smoke_subset", {}).get(
+                "n_train_subjects", len(train_subjects)
+            )
+        ),
+        n_val_subjects=int(
+            raw.get("dataset", {}).get("smoke_subset", {}).get(
+                "n_val_subjects", len(val_subjects)
+            )
+        ),
+    )
+    # Structural TEST rows exist in the freeze but our loader / dataset
+    # report n_test_samples=0; never trust the structural 495 again.
+    if dataset_manifest["n_test_samples"] != 0:
+        raise MiniProtocolError(
+            f"real B01 dataset must report n_test_samples=0; got "
+            f"{dataset_manifest['n_test_samples']}"
+        )
+
+    _write_json(output_dir / "resolved_config.json", config.as_dict())
+    _write_json(
+        output_dir / "input_manifest_hashes.json",
+        {
+            "config_sha256": file_sha256(config_path),
+            "freeze_manifest_file_sha256": fm_file_sha,
+            "freeze_manifest_core_sha256": b01_expected.freeze_manifest_core_sha256,
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "b01_freeze_dir": REDACTED_LOCAL_PATH,
+            "dataset_root": REDACTED_LOCAL_PATH,
+            "train_class_stats_sha256": sha256_file(train_class_stats_path),
+            "b01_contract_report": b01_contract_report,
+        },
+    )
+    _write_json(output_dir / "environment.json", _gather_environment())
+
+    resume_from_per_candidate: dict[str, Path] | None = None
+    if resume_from is not None:
+        resume_from_per_candidate = _auto_detect_resume_candidates(
+            Path(resume_from), config
+        )
+        _log(
+            f"resume_from={resume_from} -> {sorted(resume_from_per_candidate.keys())}"
+        )
+
+    t_start = time.perf_counter()
+    result = run_mini(
+        config=config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        dataset_manifest=dataset_manifest,
+        class_weight_result=class_weight_result,
+        output_dir=output_dir,
+        device=device,
+        input_hashes={
+            "config_sha256": file_sha256(config_path),
+            "freeze_manifest_sha256": b01_expected.freeze_manifest_core_sha256,
+            "freeze_manifest_file_sha256": fm_file_sha,
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "train_class_stats_sha256": sha256_file(train_class_stats_path),
+        },
+        train_class_stats_source="b01_train_class_stats.json",
+        synthetic=False,
+        b01_contract_report=b01_contract_report,
+        resume_from_per_candidate=resume_from_per_candidate,
+    )
+    t_end = time.perf_counter()
+    result.wall_clock_seconds = float(t_end - t_start)
+    _log(
+        f"completed in {result.wall_clock_seconds:.2f}s; "
+        f"terminal_state={result.terminal_state} "
+        f"overall_decision={result.overall_decision}"
+    )
+
+    # Terminal file follows result.terminal_state, NOT a hard-coded
+    # DONE.  DONE → exit 0; FAILED/STOPPED → exit 1.
+    write_status_files(
+        output_dir,
+        status=result.terminal_state,
+        extra={
+            "mode": "real-b01",
+            "overall_decision": result.overall_decision,
+            "wall_clock_seconds": result.wall_clock_seconds,
+            "n_candidates_feasible": result.n_candidates_feasible,
+            "n_candidates_not_feasible": result.n_candidates_not_feasible,
+            "n_candidates_failed": result.n_candidates_failed,
+            "n_candidates_stopped": result.n_candidates_stopped,
+            "terminal_state": result.terminal_state,
+        },
+    )
+    _write_json(output_dir / "status.json", {
+        "task_id": TASK_ID,
+        "config_version": MINI_VERSION,
+        "status": result.terminal_state,
+        "mode": "real-b01",
+        "terminal_state": result.terminal_state,
+        "overall_decision": result.overall_decision,
+        "wall_clock_seconds": result.wall_clock_seconds,
+        "n_candidates_feasible": result.n_candidates_feasible,
+        "n_candidates_not_feasible": result.n_candidates_not_feasible,
+        "n_candidates_failed": result.n_candidates_failed,
+        "n_candidates_stopped": result.n_candidates_stopped,
+    })
+    return 0 if result.terminal_state == "DONE" else 1
+
+
+def _auto_detect_resume_candidates(
+    resume_from: Path,
+    config: "MiniConfig",
+) -> dict[str, Path]:
+    """Auto-detect per-candidate ``last.pt`` files under ``resume_from``.
+
+    The CLI takes a single ``--resume-from`` path that is the output
+    directory of a previous (interrupted) B04 run.  This function
+    walks the directory and returns a mapping
+    ``{candidate_name: last_pt_path}`` for candidates that completed at
+    least one epoch.  A serial run may be interrupted while a later
+    candidate has not started; that candidate must start fresh instead
+    of making the whole experiment non-resumable.  The function refuses
+    DONE and unknown terminal states, and refuses a source with no
+    completed-epoch checkpoint at all.
+    """
+
+    from topper_perception.neural.slp8_region_resume import ResumeRefusedError
+    from topper_perception.neural.slp8_region_mini import (
+        MiniProtocolError,
+        refuse_resume_for_done_run,
+    )
+
+    if not resume_from.is_dir():
+        raise MiniProtocolError(
+            f"--resume-from path is not a directory: {resume_from}"
+        )
+    refuse_resume_for_done_run(resume_from)
+    status_path = resume_from / "status.json"
+    if not status_path.is_file():
+        raise MiniProtocolError(
+            f"--resume-from source lacks status.json: {resume_from}"
+        )
+    try:
+        source_status = json.loads(status_path.read_text(encoding="utf-8"))
+        source_terminal_state = str(
+            source_status.get("terminal_state", source_status.get("status", ""))
+        )
+    except Exception as exc:
+        raise MiniProtocolError(
+            f"--resume-from source status.json is unreadable: {exc}"
+        ) from exc
+    if source_terminal_state not in {"RUNNING", "FAILED", "STOPPED"}:
+        raise MiniProtocolError(
+            "--resume-from source must have terminal_state RUNNING, FAILED, "
+            f"or STOPPED; got {source_terminal_state!r}"
+        )
+    result: dict[str, Path] = {}
+    for cand in config.candidates:
+        last_pt = resume_from / "checkpoints" / cand / "last.pt"
+        if last_pt.is_file():
+            result[cand] = last_pt
+    if not result:
+        raise MiniProtocolError(
+            "--resume-from source contains no completed-epoch last.pt; "
+            "there is no safe state to resume"
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config", type=Path, required=True,
+        help="Path to the B04 Mini config JSON.",
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, required=True,
+        help="Output directory for run artefacts.",
+    )
+    parser.add_argument(
+        "--validate-config", dest="validate_config",
+        action="store_true",
+        help="Only validate the config; do not run anything.",
+    )
+    parser.add_argument(
+        "--synthetic-cpu-smoke", dest="synthetic_cpu_smoke",
+        action="store_true",
+        help="Run the B04 Mini on synthetic CPU data (no real B01).",
+    )
+    parser.add_argument(
+        "--b01-freeze-dir", type=Path, default=None,
+        help="Path to the B01 freeze directory (real run only).",
+    )
+    parser.add_argument(
+        "--dataset-root", type=Path, default=None,
+        help="Path to the SLP8 dataset root (real run only).",
+    )
+    parser.add_argument(
+        "--run-authorized", dest="run_authorized",
+        action="store_true",
+        help="REQUIRED for any real B01 run; the B04 protocol task does not set this.",
+    )
+    parser.add_argument(
+        "--resume-from", dest="resume_from", type=Path, default=None,
+        help=(
+            "Path to a previous (interrupted) B04 output directory. "
+            "Refuses to resume a DONE run; the resume otherwise auto-detects "
+            "checkpoints/<candidate>/last.pt and continues training."
+        ),
+    )
+
+    args = parser.parse_args(argv)
+
+    try:
+        # Mutual-exclusion: --validate-config and --synthetic-cpu-smoke
+        # and a real run cannot coexist.
+        if args.validate_config and args.synthetic_cpu_smoke:
+            raise MiniProtocolError(
+                "--validate-config and --synthetic-cpu-smoke are mutually exclusive"
+            )
+
+        if args.validate_config:
+            return _run_validate_config(args.config, args.output_dir)
+
+        if args.synthetic_cpu_smoke:
+            return _run_synthetic_cpu_smoke(
+                args.config, args.output_dir, resume_from=args.resume_from
+            )
+
+        if args.b01_freeze_dir is not None or args.dataset_root is not None:
+            if not args.run_authorized:
+                raise MiniProtocolError(
+                    "B01 freeze or dataset-root paths were supplied but "
+                    "--run-authorized was NOT set.  B04 forbids the real B01 "
+                    "path without explicit owner authorization.  Re-run with "
+                    "--run-authorized to proceed."
+                )
+            if args.b01_freeze_dir is None or args.dataset_root is None:
+                raise MiniProtocolError(
+                    "real B01 run requires both --b01-freeze-dir and --dataset-root"
+                )
+            return _run_real_b01(
+                args.config, args.output_dir, args.b01_freeze_dir, args.dataset_root,
+                resume_from=args.resume_from,
+            )
+
+        # No explicit mode supplied — default to validate-config.
+        return _run_validate_config(args.config, args.output_dir)
+    except Exception as exc:
+        # When the exception is an ``OutputCollisionError`` or an
+        # authorization-rejection ``MiniProtocolError`` we MUST NOT
+        # create any file in the output directory: doing so would
+        # silently mutate the directory the operator just asked us
+        # to leave alone.  Only other (post-validation) errors write
+        # ``FAILED.json`` / ``status.json`` so the directory is
+        # auditable.
+        from topper_perception.neural.slp8_region_mini import (
+            OutputCollisionError,
+        )
+
+        non_mutating = (
+            isinstance(exc, OutputCollisionError)
+            or "--run-authorized was NOT set" in str(exc)
+            or "real B01 run requires both" in str(exc)
+        )
+        if non_mutating:
+            print(f"REJECTED: {exc}", file=sys.stderr)
+            return 2
+
+        output_dir = Path(args.output_dir).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        failed = {
+            "status": "FAILED",
+            "task_id": TASK_ID,
+            "error": f"{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc(),
+            "ended_at_utc": _now_iso(),
+        }
+        try:
+            write_status_files(
+                output_dir,
+                status="FAILED",
+                extra={
+                    "mode": "validate-config"
+                    if args.validate_config
+                    else (
+                        "synthetic-cpu-smoke"
+                        if args.synthetic_cpu_smoke
+                        else "real-b01"
+                    ),
+                    "error": str(exc),
+                },
+            )
+        except Exception:
+            pass
+        _write_json(output_dir / "status.json", {
+            "task_id": TASK_ID,
+            "status": "FAILED",
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        })
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

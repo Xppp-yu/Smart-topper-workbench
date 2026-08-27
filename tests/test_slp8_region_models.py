@@ -7,6 +7,7 @@ Tests cover:
 4. Finite loss and backward
 5. Parameter change
 6. Model config
+7. B04 model registry wiring (TinyFCN + SmallUNet, B04_MAX_PARAMETERS cap)
 """
 
 from __future__ import annotations
@@ -20,13 +21,20 @@ import torch
 import torch.nn as nn
 
 from topper_perception.neural.slp8_region_models import (
+    B04_MAX_PARAMETERS,
     INPUT_SHAPE,
+    MODEL_REGISTRY,
     MODEL_VERSION,
     N_CLASSES,
+    SMALL_UNET_VERSION,
+    Slp8SmallUnet,
     Slp8TinyFcn,
     compute_param_diff,
     create_loss_fn,
+    create_slp8_small_unet,
     create_slp8_tiny_fcn,
+    get_model_builder,
+    list_model_builders,
     verify_model_gradient_flow,
     verify_model_output_shape,
 )
@@ -370,3 +378,123 @@ class TestModelDeterminism:
             output2 = model(input_tensor)
 
         assert torch.allclose(output1, output2)
+
+
+# ---------------------------------------------------------------------------
+# Test: B04 model registry (Candidate A and Candidate B)
+# ---------------------------------------------------------------------------
+
+
+class TestB04ModelRegistry:
+    """The B04 candidate registry is registered and obeys the parameter cap."""
+
+    def test_registry_contains_both_candidates(self):
+        names = list_model_builders()
+        assert MODEL_VERSION in names
+        assert SMALL_UNET_VERSION in names
+
+    def test_get_model_builder_returns_known_versions(self):
+        for name, expected_version in (
+            (MODEL_VERSION, MODEL_VERSION),
+            (SMALL_UNET_VERSION, SMALL_UNET_VERSION),
+        ):
+            builder = get_model_builder(name)
+            assert builder.name == name
+            assert builder.version == expected_version
+
+    def test_get_model_builder_unknown_raises(self):
+        with pytest.raises(KeyError, match="Unknown model"):
+            get_model_builder("slp8_nope_v0.0")
+
+    def test_register_duplicate_raises(self):
+        from topper_perception.neural.slp8_region_models import (
+            ModelBuilder, register_model_builder, MODEL_REGISTRY,
+        )
+        # Re-registering an existing name should fail.
+        with pytest.raises(ValueError, match="already registered"):
+            register_model_builder(
+                ModelBuilder(
+                    name=MODEL_VERSION,
+                    version=MODEL_VERSION,
+                    factory=lambda n_classes, device: Slp8TinyFcn(n_classes=n_classes),
+                )
+            )
+
+    def test_small_unet_in_registry(self):
+        builder = get_model_builder(SMALL_UNET_VERSION)
+        model, cfg = builder.factory(N_CLASSES, "cpu")
+        assert isinstance(model, Slp8SmallUnet)
+        assert cfg["model_version"] == SMALL_UNET_VERSION
+        assert cfg["parameter_count"] <= B04_MAX_PARAMETERS
+
+    def test_tiny_fcn_in_registry(self):
+        builder = get_model_builder(MODEL_VERSION)
+        model, cfg = builder.factory(N_CLASSES, "cpu")
+        assert isinstance(model, Slp8TinyFcn)
+        assert cfg["model_version"] == MODEL_VERSION
+        assert cfg["parameter_count"] <= B04_MAX_PARAMETERS
+
+    def test_small_unet_factory(self):
+        model, cfg = create_slp8_small_unet(device="cpu")
+        assert model.n_classes == N_CLASSES
+        assert cfg["device"] == "cpu"
+        assert cfg["parameter_count"] <= B04_MAX_PARAMETERS
+        # Output shape sanity check
+        x = torch.randn(1, 1, 192, 84, dtype=torch.float32)
+        y = model(x)
+        assert y.shape == (1, N_CLASSES, 192, 84)
+
+    def test_b04_max_parameters_is_frozen(self):
+        # The frozen cap is 150,000.  Changing this would break the
+        # B04 contract; the test pins the value.
+        assert B04_MAX_PARAMETERS == 150_000
+
+    def test_both_candidates_pass_parameter_cap(self):
+        for name in (MODEL_VERSION, SMALL_UNET_VERSION):
+            builder = get_model_builder(name)
+            model, _ = builder.factory(N_CLASSES, "cpu")
+            count = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            assert count <= B04_MAX_PARAMETERS, f"{name} has {count} parameters"
+
+    def test_small_unet_no_batchnorm_no_dropout(self):
+        model = Slp8SmallUnet()
+        for module in model.modules():
+            assert not isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d))
+            assert not isinstance(module, (nn.Dropout, nn.Dropout1d, nn.Dropout2d, nn.Dropout3d))
+
+    def test_small_unet_skip1_keeps_input_resolution(self):
+        # Architectural check: skip1 has the same spatial size as the
+        # input.  This is the "explicit spatial size recovery" the B04
+        # contract requires (forbidding scale_factor-driven upsample).
+        m = Slp8SmallUnet()
+        assert m._skip1_shape == (192, 84)
+        assert m._skip2_shape == (96, 42)
+        assert m._bottleneck_shape == (48, 21)
+
+    def test_small_unet_odd_width_recovery(self):
+        # The 84 width after two MaxPool2d(2) steps (84 -> 42 -> 21)
+        # must be recovered exactly via the explicit F.interpolate size,
+        # not by `scale_factor=2` (which would yield 84 by luck but is
+        # brittle).  Two forward passes with the same input must be
+        # deterministic and produce the same shape.
+        m = Slp8SmallUnet()
+        m.eval()
+        x = torch.randn(2, 1, 192, 84, dtype=torch.float32)
+        with torch.no_grad():
+            y1 = m(x)
+            y2 = m(x)
+        assert y1.shape == (2, N_CLASSES, 192, 84)
+        assert y1.shape[3] == 84  # the odd width is preserved
+        assert torch.equal(y1, y2)
+
+    def test_small_unet_pretrained_attr_absent(self):
+        # The model must not carry any field that could be interpreted
+        # as a pretrained/external download.
+        m = Slp8SmallUnet()
+        cfg = m.get_config()
+        for forbidden in ("pretrained", "checkpoint_url", "external_weights", "url"):
+            assert forbidden not in cfg
+        for attr in dir(m):
+            assert "pretrained" not in attr.lower() or attr in {
+                "model_version", "_init_weights",
+            }
