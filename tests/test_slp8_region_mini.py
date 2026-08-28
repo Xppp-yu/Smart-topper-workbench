@@ -60,8 +60,30 @@ import torch.nn as nn
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+
+
+def _load_runner_module():
+    """Load the CLI by path so this test is independent of ``sys.path``.
+
+    ``scripts`` is deliberately not an installed Python package.  Importing
+    it by package name happens to work in some POSIX test environments, but
+    is not a stable contract under the Windows pytest configuration.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "slp8_region_mini_runner_under_test",
+        str(SCRIPTS_DIR / "run_slp8_region_mini.py"),
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("could not load SLP8 Mini runner spec")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 from topper_perception.neural.slp8_region_b01_contract import (
     B01ContractError,
@@ -974,8 +996,12 @@ class TestRunAuthorizedGate:
             "--b01-freeze-dir", str(tmp_output_dir / "fake_b01"),
             "--dataset-root", str(tmp_output_dir / "fake_data"),
         ]
+        # On Windows, a cold interpreter can spend substantial time loading
+        # PyTorch before the CLI reaches this deliberately non-mutating gate.
+        # The contract is the rejection and zero output-dir mutation, not a
+        # 30-second process-startup budget.
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, env=env,
+            cmd, capture_output=True, text=True, timeout=60, env=env,
         )
         assert result.returncode != 0
         assert "run-authorized" in result.stderr.lower()
@@ -2201,8 +2227,9 @@ class TestCLITerminalStateFailed:
                 b01_contract_report=None,
             )
 
-        # Patch the symbol the CLI module imports.
-        import scripts.run_slp8_region_mini as cli  # type: ignore
+        # Patch the symbol the CLI module imports.  Load by absolute path:
+        # ``scripts`` is not an installed package.
+        cli = _load_runner_module()
         monkeypatch.setattr(cli, "run_mini", _fake_run_mini)
 
         # Now invoke main() directly with patched argv.

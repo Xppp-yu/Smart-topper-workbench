@@ -1,11 +1,13 @@
-# B04 交付说明：SLP8 PM-only 区域分割 Mini 协议与 Runner (R03)
+# B04 交付说明：SLP8 PM-only 区域分割 Mini（R05 真实运行收口）
 
 **TASK-ID:** `TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1`
 **Stage:** S2-B04
-**日期:** 2026-08-27 (R03)
-**状态:** `MINI_PROTOCOL_AND_RUNNER_READY_FOR_REVIEW`
-**Base:** `main @ 6e19374`
-**Branch:** `codex/task-slp-b04-pm-only-region-mini-protocol-v0.1`
+**日期:** 2026-08-29
+**状态:** `DONE_WITH_LIMITATIONS`
+**运行源码现场版本:** `72fbe67`
+**当前收口分支:** `codex/task-slp-b04-centroid-missing-gt-hotfix-v0.1`
+
+> 本文件前半部分保留 R03/R04 协议与合成验证历史。2026-08-29 的 R05 真实运行结果和最终结论见文末“R05 真实 Mini 验收”；该节覆盖此前“真实 Mini 未运行”的历史状态。
 
 ---
 
@@ -275,7 +277,7 @@ uv pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
 **交付版本：** v0.1-R03
 **生成时间：** 2026-08-27
-**维护者：** Mavis (MiniMax Code)
+**维护者：** Smart Topper Team
 
 ---
 
@@ -294,3 +296,83 @@ python scripts/run_slp8_region_mini.py --config configs/experiments/slp8_pm_regi
 真实 B01 运行仍需 Owner 授权和 CUDA 12 GB peak 环境；不可读取 TEST，且不得覆盖已有 EXP-ID 输出。
 
 Reviewer 最终验收：B04 定向测试 **158 passed**；联合回归 **1342 passed, 4 skipped**；协议与 Runner 状态为 `PROTOCOL_AND_RUNNER_ACCEPTED`。真实 B01 Mini、CUDA/GPU 和 TEST 均为 `NOT RUN`。
+
+---
+
+## R05 真实 Mini 验收（2026-08-29）
+
+### 目的
+
+在冻结的 B01 TRAIN/VAL 合同上，用真实 RTX 4090 CUDA 环境执行两个 B04 候选，回答“哪些候选达到进入 Full 协议的最低可行性门槛”。本实验不读取 TEST，也不用于宣布最终冠军。
+
+### 输入、环境与参数
+
+| 项目 | 值 |
+|---|---|
+| EXP-ID | `EXP-SLP-B04-PM-REGION-MINI-20260828-AUTODL-R05` |
+| 数据 | B01 TRAIN 3,645 / VAL 450 / TEST 0 |
+| 受试者 | TRAIN 81 / VAL 10，交集 0 |
+| 数据边界 | danaLab / uncover / raw PMarray response |
+| 参考标签 | `V221_CORRECTED_SUPPORT_AUTO_ACCEPTED` / `NOT_REVIEWED` |
+| GPU | NVIDIA GeForce RTX 4090 |
+| Python / PyTorch | 3.12.3 / 2.8.0+cu128 |
+| 候选 | `slp8_tiny_fcn_v0.1`、`slp8_small_unet_v0.1` |
+| Seed | 42 |
+| Epoch | 最多 20，最少 5，patience 4 |
+| Batch size | 16 |
+| Optimizer | AdamW，lr=0.001，weight_decay=0.0001 |
+| 可行性门槛 | VAL fixed foreground macro IoU ≥ 0.205644 |
+
+### 实际结果
+
+| 候选 | VAL 前景 Macro IoU | VAL 前景 Macro Dice | VAL loss | 决策 |
+|---|---:|---:|---:|---|
+| TinyFCN | 0.051631 | 0.089858 | 1.659858 | `NOT_FEASIBLE` |
+| SmallUNet | 0.439625 | 0.607810 | 0.732006 | `FEASIBLE` |
+
+SmallUNet 的 pixel accuracy 为 `0.841269`，最差 VAL 受试者为 `00012`，其前景 Macro IoU 为 `0.308241`。SmallUNet 归一化质心误差均值为 `0.042190`；3/3600 条质心记录因 GT 区域缺失被显式标为无效，没有静默计入均值。
+
+两个候选都完成 checkpoint 重载一致性验证，`max_abs_diff=0.0`、预测哈希一致。总运行时间 `231.18` 秒，峰值 CUDA 显存 `362.99 MiB`，没有触发时间或显存预算，0 candidate failed。
+
+### 真实运行中发现并修复的问题
+
+| 现场问题 | 修复提交 |
+|---|---|
+| 真实入口缺少 subject isolation helper import | `f3fb7d9` |
+| CUDA 严格确定性下二维 NLL loss 不受支持 | `c4ebc5d` |
+| 参数变化审计混用 CPU/CUDA tensor | `762f44e` |
+| GT 区域缺失时质心函数解包 None | `72fbe67` |
+
+R01–R04 的失败输出保留为审计证据；R05 使用新的输出目录，没有覆盖历史 EXP-ID。
+
+### 归档与复现证据
+
+原始运行包保存在本地 ignored evidence 目录：
+
+`<WORKBENCH>/outputs/evidence_archives/SLP_B04_R05/EXP-SLP-B04-PM-REGION-MINI-20260828-AUTODL-R05.tar.gz`
+
+归档 SHA-256：
+
+`57885db25dba04a3f9d82666b47dbcc85f030f9842a0c20764d20133ead87c19`
+
+Windows 工作台已独立重算并确认哈希匹配；包内包含 DONE/status、resolved config、输入 manifest 哈希、环境、两候选 checkpoint、指标、预测 manifest、质心误差、混淆矩阵、预算和 reload consistency。
+
+运行现场 checkout 记录为 `72fbe67`。需要注意：R05 的 `environment.json` 没有内嵌 Git commit 字段，因此 B07/B08 Runner 必须把 Git commit 写进运行产物，避免只依赖外部终端记录。
+
+### 结论与决策
+
+- B04 状态：`DONE_WITH_LIMITATIONS`。
+- `slp8_small_unet_v0.1` 作为唯一候选进入 B07 Full 协议冻结。
+- `slp8_tiny_fcn_v0.1` 不进入 Full 协议。
+- B07 解锁的是“协议设计”，不是 Full GPU 运行授权。
+
+### 限制和禁止结论
+
+- 结果仅来自 VAL；TEST 读取数为 0，不是最终测试结论。
+- `run_mode` 记录为 `cuda_determinism_unverified`；本次验证了同一运行内 checkpoint reload 一致性，没有完成两次独立真实 GPU 运行的 byte-identical 复现。
+- 标签不是人工像素级 GT；仅适用于 danaLab/uncover 的研究筛选。
+- 不证明自研硬件、产品区域、舒适性、医疗、整夜稳定性或气囊控制效果。
+
+### 下一步
+
+启动 `TASK-SLP-B07-PM-ONLY-REGION-FULL-PROTOCOL-v0.1`，只冻结 SmallUNet 的 folds、预算、指标、选择规则、产物与停止条件；不得在同一任务中运行 Full。

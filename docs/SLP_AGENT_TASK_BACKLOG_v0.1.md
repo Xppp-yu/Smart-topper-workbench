@@ -216,10 +216,12 @@ Reviewer checklist:
 
 ### TASK-SLP-B04：单模态 Region Mini
 
-- 状态：`PROTOCOL_AND_RUNNER_ACCEPTED / REAL_MINI_AWAITING_OWNER_AUTHORIZATION`（协议与 Runner 已通过 Reviewer Gate；真实 B01 Mini 尚未运行）。
+- 状态：`DONE_WITH_LIMITATIONS`（2026-08-29；协议、Runner、真实 RTX 4090 Mini R05 与本地归档验收完成）。
 - 目标：每模态保留最多1–2个可行候选。
 - 指标：region IoU/Dice、中心误差、逐区域、逐 posture、worst subject；当前仅 uncover。
-- Gate：Owner 明确授权 + CUDA 12 GB peak 环境后才可运行真实 Mini；只淘汰不可行候选，不用小样本宣布冠军。真实产物经 Reviewer 接受前，B07 继续保持阻塞。
+- 真实结果：`EXP-SLP-B04-PM-REGION-MINI-20260828-AUTODL-R05` 状态 `DONE`；TRAIN 3,645 / VAL 450 / TEST 0；SmallUNet VAL fixed foreground macro IoU `0.439625`，通过冻结门槛 `0.205644`；TinyFCN `0.051631`，未通过。两候选均完成 checkpoint reload 一致性校验，0 candidate failed。
+- 候选决策：B07 仅保留 `slp8_small_unet_v0.1`；`slp8_tiny_fcn_v0.1` 不进入 Full 协议。该决策仅表示 Mini 可行性筛选，不是最终模型排名。
+- 限制：仅 danaLab/uncover、参考 GT 为 `NOT_REVIEWED` 自动接受标签、未读取 TEST；不能外推产品、硬件、舒适性、医疗、整夜或气囊控制。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 
@@ -235,7 +237,7 @@ Reviewer checklist:
 
 ### TASK-SLP-B07：Full 协议冻结
 
-- 状态：`BLOCKED_BY_B04`；B05/B06 为可选独立路线，不阻塞 pressure-only Full 协议。
+- 状态：`READY`；B04 真实 Mini 已完成并保留 SmallUNet；B05/B06 为可选独立路线，不阻塞 pressure-only Full 协议。
 - 目标：冻结 folds、候选、预算、指标、选择规则、资源和停止条件。
 - 禁止：协议与 Full 运行同一任务完成。
 
