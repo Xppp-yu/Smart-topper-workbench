@@ -78,6 +78,9 @@ from topper_perception.neural.slp8_region_class_weights import (
     assert_class_weight_invariants,
     compute_class_weights,
 )
+from topper_perception.neural.slp8_region_dataset import (
+    verify_subject_isolation,
+)
 from topper_perception.neural.slp8_region_budget import (
     ResourceBudget,
     resource_budget_from_config,

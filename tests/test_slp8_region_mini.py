@@ -60,8 +60,30 @@ import torch.nn as nn
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+
+
+def _load_runner_module():
+    """Load the CLI by path so this test is independent of ``sys.path``.
+
+    ``scripts`` is deliberately not an installed Python package.  Importing
+    it by package name happens to work in some POSIX test environments, but
+    is not a stable contract under the Windows pytest configuration.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "slp8_region_mini_runner_under_test",
+        str(SCRIPTS_DIR / "run_slp8_region_mini.py"),
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("could not load SLP8 Mini runner spec")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 from topper_perception.neural.slp8_region_b01_contract import (
     B01ContractError,
@@ -121,6 +143,8 @@ from topper_perception.neural.slp8_region_mini import (
     SYNTHETIC_DEFAULTS,
     TASK_ID,
     _build_checkpoint_payload,
+    _clone_state_dict_to_cpu,
+    _flatten_segmentation_for_cross_entropy,
     _predictions_hash,
     build_mini_config,
     build_synthetic_dataset,
@@ -687,6 +711,46 @@ class TestConfigValidation:
 
 
 class TestDeviceHandling:
+    def test_parameter_audit_snapshot_is_independent_and_cpu_resident(self):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = nn.Linear(3, 2).to(device)
+
+        snapshot = _clone_state_dict_to_cpu(model)
+        original = {name: tensor.clone() for name, tensor in snapshot.items()}
+
+        assert snapshot
+        assert all(tensor.device.type == "cpu" for tensor in snapshot.values())
+        assert all(not tensor.requires_grad for tensor in snapshot.values())
+
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.add_(1.0)
+
+        assert all(
+            torch.equal(snapshot[name], original[name])
+            for name in snapshot
+        )
+
+    def test_flattened_cross_entropy_is_equivalent_to_spatial_form(self):
+        generator = torch.Generator().manual_seed(42)
+        logits = torch.randn(2, N_CLASSES, 7, 5, generator=generator)
+        labels = torch.randint(
+            0, N_CLASSES, (2, 7, 5), generator=generator
+        )
+        weights = torch.linspace(0.5, 1.5, N_CLASSES)
+
+        flat_logits, flat_labels = _flatten_segmentation_for_cross_entropy(
+            logits, labels
+        )
+
+        assert flat_logits.shape == (2 * 7 * 5, N_CLASSES)
+        assert flat_labels.shape == (2 * 7 * 5,)
+        spatial_loss = nn.CrossEntropyLoss(weight=weights)(
+            logits.reshape(2, N_CLASSES, -1), labels.reshape(2, -1)
+        )
+        flat_loss = nn.CrossEntropyLoss(weight=weights)(flat_logits, flat_labels)
+        assert torch.allclose(flat_loss, spatial_loss, rtol=1e-6, atol=1e-7)
+
     def test_cuda_required_for_real_runs(self):
         from topper_perception.neural.slp8_region_mini import MiniProtocolError as _MPE
         if torch.cuda.is_available():
@@ -715,8 +779,11 @@ class TestCentroidErrorContract:
         pred = np.zeros((192, 84), dtype=np.int64)
         records = compute_centroid_errors([lab], [pred], ["x"])
         assert all(r.both_missing for r in records)
+        assert all(not r.valid for r in records)
+        assert all(r.invalid_reason == "both_gt_and_pred_absent" for r in records)
         summary = summarize_centroid_errors(records)
         assert summary.overall_mean == 0.0
+        assert summary.n_invalid == len(FOREGROUND_CLASS_IDS)
         for cid in FOREGROUND_CLASS_IDS:
             assert summary.per_region_mean[cid] == 0.0
             assert summary.per_region_count[cid] == 0
@@ -730,7 +797,24 @@ class TestCentroidErrorContract:
         for rec in records:
             if rec.region_id == 1:
                 assert not rec.both_missing
+                assert rec.valid
                 assert rec.error == 1.0
+
+    def test_prediction_only_is_invalid_and_excluded(self):
+        H, W = DEFAULT_IMAGE_SHAPE
+        lab = np.zeros((H, W), dtype=np.int64)
+        pred = np.zeros((H, W), dtype=np.int64)
+        pred[10:50, 10:40] = 1
+
+        records = compute_centroid_errors([lab], [pred], ["x"])
+        region = next(rec for rec in records if rec.region_id == 1)
+
+        assert not region.valid
+        assert not region.both_missing
+        assert region.invalid_reason == "gt_absent_pred_present"
+        summary = summarize_centroid_errors(records)
+        assert summary.per_region_count[1] == 0
+        assert summary.per_region_mean[1] == 0.0
 
     def test_both_present_records_distance_normalized(self):
         H, W = DEFAULT_IMAGE_SHAPE
@@ -742,6 +826,7 @@ class TestCentroidErrorContract:
         for rec in records:
             if rec.region_id == 1:
                 assert rec.error == 0.0
+                assert rec.valid
                 assert not rec.both_missing
 
     def test_offset_centroid_error_is_positive(self):
@@ -882,6 +967,21 @@ class TestOutputCollisionAndStatus:
 
 
 class TestRunAuthorizedGate:
+    def test_real_runner_imports_subject_isolation_helper(self):
+        """The authorized real-data path must resolve its isolation guard."""
+        import runpy
+
+        from topper_perception.neural.slp8_region_dataset import (
+            verify_subject_isolation,
+        )
+
+        runner_globals = runpy.run_path(
+            str(PROJECT_ROOT / "scripts" / "run_slp8_region_mini.py"),
+            run_name="slp8_region_mini_runner_test",
+        )
+
+        assert runner_globals["verify_subject_isolation"] is verify_subject_isolation
+
     def test_real_paths_without_run_authorized_rejected(self, tmp_output_dir):
         out = tmp_output_dir / "real_rejected"
         env = dict(os.environ)
@@ -896,8 +996,12 @@ class TestRunAuthorizedGate:
             "--b01-freeze-dir", str(tmp_output_dir / "fake_b01"),
             "--dataset-root", str(tmp_output_dir / "fake_data"),
         ]
+        # On Windows, a cold interpreter can spend substantial time loading
+        # PyTorch before the CLI reaches this deliberately non-mutating gate.
+        # The contract is the rejection and zero output-dir mutation, not a
+        # 30-second process-startup budget.
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, env=env,
+            cmd, capture_output=True, text=True, timeout=60, env=env,
         )
         assert result.returncode != 0
         assert "run-authorized" in result.stderr.lower()
@@ -2123,8 +2227,9 @@ class TestCLITerminalStateFailed:
                 b01_contract_report=None,
             )
 
-        # Patch the symbol the CLI module imports.
-        import scripts.run_slp8_region_mini as cli  # type: ignore
+        # Patch the symbol the CLI module imports.  Load by absolute path:
+        # ``scripts`` is not an installed package.
+        cli = _load_runner_module()
         monkeypatch.setattr(cli, "run_mini", _fake_run_mini)
 
         # Now invoke main() directly with patched argv.

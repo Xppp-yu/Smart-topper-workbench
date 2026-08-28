@@ -301,22 +301,89 @@ torch.set_num_threads(1)
 - 结论：`TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1` 通过 Reviewer Gate；状态为 `PROTOCOL_AND_RUNNER_ACCEPTED`。
 - 未验证边界不变：真实 B01 Mini、CUDA/GPU 与 TEST 均为 `NOT RUN`。
 
-### Verified
+### 已验证
 
 - 协议、Runner、冻结合同、合成生命周期与软件回归已经 Reviewer 独立验证。
 
-### Inferred
+### 合理推断
 
 - 无模型效果推断。
 
-### Unverified
+### 尚未验证
 
 - 真实 B01 Mini、CUDA/GPU、TEST 和真实数据恢复均未运行。
 
-### Limitations
+### 限制
 
 - 合成 smoke 只证明工程链路，不能与 B02 比较，也不能形成产品或硬件结论。
 
-### Next Gate
+### 下一 Gate
 
 - Owner 明确授权真实 B01 Mini 并提供 CUDA 12 GB peak 环境；真实结果经 Reviewer 接受前，B07 保持阻塞。
+
+---
+
+## R05 真实 Mini 与 Reviewer 收口（2026-08-29）
+
+### 任务与运行边界
+
+- TASK-ID：`TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1`
+- EXP-ID：`EXP-SLP-B04-PM-REGION-MINI-20260828-AUTODL-R05`
+- 运行现场源码版本：`72fbe67`
+- 数据：B01 TRAIN 3,645 / VAL 450 / TEST 0；TRAIN 81 subjects / VAL 10 subjects，交集 0。
+- 环境：Linux、Python 3.12.3、PyTorch 2.8.0+cu128、NVIDIA GeForce RTX 4090。
+- 配置：seed 42、batch size 16、最多 20 epoch、AdamW、lr 0.001、weight decay 0.0001。
+- Gate：VAL fixed foreground macro IoU ≥ `0.205644`。
+
+### 真实结果
+
+| 候选 | 前景 Macro IoU | 前景 Macro Dice | VAL loss | 最佳 epoch | 决策 |
+|---|---:|---:|---:|---:|---|
+| `slp8_tiny_fcn_v0.1` | 0.051631 | 0.089858 | 1.659858 | 20 | `NOT_FEASIBLE` |
+| `slp8_small_unet_v0.1` | 0.439625 | 0.607810 | 0.732006 | 20 | `FEASIBLE` |
+
+SmallUNet 的 pixel accuracy 为 `0.841269`，background IoU 为 `0.887894`；最差 VAL 受试者 `00012` 的前景 Macro IoU 为 `0.308241`。归一化质心误差均值为 `0.042190`，3/3600 条记录因 GT 区域缺失被显式标为无效。
+
+两候选 checkpoint reload 均 `max_abs_diff=0.0` 且预测哈希一致。总 wall clock 为 `231.18` 秒，峰值 CUDA 显存 `362.99 MiB`，0 candidate failed，所有预算状态为 `ok`。
+
+### 现场缺陷与热修复
+
+1. `f3fb7d9`：补齐真实入口的 subject isolation guard import；
+2. `c4ebc5d`：改用 CUDA 严格确定性可执行的分割交叉熵路径；
+3. `762f44e`：参数变化审计统一到 CPU tensor；
+4. `72fbe67`：显式处理 GT centroid 缺失。
+
+R01–R04 失败产物均保留；R05 使用新 EXP-ID，没有覆盖历史证据。
+
+### 归档验收
+
+- 本地归档：`<WORKBENCH>/outputs/evidence_archives/SLP_B04_R05/EXP-SLP-B04-PM-REGION-MINI-20260828-AUTODL-R05.tar.gz`
+- SHA-256：`57885db25dba04a3f9d82666b47dbcc85f030f9842a0c20764d20133ead87c19`
+- Windows Reviewer 已重算哈希并确认匹配；包内 DONE、配置、输入哈希、环境、指标、checkpoint、预测与 reload 证据均可读取。
+- 产物没有内嵌 Git commit 字段；`72fbe67` 来自运行现场 checkout 记录。B07/B08 必须补齐 Git SHA 产物字段。
+
+### 已验证
+
+- 真实 B01 TRAIN/VAL 合同、受试者隔离、TEST=0、CUDA 执行、两候选训练、指标、checkpoint reload、预算和互斥终态均有 R05 产物证据。
+- SmallUNet 达到冻结可行性门槛；TinyFCN 未达到。
+
+### 合理推断
+
+- SmallUNet 值得进入 Full 协议设计；这不是最终排名，也不代表 Full 或 TEST 表现。
+
+### 尚未验证
+
+- 独立重复两次真实 GPU 运行的 byte-identical 确定性。
+- TEST、cover1/cover2、其他 setting、自研硬件与产品环境。
+
+### 限制
+
+- 参考标签 provenance 为 `V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，review status 为 `NOT_REVIEWED`；不是人工像素级或产品 GT。
+- `run_mode=cuda_determinism_unverified`；只能确认同次运行 checkpoint reload 一致。
+- 结果不可外推到医疗、皮肤界面应力、舒适性、整夜稳定性或气囊闭环。
+
+### 结论与下一 Gate
+
+- B04：`DONE_WITH_LIMITATIONS`。
+- B07：解除 `BLOCKED_BY_B04`，状态改为 `READY`。
+- B07 只冻结 `slp8_small_unet_v0.1` 的 Full 协议；不得在 B07 同时运行 Full。

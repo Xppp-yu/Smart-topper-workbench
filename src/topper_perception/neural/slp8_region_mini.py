@@ -1391,6 +1391,45 @@ def _to_device(batch: Mapping[str, Any], device: torch.device) -> dict[str, Any]
     }
 
 
+def _flatten_segmentation_for_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Flatten segmentation tensors onto the deterministic 2-D CE path.
+
+    Passing ``[B, C, H*W]`` directly to ``CrossEntropyLoss`` selects
+    PyTorch's CUDA ``nll_loss2d`` implementation, which has no strict
+    deterministic implementation.  Moving channels last and flattening
+    spatial positions produces the mathematically equivalent ``[N, C]`` /
+    ``[N]`` representation and avoids that unsupported kernel.
+    """
+
+    if logits.ndim != 4:
+        raise ValueError(f"expected logits [B,C,H,W], got {tuple(logits.shape)}")
+    if labels.ndim != 3:
+        raise ValueError(f"expected labels [B,H,W], got {tuple(labels.shape)}")
+
+    batch, classes, height, width = logits.shape
+    if tuple(labels.shape) != (batch, height, width):
+        raise ValueError(
+            "logit/label shape mismatch: "
+            f"logits={tuple(logits.shape)} labels={tuple(labels.shape)}"
+        )
+
+    logits_flat = logits.permute(0, 2, 3, 1).reshape(-1, classes)
+    labels_flat = labels.reshape(-1)
+    return logits_flat, labels_flat
+
+
+def _clone_state_dict_to_cpu(model: nn.Module) -> dict[str, torch.Tensor]:
+    """Return an independent CPU snapshot for later parameter-change audit."""
+
+    return {
+        name: tensor.detach().cpu().clone()
+        for name, tensor in model.state_dict().items()
+    }
+
+
 def _train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -1405,8 +1444,9 @@ def _train_one_epoch(
         batch = _to_device(batch, device)
         logits = model(batch["pressure"])
         B, C, H, W = logits.shape
-        logits_flat = logits.reshape(B, C, H * W)
-        label_flat = batch["label"].reshape(B, H * W)
+        logits_flat, label_flat = _flatten_segmentation_for_cross_entropy(
+            logits, batch["label"]
+        )
         loss = loss_fn(logits_flat, label_flat)
         if not torch.isfinite(loss):
             raise NonFiniteMetricsError(
@@ -1444,8 +1484,9 @@ def _validate(
             batch = _to_device(batch, device)
             logits = model(batch["pressure"])
             B, C, H, W = logits.shape
-            logits_flat = logits.reshape(B, C, H * W)
-            label_flat = batch["label"].reshape(B, H * W)
+            logits_flat, label_flat = _flatten_segmentation_for_cross_entropy(
+                logits, batch["label"]
+            )
             loss = loss_fn(logits_flat, label_flat)
             if not torch.isfinite(loss):
                 raise NonFiniteMetricsError(
@@ -1691,7 +1732,7 @@ def run_one_candidate(
         num_workers=config.num_workers,
     )
 
-    initial_state = {k: v.clone() for k, v in model.state_dict().items()}
+    initial_state = _clone_state_dict_to_cpu(model)
 
     checkpoint_dir = output_dir / "checkpoints" / candidate_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -2053,7 +2094,9 @@ def run_one_candidate(
     hash_consistent = bool(in_process_hash is not None and reloaded_hash == in_process_hash)
 
     final_state_diff = float(sum(
-        (current.float() - initial_state[k].float()).pow(2).sum().sqrt().item()
+        (
+            current.detach().cpu().float() - initial_state[k].float()
+        ).pow(2).sum().sqrt().item()
         for k, current in model.state_dict().items()
     ))
     param_changed = final_state_diff > 1e-6
@@ -2703,12 +2746,6 @@ def write_mini_artifacts(
                         if rec.sample_index < len(postures)
                         else ""
                     )
-                    if rec.both_missing:
-                        valid = False
-                        invalid_reason = "both_gt_and_pred_absent"
-                    else:
-                        valid = True
-                        invalid_reason = ""
                     writer.writerow({
                         "candidate": cand_name,
                         "split": split_name,
@@ -2718,8 +2755,8 @@ def write_mini_artifacts(
                         "posture": posture,
                         "region": rec.region_id,
                         "error": rec.error,
-                        "valid": valid,
-                        "invalid_reason": invalid_reason,
+                        "valid": rec.valid,
+                        "invalid_reason": rec.invalid_reason,
                         "both_missing": rec.both_missing,
                     })
 

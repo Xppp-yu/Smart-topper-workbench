@@ -16,6 +16,10 @@ B04 requires metrics beyond the B02 ``fixed_class_macro_metrics`` set:
 
     * If the GT region is absent and the predicted region is absent
       the class does not contribute to the per-region average.
+    * If the GT region is absent and the predicted region is present
+      the centroid error is undefined and does not contribute to the
+      per-region average; the false positive remains represented in
+      IoU and precision.
     * If the GT region is present and the predicted region is absent
       the normalized centroid error is recorded as 1.0 (the maximum).
     * If the GT region is present and the predicted region is present
@@ -100,7 +104,7 @@ def _centroid(mask: np.ndarray) -> tuple[float, float] | None:
 
 
 def _centroid_distance(
-    gt_centroid: tuple[float, float] | None,
+    gt_centroid: tuple[float, float],
     pred_centroid: tuple[float, float] | None,
     diagonal: float,
 ) -> float:
@@ -108,15 +112,10 @@ def _centroid_distance(
 
     The B04 contract is:
 
-    * Both missing → the caller is expected to skip this entry.
+    * GT missing → the caller is expected to skip this entry.
     * GT present, pred missing → 1.0 (max).
     * Otherwise → Euclidean distance / diagonal.
     """
-    if gt_centroid is None and pred_centroid is None:
-        raise MetricsExtError(
-            "_centroid_distance called with both centroids missing; "
-            "the caller must filter this case before calling"
-        )
     if pred_centroid is None:
         return float(CENTROID_ERROR_MAX)
     gt_r, gt_c = gt_centroid
@@ -332,6 +331,8 @@ class CentroidErrorRecord:
     subject_id: str
     region_id: int
     error: float
+    valid: bool
+    invalid_reason: str
     both_missing: bool  # True iff both GT and pred regions are absent
 
     def as_dict(self) -> dict[str, Any]:
@@ -340,6 +341,8 @@ class CentroidErrorRecord:
             "subject_id": str(self.subject_id),
             "region_id": int(self.region_id),
             "error": float(self.error),
+            "valid": bool(self.valid),
+            "invalid_reason": str(self.invalid_reason),
             "both_missing": bool(self.both_missing),
         }
 
@@ -372,16 +375,20 @@ def compute_centroid_errors(
             pr_mask = (pred == cid)
             gt_centroid = _centroid(gt_mask)
             pr_centroid = _centroid(pr_mask)
-            if gt_centroid is None and pr_centroid is None:
-                # Both missing — record but mark so the per-region average
-                # can exclude it (the per-region aggregator will skip
-                # ``both_missing=True`` rows).
+            if gt_centroid is None:
+                both_missing = pr_centroid is None
                 records.append(CentroidErrorRecord(
                     sample_index=i,
                     subject_id=str(subj),
                     region_id=int(cid),
                     error=0.0,
-                    both_missing=True,
+                    valid=False,
+                    invalid_reason=(
+                        "both_gt_and_pred_absent"
+                        if both_missing
+                        else "gt_absent_pred_present"
+                    ),
+                    both_missing=both_missing,
                 ))
                 continue
             error = _centroid_distance(gt_centroid, pr_centroid, diagonal)
@@ -390,6 +397,8 @@ def compute_centroid_errors(
                 subject_id=str(subj),
                 region_id=int(cid),
                 error=float(error),
+                valid=True,
+                invalid_reason="",
                 both_missing=False,
             ))
     return records
@@ -403,6 +412,7 @@ class CentroidErrorSummary:
     per_region_mean: dict[int, float]
     per_region_count: dict[int, int]
     n_records: int
+    n_invalid: int
     n_both_missing: int
 
     def as_dict(self) -> dict[str, Any]:
@@ -411,6 +421,7 @@ class CentroidErrorSummary:
             "per_region_mean": {str(k): float(v) for k, v in self.per_region_mean.items()},
             "per_region_count": {str(k): int(v) for k, v in self.per_region_count.items()},
             "n_records": int(self.n_records),
+            "n_invalid": int(self.n_invalid),
             "n_both_missing": int(self.n_both_missing),
         }
 
@@ -422,14 +433,14 @@ def summarize_centroid_errors(
 ) -> CentroidErrorSummary:
     """Aggregate centroid-error records into a per-region and overall summary.
 
-    The per-region average excludes ``both_missing=True`` records, per the
-    B04 contract.  The overall mean is the simple average of the
-    included (non-both-missing) records, or 0.0 when no records are
-    included.
+    The per-region average excludes records without a GT centroid.  The
+    overall mean is the simple average of valid records, or 0.0 when no
+    records are included.
     """
 
-    included = [r for r in records if not r.both_missing]
-    n_both_missing = int(len(records) - len(included))
+    included = [r for r in records if r.valid]
+    n_invalid = int(len(records) - len(included))
+    n_both_missing = int(sum(1 for r in records if r.both_missing))
     per_region_sum: dict[int, float] = {int(cid): 0.0 for cid in class_ids}
     per_region_count: dict[int, int] = {int(cid): 0 for cid in class_ids}
     for r in included:
@@ -450,6 +461,7 @@ def summarize_centroid_errors(
         per_region_mean=per_region_mean,
         per_region_count=per_region_count,
         n_records=len(records),
+        n_invalid=n_invalid,
         n_both_missing=n_both_missing,
     )
 
