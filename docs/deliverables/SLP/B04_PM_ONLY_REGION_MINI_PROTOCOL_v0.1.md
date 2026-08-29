@@ -1,13 +1,13 @@
-# B04 交付说明：SLP8 PM-only 区域分割 Mini（R05 真实运行收口）
+# B04 交付说明：SLP8 PM-only 区域分割 Mini Protocol 与 Runner 历史
 
 **TASK-ID:** `TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1`
 **Stage:** S2-B04
 **日期:** 2026-08-29
-**状态:** `DONE_WITH_LIMITATIONS`
+**状态:** `PROTOCOL_AND_RUNNER_ACCEPTED / HISTORICAL`
 **运行源码现场版本:** `72fbe67`
 **当前收口分支:** `codex/task-slp-b04-centroid-missing-gt-hotfix-v0.1`
 
-> 本文件前半部分保留 R03/R04 协议与合成验证历史。2026-08-29 的 R05 真实运行结果和最终结论见文末“R05 真实 Mini 验收”；该节覆盖此前“真实 Mini 未运行”的历史状态。
+> 本文件保存 R03/R04 协议、Runner 和合成验证历史。R05 真实运行的规范结果入口已拆分为 [B04_PM_ONLY_REGION_MINI_RESULTS_v0.1.md](B04_PM_ONLY_REGION_MINI_RESULTS_v0.1.md)；文末旧 R05 摘要仅保留追溯。后续 Owner 路线决定为先执行 B04A，因此旧摘要中的“直接启动 B07”已被当前 PROJECT_STATUS 和 Backlog 覆盖。
 
 ---
 
@@ -299,7 +299,7 @@ Reviewer 最终验收：B04 定向测试 **158 passed**；联合回归 **1342 pa
 
 ---
 
-## R05 真实 Mini 验收（2026-08-29）
+## Legacy R05 摘要（规范结果已拆分，2026-08-29）
 
 ### 目的
 
@@ -362,7 +362,7 @@ Windows 工作台已独立重算并确认哈希匹配；包内包含 DONE/status
 ### 结论与决策
 
 - B04 状态：`DONE_WITH_LIMITATIONS`。
-- `slp8_small_unet_v0.1` 作为唯一候选进入 B07 Full 协议冻结。
+- 历史 R05 当时决定由 `slp8_small_unet_v0.1` 作为唯一候选进入 B07 Full 协议冻结；该决定现已被 B04A 路线 supersede，SmallUNet 改为 B04A incumbent。
 - `slp8_tiny_fcn_v0.1` 不进入 Full 协议。
 - B07 解锁的是“协议设计”，不是 Full GPU 运行授权。
 
@@ -375,4 +375,4 @@ Windows 工作台已独立重算并确认哈希匹配；包内包含 DONE/status
 
 ### 下一步
 
-启动 `TASK-SLP-B07-PM-ONLY-REGION-FULL-PROTOCOL-v0.1`，只冻结 SmallUNet 的 folds、预算、指标、选择规则、产物与停止条件；不得在同一任务中运行 Full。
+历史 R05 当时下一步是启动 `TASK-SLP-B07-PM-ONLY-REGION-FULL-PROTOCOL-v0.1`；当前下一步已改为先完成 B04A 协议冻结、实现/Smoke、授权 Mini 与 Reviewer 验收。B07 在此之前保持 `BLOCKED_BY_B04A`。
