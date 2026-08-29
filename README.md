@@ -22,7 +22,9 @@ E:\TeamProjects\datasets\smart-topper
 
 ## 当前状态
 
-`WINDOWS-RESEARCH-WORKBENCH / POPU-P6.1-COMPLETE / P7-PROTOCOL-READY / SLP-S0-COMPLETE`
+`WINDOWS-RESEARCH-WORKBENCH / POPU-P7-SOFTWARE-ROBUSTNESS-COMPLETE / SLP-B04-COMPLETE / B04A-DOCUMENTATION-REVIEW-PENDING`
+
+> 实时状态只在 [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) 维护；README 只提供稳定导航与当前阶段摘要，避免多份状态副本漂移。
 
 已经完成（均有真实产物与阶段报告）：
 
@@ -37,9 +39,9 @@ E:\TeamProjects\datasets\smart-topper
 
 P1/R1 的全量 Inventory 已执行。其实现逐个读取 JSON，只在内存中保留当前文件与最终的紧凑清单，不会把 5,160 个记录或所有压力矩阵整体载入内存。
 
-P5.2-A CNN 训练底座与 CPU/CUDA Smoke、P5.2-B Mini 筛选和 P5.2-C Full 公平比较均已完成。P5.2-C 在 RTX 4090 上完成 3 模型 × 3 repeats × 5 folds 共 45 个训练单元，Reviewer 独立复核后接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族（record macro-F1 `0.986649 ± 0.002832`）；P5.1 `calibrated_linear_svm` 保留为传统模型对照。P6/P6.1 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟已完成：总体拒识风险下降，但存在 24 条跨 repeat 持续错判，一致性规则以覆盖率换取更低 WAR，因此只保留为研究候选。P7 降密度、噪声、坏点、坏行坏列协议与扰动代码已就绪，模型扰动推理尚未运行。PoPu 结果仍不等于外部数据集、自研硬件或产品验证。
+P5.2-A CNN 训练底座与 CPU/CUDA Smoke、P5.2-B Mini 筛选和 P5.2-C Full 公平比较均已完成。P5.2-C 在 RTX 4090 上完成 3 模型 × 3 repeats × 5 folds 共 45 个训练单元，Reviewer 独立复核后接受 `small_resnet` 为 PoPu 固定睡姿五分类总体研究候选模型族（record macro-F1 `0.986649 ± 0.002832`）；P5.1 `calibrated_linear_svm` 保留为传统模型对照。P6/P6.1 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟已完成。P7 Full 软件扰动证据已完成并复核：14 个扰动条件 × 5 seeds × 15 folds；它只支持软件扰动鲁棒性结论，不是硬件故障、产品、整夜睡眠或控制安全验证。
 
-SLP 已进入两阶段连续开发：S0 全量结构 Inventory 已完成（109 名受试者、1,941 个模态组合、1,939 完整、2 个 `simLab cover2/depthRaw` 组合 quarantine）。SLP 只有 RGB/IR 原始人工 14 节点，不含腰、臀等像素级身体区域真值。区域线按“节点几何 R0 → OpenCV 预标注 R1 → 人工复核 R2 → 双审共识 R3”推进；只有 R2/R3 可作为默认区域训练参考。
+SLP8 pressure-only 主线已完成 A09R、B01–B04。B04 真实 Mini R05 在 TEST=0 的条件下保留 SmallUNet、淘汰 TinyFCN；该结果仅证明当前两候选中的可行性，不构成充分架构选择。Owner 已决定在 B07 前新增 B04A 受控架构扩展：先补齐协议、候选假设与增强 Gate，再经独立授权运行 Mini，最多保留 1–2 个候选进入 B07。历史 10-region OpenCV/R0–R3 路线继续保持 HOLD，不是当前 SLP8 训练合同。
 
 ## 新的固定定位
 

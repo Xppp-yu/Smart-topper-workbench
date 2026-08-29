@@ -41,7 +41,7 @@ S0 Inventory
 
 关键更正：**SLP 8-region pressure-only GT（`SLP_8Region_Pressure_VAL_v1.1`）是当前项目的 PROJECT_ACCEPTED_REFERENCE_GT。** 其 provenance = `V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`，`source_review_status = NOT_REVIEWED`，**不是人工像素级标注，不是医学/皮肤界面应力/产品真值**。OpenCV 自动输出（R0/R1）仍不是 Ground Truth。
 
-历史说明：原 OpenCV+人工复核路线（`slp_region_annotation_v0.1`，R0–R3 10 区词表）已标记为 HOLD/SUPERSEDED，不作为当前训练合同。A09R（2026-08-24）已将 SLP8 GT 设为默认训练数据并完成 Reviewer 验收；截至 2026-08-27，B01–B03 已完成，B04 为 `READY_AFTER_B03`。
+历史说明：原 OpenCV+人工复核路线（`slp_region_annotation_v0.1`，R0–R3 10 区词表）已标记为 HOLD/SUPERSEDED，不作为当前训练合同。实时进度统一见 `docs/PROJECT_STATUS.md`；本计划只保存路线、依赖和证据边界。B04 历史 Mini 已保留 SmallUNet 并淘汰 TinyFCN，但该两模型筛选不足以支持广泛架构选择，因此在 B07 前新增 B04A 受控架构扩展。
 
 ## 2. 队长感知层清单与 SLP 的关系
 
@@ -312,7 +312,7 @@ Gate R1 必须同时满足：
 * 数据卡（8-region、`V221_CORRECTED_SUPPORT_AUTO_ACCEPTED`、`NOT_REVIEWED`、danaLab only、uncover only、禁止结论）
 * TEST 防泄漏合同：`enable_test_access(purpose="final_evaluation")` 显式开启才允许读取 TEST label/onehot 或计算 TEST 类别统计；结构性检查（行数 / 主体数 / sample_id 唯一 / 路径 / 文件存在 / hash）默认允许。
 
-详见 [S2_B01 阶段报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)。B01、B02 已以 `DONE_WITH_LIMITATIONS` 通过 Codex 验收；B03 PM-only Smoke 也已于 2026-08-27 以 `DONE_WITH_LIMITATIONS` 验收，B04 现为 `READY_AFTER_B03`，执行前须先冻结 Mini 协议并取得运行授权。
+详见 [S2_B01 阶段报告](stage_reports/S2_B01_SLP8_TRAINING_TABLE_FREEZE_v0.1.md)。B01–B04 的当前状态和证据入口见 `docs/PROJECT_STATUS.md`；后续先执行 B04A 协议、实现/Smoke、授权 Mini 和 Reviewer 验收，再解锁 B07。
 
 **路线 B（R2/R3 polygon，原 HOLD 路线）**：A09R 后已改为 HOLD；如未来重新打开：输入仅 R2/R3；R0/R1 单独弱监督实验；固定 Train/VAL/Test subjects；生成 dataset card、类别/区域覆盖、遮盖分层和版本 hash；测试集标签在模型和规则冻结前保持不可见。
 
@@ -334,11 +334,19 @@ Gate R1 必须同时满足：
 - IR-only：遮盖和弱光参考；
 - RGB-only：uncover 参考。
 
-Mini 只检查可学习性、吞吐、显存、checkpoint、resume、reload 和标签链路，不排名。
+Mini 只检查可学习性、吞吐、显存、checkpoint、resume、reload 和标签链路，不形成最终排名。B04 历史结果只回答 TinyFCN 与 SmallUNet 的最低可行性；B04A 以前瞻性冻结的增强 Gate 比较不同架构假设：SmallUNet incumbent、ResUNet-lite、DeepLabV3+-lite，以及在单通道输入/预训练策略可公平冻结时才纳入的 SegFormer-B0 exploratory candidate。禁止在看到 B04A 结果后再改 Gate。
+
+B04A 的硬边界：
+
+- 只读 B01 TRAIN/VAL，TEST rows/labels/onehot 全部保持不可见；
+- 必须报告 fixed foreground Macro IoU/Dice、全部 8 区、worst subject、posture、参数、显存、训练与推理成本；
+- class collapse、非有限值、subject leak、reload mismatch、预算超限均 fail-closed；
+- 使用预注册 seeds；最多保留 1–2 个候选；near-tie 优先更稳定、更简单的模型；
+- 协议、实现/Smoke、真实 GPU Mini 和 Reviewer 验收分阶段完成，文档完成不等于实验完成。
 
 ### B3：单模态 Full 候选
 
-- 每模态保留 1–2 个候选；
+- 只有 B04A Reviewer 接受后，每模态才冻结 1–2 个候选；
 - 相同 subject folds、训练预算和 region reference；
 - 指标：macro region IoU/Dice、中心误差、逐区域、逐遮盖、逐受试者、worst-subject；
 - 同时报告 inference p50/p95、模型大小和失败案例。
@@ -371,11 +379,14 @@ SLP8 GT 仅含 uncover；cover1/cover2 与 cross-cover 在获得对应参考 GT 
 
 ### B7：SLP Full 公平比较与冻结
 
+- B04A 未完成前保持阻塞；B07 协议冻结与 Full 运行必须是不同任务；
 - 受试者隔离 OOF 或固定外层测试；
 - record/frame 粒度明确；
 - 配对差值和置信区间；
 - 保存预测、模型、配置、代码 SHA、数据 manifest、环境和 Reviewer 结论；
 - 最终只冻结 SLP 研究候选，不宣称产品验证。
+
+最终 TEST 只允许在候选、代码、超参数、选择规则和评价协议全部冻结后，由单独授权的最终评价任务读取一次；不得把开发期 Full 与反复 TEST 调参混在一起。
 
 ### B8：队长清单的可交付接口
 

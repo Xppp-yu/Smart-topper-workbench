@@ -129,6 +129,11 @@ SLP 路线分为两条（见 Backlog）：
 # 路线 A：SLP8 pressure-only GT（A09R 建立）
 A09R  SLP8 GT 合同校准（当前项目参考 GT）
   -> B01  训练表冻结（DONE_WITH_LIMITATIONS）
+  -> B02  非学习基线（DONE_WITH_LIMITATIONS）
+  -> B03  神经网络 Smoke（DONE_WITH_LIMITATIONS）
+  -> B04  TinyFCN / SmallUNet Mini（DONE_WITH_LIMITATIONS）
+  -> B04A 受控架构扩展 Mini（先协议与实现，运行需另行授权）
+  -> B07  Full 协议冻结（BLOCKED_BY_B04A）
 
 # 路线 B：OpenCV/人工复核（历史路线，已改为 HOLD）
 A09 Region Schema Review  [SUPERSEDED_BY_A09R]
@@ -156,3 +161,5 @@ A09 Region Schema Review  [SUPERSEDED_BY_A09R]
 - 公开数据结果不外推为自研硬件、舒适性、医疗效果、整夜稳定性或气囊闭环验证。
 
 若本文件与单次聊天摘要冲突，以已提交的本文件、对应 `TASK-ID` 和冻结实验协议为仓库治理基线；Owner 的新决定需通过后续版本化修改进入仓库。
+
+实时进度只在 `docs/PROJECT_STATUS.md` 维护；本文件只保存稳定治理规则与依赖顺序。路线文档和 Backlog 不应复制易漂移的“一句话当前状态”。

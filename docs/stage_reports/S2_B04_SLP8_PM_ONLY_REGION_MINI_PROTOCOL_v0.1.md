@@ -1,4 +1,6 @@
-# Stage Report: S2-B04 — SLP8 PM-only Region Mini 协议与 Runner (R03)
+# Stage Protocol: S2-B04 — SLP8 PM-only Region Mini 协议与 Runner (R03/R04 历史)
+
+> 本文件的规范职责是保存运行前冻结的 Protocol、Runner 和 R03/R04 验收历史。R05 真实运行的规范结果入口已拆分为 [S2_B04_SLP8_PM_ONLY_REGION_MINI_RESULTS_v0.1.md](S2_B04_SLP8_PM_ONLY_REGION_MINI_RESULTS_v0.1.md)。下方保留的 R05 摘要仅用于追溯旧提交，不再作为结果单一来源。后续 Owner 路线决定为先执行 B04A；因此旧文中的“B07 READY”已被 `docs/PROJECT_STATUS.md` 和 Backlog 的 `BLOCKED_BY_B04A` 覆盖。
 
 **TASK-ID:** `TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1`
 **Stage:** S2-B04
@@ -323,7 +325,7 @@ torch.set_num_threads(1)
 
 ---
 
-## R05 真实 Mini 与 Reviewer 收口（2026-08-29）
+## Legacy R05 摘要（规范结果已拆分，2026-08-29）
 
 ### 任务与运行边界
 
@@ -385,5 +387,5 @@ R01–R04 失败产物均保留；R05 使用新 EXP-ID，没有覆盖历史证�
 ### 结论与下一 Gate
 
 - B04：`DONE_WITH_LIMITATIONS`。
-- B07：解除 `BLOCKED_BY_B04`，状态改为 `READY`。
-- B07 只冻结 `slp8_small_unet_v0.1` 的 Full 协议；不得在 B07 同时运行 Full。
+- 历史 R05 当时结论：B07 解除 `BLOCKED_BY_B04`，状态改为 `READY`；该状态现已被 B04A 路线决定 supersede，当前状态为 `BLOCKED_BY_B04A`。
+- 历史 R05 当时计划只冻结 `slp8_small_unet_v0.1` 的 Full 协议；当前改为先经 B04A 扩展筛选，再冻结最多 1–2 个 Full 候选。

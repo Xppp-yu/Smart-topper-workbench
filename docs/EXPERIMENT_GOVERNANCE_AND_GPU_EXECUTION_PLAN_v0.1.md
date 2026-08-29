@@ -149,7 +149,7 @@ outputs/experiments/                 # Git ignore
     DONE.json | FAILED.json
 ```
 
-`manifest.json` 至少记录：`EXP-ID`、Git SHA、dirty 状态、数据 Manifest 哈希、split 版本、Python/依赖版本、CUDA/GPU、CPU/RAM、开始结束时间、随机种子和命令行。
+`manifest.json` 至少记录：`experiment_id`、`git_commit`、`git_dirty`、`config_sha256`、`data_manifest_sha256`、`split_sha256`、`model_version`、Python/依赖版本、CUDA/GPU、CPU/RAM、开始结束时间、随机种子和命令行。上述 identity 必须由产物自身携带；外部终端记录或聊天记录不能替代。任一字段缺失、漂移或无法复算时，不得进入正式 Mini/Full。
 
 第一版只使用 Git + YAML/JSON + Python Runner + 文件产物注册，不引入 Airflow、Kubernetes 或大型 MLOps 平台。实验数量和机器数量显著增长后，再评估 MLflow/Optuna。
 

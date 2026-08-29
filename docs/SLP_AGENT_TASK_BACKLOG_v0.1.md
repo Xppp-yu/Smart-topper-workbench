@@ -150,7 +150,7 @@ Reviewer checklist:
 - 目标：分别实现 Depth、IR、RGB uncover 的身体/被褥前景候选。
 - 输出：可插拔 foreground backend、参数配置、overlay、测试。
 - 技术：depth threshold/background、connected components、morphology、GrabCut seed、IR 辅助轮廓。
-- 依赖：当前项目环境尚未安装 `cv2`；本任务新增单一可选 `vision` 依赖，优先 `opencv-python-headless`。若后续确需 ArUco/contrib 功能，再改为 `opencv-contrib-python-headless`，两者不得同时安装。
+- 依赖现状：`pyproject.toml` 当前已将 `opencv-python` 列为基础依赖，与本 HOLD 任务原计划的 optional/headless 口径不一致。重新打开 A11 前必须先单独决定保留基础依赖，或迁移为唯一的 optional `opencv-python-headless`；不得同时安装 GUI/headless/contrib 多个 OpenCV wheel。
 - 验收：原图不覆盖；每 backend 输出 mask+confidence+reason；cover 条件分开评价。
 - 禁止：将 blanket contour 当体表真值。
 
@@ -220,8 +220,19 @@ Reviewer checklist:
 - 目标：每模态保留最多1–2个可行候选。
 - 指标：region IoU/Dice、中心误差、逐区域、逐 posture、worst subject；当前仅 uncover。
 - 真实结果：`EXP-SLP-B04-PM-REGION-MINI-20260828-AUTODL-R05` 状态 `DONE`；TRAIN 3,645 / VAL 450 / TEST 0；SmallUNet VAL fixed foreground macro IoU `0.439625`，通过冻结门槛 `0.205644`；TinyFCN `0.051631`，未通过。两候选均完成 checkpoint reload 一致性校验，0 candidate failed。
-- 候选决策：B07 仅保留 `slp8_small_unet_v0.1`；`slp8_tiny_fcn_v0.1` 不进入 Full 协议。该决策仅表示 Mini 可行性筛选，不是最终模型排名。
+- 候选决策：`slp8_tiny_fcn_v0.1` 不再进入后续候选池；`slp8_small_unet_v0.1` 作为 B04A incumbent，而不是直接视为已经充分比较后的最终 Full 候选。该前瞻性调整不改写 B04 的历史 Gate 和结果。
 - 限制：仅 danaLab/uncover、参考 GT 为 `NOT_REVIEWED` 自动接受标签、未读取 TEST；不能外推产品、硬件、舒适性、医疗、整夜或气囊控制。
+
+### TASK-SLP-B04A：PM-only Architecture Expansion Mini
+
+- 状态：`DOCUMENTATION_REVIEW_PENDING / IMPLEMENTATION_NOT_STARTED`。
+- 目标：在不改写 B04 历史的前提下，以 SmallUNet 为 incumbent，受控比较 residual CNN、atrous/multi-scale CNN 和可选 transformer 三类不同架构假设，最多保留 1–2 个进入 B07。
+- 当前候选范围：`slp8_small_unet_v0.1`、待实现的 ResUNet-lite、待实现的 DeepLabV3+-lite；SegFormer-B0 仅在单通道输入、预训练权重、增强和资源公平性可预先冻结时纳入，否则记录为 `DEFERRED`。
+- 增强 Gate：Macro IoU 必须超过 B02 baseline 加预注册 margin；不得发生 class collapse；必须报告全部 8 区、worst subject 和 posture；checkpoint reload 必须一致；资源预算必须通过；TRAIN/VAL subject overlap=0；TEST=0。
+- 分阶段：先协议 Reviewer，再实现与 CPU/最小 CUDA Smoke，再由 Owner 单独授权真实 GPU Mini，最后由 Codex Reviewer 验收。任何前序完成不得冒充后序完成。
+- 输出：版本化协议/配置、候选注册与测试、不可覆盖的 EXP-ID 产物、逐候选决策和阶段报告。
+- 禁止：在本任务的文档阶段写模型或运行研究计算；在看到新候选结果后修改 Gate；把 Mini 称为最终排名；读取 TEST；外推到产品或硬件。
+- 入口：`docs/tasks/TASK_SLP_B04A_PM_ARCHITECTURE_EXPANSION_MINI_v0.1.md`。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 
@@ -237,21 +248,23 @@ Reviewer checklist:
 
 ### TASK-SLP-B07：Full 协议冻结
 
-- 状态：`READY`；B04 真实 Mini 已完成并保留 SmallUNet；B05/B06 为可选独立路线，不阻塞 pressure-only Full 协议。
+- 状态：`BLOCKED_BY_B04A`；B05/B06 为可选独立路线，不阻塞 pressure-only Full，但 B04A 是当前前置 Gate。
 - 目标：冻结 folds、候选、预算、指标、选择规则、资源和停止条件。
+- 证据硬 Gate：运行 manifest 必须内嵌 `experiment_id`、`git_commit`、`git_dirty`、`config_sha256`、`data_manifest_sha256`、`split_sha256` 和 `model_version`；不得依赖外部终端记录补 Git SHA。
 - 禁止：协议与 Full 运行同一任务完成。
 
 ### TASK-SLP-B08：Full Runner 与一折预检
 
 - 状态：`BLOCKED_BY_B07`。
 - 目标：实现受治理 runner；先做单折时间/显存预算。
+- 要求：实现并测试 B07 的内嵌 Git/config/data/split identity；任一缺失或漂移必须 fail-closed。
 - Gate：Reviewer 接受预检后才运行 Full。
 
 ### TASK-SLP-B09：Full 公平比较
 
 - 状态：`BLOCKED_BY_B08`。
 - 目标：真实 subject-isolated Full。
-- 输出：OOF/TEST predictions、逐区域/遮盖/受试者、模型和日志。
+- 输出：开发期 subject-isolated OOF/VAL predictions、逐区域/受试者、模型和日志；默认 TEST=0。
 - 停止：OOM、NaN、split leak、manifest mismatch、reload mismatch。
 
 ### TASK-SLP-B10：UNKNOWN/REJECT
@@ -265,6 +278,13 @@ Reviewer checklist:
 - 状态：`BLOCKED_BY_B09_B10`。
 - 目标：冻结模型族、接口、限制和自研数据迁移合同。
 - 禁止：宣称气囊控制、舒适性或产品效果。
+
+### TASK-SLP-B09T：一次性最终 TEST 评价
+
+- 状态：`BLOCKED_BY_B11`。
+- 目标：候选、代码、超参数、阈值、选择规则和报告模板全部冻结后，对 B01 TEST subjects 执行一次最终评价。
+- 授权：必须由 Owner 单独授权 `purpose="final_evaluation"`，并由 Runner 显式 `load_test=True` 重新加载。
+- 禁止：根据 TEST 结果回到 B04A/B07 调参或改候选；如发现协议/实现缺陷，原 TEST 结果标记 INVALID，修复和任何重测必须新 TASK/EXP 并单独说明污染风险。
 
 ## 5. 产品数据后续任务，不属于 SLP
 
