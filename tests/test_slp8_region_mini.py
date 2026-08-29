@@ -139,13 +139,16 @@ from topper_perception.neural.slp8_region_mini import (
     B04_RESOURCE_BUDGET,
     CANONICAL_HASH_VERSION,
     CHECKPOINT_VERSION,
+    RELOAD_PROBE_VERSION,
     MINI_VERSION,
     SYNTHETIC_DEFAULTS,
     TASK_ID,
     _build_checkpoint_payload,
+    _build_best_epoch_reload_probe,
     _clone_state_dict_to_cpu,
     _flatten_segmentation_for_cross_entropy,
     _predictions_hash,
+    _verify_best_epoch_reload_probe,
     build_mini_config,
     build_synthetic_dataset,
     canonical_array_hash,
@@ -1630,6 +1633,125 @@ class TestCheckpointConsistency:
 # ---------------------------------------------------------------------------
 # Test: Synthetic CPU smoke end-to-end
 # ---------------------------------------------------------------------------
+
+
+class TestBestEpochReloadProbe:
+    """Regression for R02's best-vs-final false reload failure."""
+
+    @staticmethod
+    def _dataset_and_model():
+        _, val_dataset, _, _ = build_synthetic_dataset(
+            n_train_samples=2,
+            n_val_samples=2,
+            seed=42,
+        )
+        builder = get_model_builder(SMALL_UNET_VERSION)
+        model, _ = builder.factory(N_CLASSES, "cpu")
+        return val_dataset, builder, model
+
+    def test_best_probe_survives_later_live_model_updates(self):
+        val_dataset, builder, best_epoch_model = self._dataset_and_model()
+        best_state = _clone_state_dict_to_cpu(best_epoch_model)
+        probe = _build_best_epoch_reload_probe(
+            builder=builder,
+            model=best_epoch_model,
+            val_dataset=val_dataset,
+        )
+
+        # Simulate training continuing after the best epoch.  The R02 bug
+        # compared this changed final model with reloaded best.pt.
+        with torch.no_grad():
+            next(best_epoch_model.parameters()).add_(1.0)
+
+        reloaded_best, _ = builder.factory(N_CLASSES, "cpu")
+        reloaded_best.load_state_dict(best_state)
+        consistent, max_abs_diff, detail = _verify_best_epoch_reload_probe(
+            reloaded_model=reloaded_best,
+            val_dataset=val_dataset,
+            reload_probe=probe,
+        )
+
+        assert consistent is True
+        assert max_abs_diff == 0.0
+        assert detail == "best-epoch reload probe matched"
+
+        pressure = torch.stack([val_dataset[index]["pressure"] for index in [0, 1]])
+        best_epoch_model.eval()
+        reloaded_best.eval()
+        with torch.no_grad():
+            final_logits = best_epoch_model(pressure)
+            best_logits = reloaded_best(pressure)
+        assert not torch.allclose(final_logits, best_logits)
+
+    def test_probe_roundtrip_detects_corrupted_reloaded_state(self, tmp_path):
+        val_dataset, builder, model = self._dataset_and_model()
+        probe = _build_best_epoch_reload_probe(
+            builder=builder,
+            model=model,
+            val_dataset=val_dataset,
+        )
+        assert probe["version"] == RELOAD_PROBE_VERSION
+
+        optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+        payload = _build_checkpoint_payload(
+            model=model,
+            optimizer=optimizer,
+            epoch=1,
+            seed=42,
+            model_config={"model_version": SMALL_UNET_VERSION},
+            class_weight_summary={"version": "test"},
+            metrics={"val_loss": 0.5, "is_best": True},
+            n_classes=N_CLASSES,
+            image_shape=PRESSURE_SHAPE,
+            reload_probe=probe,
+        )
+        checkpoint_path = tmp_path / "best.pt"
+        from topper_perception.neural.slp8_region_mini import (
+            _load_checkpoint,
+            _save_checkpoint,
+        )
+        _save_checkpoint(checkpoint_path, payload)
+        loaded = _load_checkpoint(checkpoint_path)
+
+        corrupted_model, _ = builder.factory(N_CLASSES, "cpu")
+        corrupted_model.load_state_dict(loaded["model_state_dict"])
+        with torch.no_grad():
+            next(corrupted_model.parameters()).add_(1.0)
+
+        consistent, max_abs_diff, detail = _verify_best_epoch_reload_probe(
+            reloaded_model=corrupted_model,
+            val_dataset=val_dataset,
+            reload_probe=loaded["reload_probe"],
+        )
+        assert consistent is False
+        assert max_abs_diff is not None and max_abs_diff > 1.0
+        assert detail == "best-epoch reload probe logits differ"
+
+    @pytest.mark.parametrize(
+        ("probe", "expected_detail"),
+        [
+            (None, "best checkpoint missing reload_probe"),
+            ({"version": "wrong"}, "best checkpoint reload_probe version mismatch"),
+            (
+                {
+                    "version": RELOAD_PROBE_VERSION,
+                    "sample_indices": [0],
+                    "logits": torch.zeros(1),
+                },
+                "best checkpoint reload_probe logits shape mismatch",
+            ),
+        ],
+    )
+    def test_missing_or_malformed_probe_fails_closed(self, probe, expected_detail):
+        val_dataset, _, model = self._dataset_and_model()
+        consistent, max_abs_diff, detail = _verify_best_epoch_reload_probe(
+            reloaded_model=model,
+            val_dataset=val_dataset,
+            reload_probe=probe,
+        )
+        assert consistent is False
+        assert max_abs_diff is None
+        assert detail == expected_detail
 
 
 class TestSyntheticCpuSmoke:

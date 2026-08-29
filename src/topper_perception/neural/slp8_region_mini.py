@@ -2027,6 +2027,7 @@ def _make_loader(
 
 
 CHECKPOINT_VERSION = "slp8_region_mini_v0.1"
+RELOAD_PROBE_VERSION = "slp8_best_epoch_reload_probe_v0.1"
 
 
 def _build_checkpoint_payload(
@@ -2048,6 +2049,7 @@ def _build_checkpoint_payload(
     input_manifest_hashes: Mapping[str, Any] | None = None,
     rng_state: Mapping[str, Any] | None = None,
     budget_state: "BudgetAccumulatorState | None" = None,
+    reload_probe: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble a versioned B04 checkpoint payload.
 
@@ -2085,6 +2087,8 @@ def _build_checkpoint_payload(
         payload["rng_state"] = dict(rng_state)
     if budget_state is not None:
         payload["budget_state"] = budget_state.as_dict()
+    if reload_probe is not None:
+        payload["reload_probe"] = dict(reload_probe)
     return payload
 
 
@@ -2158,6 +2162,103 @@ def _clone_state_dict_to_cpu(model: nn.Module) -> dict[str, torch.Tensor]:
         name: tensor.detach().cpu().clone()
         for name, tensor in model.state_dict().items()
     }
+
+
+def _build_best_epoch_reload_probe(
+    *,
+    builder: Any,
+    model: nn.Module,
+    val_dataset: Dataset,
+) -> dict[str, Any]:
+    """Capture deterministic CPU logits from the current best model state.
+
+    The probe is created *before* checkpoint serialization using a fresh CPU
+    model loaded from an independent state-dict clone.  Persisting these
+    logits in ``best.pt`` lets the final reload audit compare like with like:
+    best epoch before save versus best epoch after reload.  It deliberately
+    does not depend on the live model after later epochs have updated it.
+    """
+
+    sample_indices = list(range(min(2, len(val_dataset))))
+    if not sample_indices:
+        raise MiniProtocolError(
+            "cannot build reload probe from an empty validation dataset"
+        )
+
+    reference_model, _ = builder.factory(N_CLASSES, "cpu")
+    reference_model.load_state_dict(_clone_state_dict_to_cpu(model))
+    reference_model.eval()
+    pressure = torch.stack(
+        [val_dataset[index]["pressure"] for index in sample_indices]
+    ).to("cpu")
+    with torch.no_grad():
+        logits = reference_model(pressure).detach().cpu().to(torch.float32)
+    if not torch.isfinite(logits).all():
+        raise MiniProtocolError("best-epoch reload probe contains non-finite logits")
+
+    return {
+        "version": RELOAD_PROBE_VERSION,
+        "sample_indices": sample_indices,
+        "logits": logits,
+    }
+
+
+def _verify_best_epoch_reload_probe(
+    *,
+    reloaded_model: nn.Module,
+    val_dataset: Dataset,
+    reload_probe: Any,
+) -> tuple[bool, float | None, str]:
+    """Verify a reloaded best model against its pre-serialization probe."""
+
+    if not isinstance(reload_probe, Mapping):
+        return False, None, "best checkpoint missing reload_probe"
+    if reload_probe.get("version") != RELOAD_PROBE_VERSION:
+        return False, None, "best checkpoint reload_probe version mismatch"
+
+    sample_indices = reload_probe.get("sample_indices")
+    expected_logits = reload_probe.get("logits")
+    if (
+        not isinstance(sample_indices, list)
+        or not sample_indices
+        or any(type(index) is not int for index in sample_indices)
+        or len(set(sample_indices)) != len(sample_indices)
+        or any(index < 0 or index >= len(val_dataset) for index in sample_indices)
+    ):
+        return False, None, "best checkpoint reload_probe indices are invalid"
+    if not isinstance(expected_logits, torch.Tensor):
+        return False, None, "best checkpoint reload_probe logits are missing"
+
+    expected_shape = (
+        len(sample_indices),
+        N_CLASSES,
+        PRESSURE_SHAPE[0],
+        PRESSURE_SHAPE[1],
+    )
+    if tuple(expected_logits.shape) != expected_shape:
+        return False, None, "best checkpoint reload_probe logits shape mismatch"
+    expected_logits = expected_logits.detach().cpu().to(torch.float32)
+    if not torch.isfinite(expected_logits).all():
+        return False, None, "best checkpoint reload_probe logits are non-finite"
+
+    pressure = torch.stack(
+        [val_dataset[index]["pressure"] for index in sample_indices]
+    ).to("cpu")
+    reloaded_model = reloaded_model.to("cpu")
+    reloaded_model.eval()
+    with torch.no_grad():
+        actual_logits = reloaded_model(pressure).detach().cpu().to(torch.float32)
+    if not torch.isfinite(actual_logits).all():
+        return False, None, "reloaded best model produced non-finite probe logits"
+
+    max_abs_diff = float((expected_logits - actual_logits).abs().max().item())
+    consistent = bool(
+        torch.allclose(expected_logits, actual_logits, rtol=1e-5, atol=1e-6)
+    )
+    detail = "best-epoch reload probe matched" if consistent else (
+        "best-epoch reload probe logits differ"
+    )
+    return consistent, max_abs_diff, detail
 
 
 def _train_one_epoch(
@@ -2653,6 +2754,14 @@ def run_one_candidate(
             elapsed_seconds=elapsed,
         ))
 
+        reload_probe = None
+        if is_best:
+            reload_probe = _build_best_epoch_reload_probe(
+                builder=builder,
+                model=model,
+                val_dataset=val_dataset,
+            )
+
         payload = _build_checkpoint_payload(
             model=model,
             optimizer=optimizer,
@@ -2675,6 +2784,7 @@ def run_one_candidate(
             input_manifest_hashes=dict(input_manifest_hashes),
             rng_state=capture_rng_state(),
             budget_state=budget_state.snapshot(),
+            reload_probe=reload_probe,
         )
         last_sha = _save_checkpoint(last_path, payload)
 
@@ -2781,21 +2891,13 @@ def run_one_candidate(
     fresh_model = fresh_model.to("cpu")
     fresh_model.eval()
 
-    val_subset_indices = list(range(min(2, len(val_dataset))))
-    if val_subset_indices:
-        ref_pressure = torch.stack(
-            [val_dataset[i]["pressure"] for i in val_subset_indices]
+    reload_consistent, max_abs_diff, reload_detail = (
+        _verify_best_epoch_reload_probe(
+            reloaded_model=fresh_model,
+            val_dataset=val_dataset,
+            reload_probe=best_loaded.get("reload_probe"),
         )
-        with torch.no_grad():
-            current_logits = model.to("cpu")(ref_pressure)
-            fresh_logits = fresh_model(ref_pressure)
-        max_abs_diff = float((current_logits - fresh_logits).abs().max().item())
-        reload_consistent = bool(
-            torch.allclose(current_logits, fresh_logits, rtol=1e-5, atol=1e-6)
-        )
-    else:
-        max_abs_diff = 0.0
-        reload_consistent = True
+    )
 
     fresh_model = fresh_model.to(device)
     reloaded_val_loader = _make_loader(
@@ -2884,7 +2986,8 @@ def run_one_candidate(
         if not reload_consistent or not hash_consistent:
             feasibility = "FAILED"
             reason = (
-                f"reload consistency failed (max_abs_diff={max_abs_diff:.3e}, "
+                f"reload consistency failed ({reload_detail}, "
+                f"max_abs_diff={max_abs_diff!r}, "
                 f"hash_match={hash_consistent})"
             )
         elif not param_changed:

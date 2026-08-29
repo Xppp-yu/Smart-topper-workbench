@@ -249,7 +249,10 @@ Reviewer checklist:
 - 阶段名 = `RUNNER_INTEGRATION_ACCEPTED / GPU_MINI_NOT_AUTHORIZED`；这只接受 runner 与 synthetic smoke，**不**等同于 GPU Mini 完成或候选排名。**不得**声明 `GPU_MINI_AUTHORIZED` / `MINI_COMPLETE` / `B07_READY`。
 - Mini Run 准备（2026-08-30）：`tasks/TASK_SLP_B04A_MINI_RUN_v0.1.md` 已起草为 `RUN_PREPARATION_READY_FOR_REVIEW / GPU_MINI_NOT_AUTHORIZED`；拟用独立 EXP-ID，最终 Git SHA/配置 hash/机器与 Owner 授权仍待填写。当前 raw SLP8 数据与 B01 transfer archive 存在，但 extracted B01 freeze 目录不存在；运行前必须按准备合同验证 archive SHA `23B323...269A`、无覆盖解包、CUDA smoke 实际执行以及 TEST=0。
 - 入口：`tasks/TASK_SLP_B04A_PROTOCOL_FREEZE_v0.1.md`（协议）；`tasks/TASK_SLP_B04A_IMPLEMENTATION_SMOKE_v0.1.md`（实现+Smoke）；`tasks/TASK_SLP_B04A_RUNNER_INTEGRATION_SMOKE_v0.1.md`（runner 集成+Smoke）；`tasks/TASK_SLP_B04A_MINI_RUN_v0.1.md`（真实 Mini 准备合同）；[B04A Protocol 阶段报告](stage_reports/S2_B04A_SLP8_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)；[B04A Implementation+Smoke 阶段报告](stage_reports/S2_B04A_IMPLEMENTATION_SMOKE_v0.1.md)；[B04A Runner Integration+Smoke 阶段报告](stage_reports/S2_B04A_RUNNER_INTEGRATION_SMOKE_v0.1.md)；[B04A Mini Run 准备报告](stage_reports/S2_B04A_MINI_RUN_PREPARATION_v0.1.md)；[B04A 交付说明](deliverables/SLP/B04A_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)。
-- 下一 Gate：先验收并发布 Mini Run 准备合同；之后完成无训练 CUDA/数据/identity 预检，再由 Owner 单独授权最终 `EXP-ID` 和 `--run-authorized` 命令。`B07` 继续 `BLOCKED_BY_B04A`，直到 B04A Mini 经 Reviewer 验收并冻结最多 1–2 个候选。
+- GPU Mini R02（2026-08-30）：RTX 4090 上完成三候选 × 三 seeds 的 9/9 checkpoint，但 runner 将重载 `best.pt` 与后续 final model 比较，导致 `best_epoch < final_epoch` 的 seed 被错误标记为 reload FAILED；R02 终态保持 `FAILED`，R01/R02 证据包 SHA `75b9cd09...cb6494` 已回传本地，任何 `advanced` 字段不得作为正式晋级。
+- Reload 修复（`TASK-SLP-B04A-RELOAD-CONSISTENCY-FIX-v0.1`）：best epoch 写盘前生成固定 CPU logits probe 并随 `best.pt` 保存；重载后对同一 probe 做数值比较，同时保留全量 prediction hash。定向 5 passed、B04 完整回归 167 passed、B04A/模型/协议联合 247 passed、协议 30 OKs/0 errors、no-write smoke DONE；Codex 已独立复核并 `ACCEPT`，但未授权 GPU。
+- R02 复核新增阻塞：run-level `experiment_id` 不是 Owner 授权的 R02 EXP-ID，`data_manifest_sha256` 错写为 config SHA，且 run-level `model_version` 为空。必须另立 experiment-identity carrier 修复任务，不得混入 reload 修复。
+- 下一 Gate：Reviewer 先验收 reload 修复；再完成独立 identity carrier 修复与验收；两者通过后才冻结新 Git SHA，并由 Owner 单独授权全新 R03 EXP-ID。`B07` 继续 `BLOCKED_BY_B04A`，直到 corrected Mini 经 Reviewer 验收并冻结最多 1–2 个候选。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 
