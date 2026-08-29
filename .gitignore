@@ -29,3 +29,4 @@ outputs/models/*
 outputs/experiments/*
 !outputs/experiments/.gitkeep
 outputs/analysis/*
+outputs/sensor_validation/
