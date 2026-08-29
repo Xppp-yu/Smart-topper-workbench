@@ -1,6 +1,10 @@
 # TASK-SLP-B04A-PM-ARCHITECTURE-EXPANSION-MINI-v0.1
 
-状态：`ROUTE_DOCUMENTATION_ACCEPTED / PROTOCOL_NOT_STARTED / IMPLEMENTATION_NOT_STARTED`
+状态：`RUNNER_INTEGRATION_ACCEPTED / MINI_RUN_PREPARATION_READY_FOR_REVIEW / GPU_MINI_NOT_AUTHORIZED`
+
+> 本文件是 B04A 总路线任务，不是当前可执行 Runner 合同。Protocol、
+> Implementation+Smoke 和 Runner Integration 已于 2026-08-30 验收；真实运行
+> 使用 `TASK_SLP_B04A_MINI_RUN_v0.1.md`，仍需独立 Owner 授权。
 
 ## Objective
 
@@ -21,10 +25,10 @@ B04 只比较了 B03 延续的极简 TinyFCN 与一个正式分割候选 SmallUN
 
 | 候选 | 架构假设 | 当前状态 |
 |---|---|---|
-| `slp8_small_unet_v0.1` | 经典 encoder-decoder + skip connection | incumbent，已有 B04 实现与结果 |
-| ResUNet-lite | residual CNN 是否改善特征学习和训练稳定性 | `NOT_IMPLEMENTED` |
-| DeepLabV3+-lite | atrous/multi-scale context 是否改善不同身体区域尺度 | `NOT_IMPLEMENTED` |
-| SegFormer-B0 | global attention 是否改善整体空间关系 | `DEFERRED_UNLESS_FAIRNESS_CONTRACT_FROZEN` |
+| `slp8_small_unet_v0.1` | 经典 encoder-decoder + skip connection | incumbent，已实现并接入 Runner |
+| `slp8_resunet_lite_v0.1` | residual CNN 是否改善特征学习和训练稳定性 | 已实现并接入 Runner |
+| `slp8_deeplabv3plus_lite_v0.1` | atrous/multi-scale context 是否改善不同身体区域尺度 | 已实现并接入 Runner |
+| SegFormer-B0 | global attention 是否改善整体空间关系 | `DEFERRED`；本轮禁止临时加入 |
 
 SegFormer-B0 只有在运行前明确冻结单通道输入适配、是否使用预训练权重、输入 resize、增强、参数/显存档位和优化策略后才可纳入。若无法与 CNN 候选形成可解释比较，则本轮标记 `DEFERRED`，不得临时加入。
 
@@ -90,11 +94,12 @@ model_version
 
 ## Staged execution
 
-1. `B04A-PROTOCOL`：只写协议/配置/schema/测试合同，不写模型，不运行研究计算；
-2. `B04A-IMPLEMENTATION-SMOKE`：实现候选和单元测试，只做 CPU/最小 CUDA Smoke；
-3. `B04A-MINI-RUN`：Owner 单独授权后由 Experiment Runner 执行真实 GPU Mini；
-4. `B04A-REVIEW`：Codex 独立检查产物、指标、失败案例和 identity；
-5. Reviewer 接受后才解锁 B07。
+1. `B04A-PROTOCOL`：已验收；只写协议/配置/schema/测试合同；
+2. `B04A-IMPLEMENTATION-SMOKE`：已验收；三候选实现和 CPU 合成 Smoke 完成；
+3. `B04A-RUNNER-INTEGRATION-SMOKE`：已验收；真实 B01 路由和三候选 × 三 seeds 编排完成；
+4. `B04A-MINI-RUN`：准备合同待审；Owner 单独授权后由 Experiment Runner 执行真实 GPU Mini；
+5. `B04A-REVIEW`：Codex 独立检查产物、指标、失败案例和 identity；
+6. Reviewer 接受后才解锁 B07。
 
 ## Files allowed to change in the documentation stage
 
