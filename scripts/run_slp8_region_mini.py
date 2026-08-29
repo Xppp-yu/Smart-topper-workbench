@@ -88,28 +88,46 @@ from topper_perception.neural.slp8_region_budget import (
 from topper_perception.neural.slp8_region_mini import (
     B02_BASELINE_REFERENCE_VAL_FIXED_IOU,
     B04_CANDIDATE_NAMES,
+    B04_PROTOCOL_NAME,
+    B04A_ACTIVE_CANDIDATE_NAMES,
+    B04A_CONFIG_VERSION,
+    B04A_FEASIBILITY_THRESHOLD,
+    B04A_FORBIDDEN_CANDIDATE_NAMES,
+    B04A_PROTOCOL_NAME,
+    B04A_SEEDS,
+    B04A_TASK_ID,
     CHECKPOINT_VERSION,
     MINI_VERSION,
     SYNTHETIC_DEFAULTS,
+    SYNTHETIC_DEFAULTS_B04A,
     TASK_ID,
     MiniConfig,
     MiniProtocolError,
     OutputCollisionError,
+    ResourceBudget,
+    _gather_environment,
+    _protocol_of_config,
+    _write_b04a_run_bundle,
     build_mini_config,
     build_synthetic_dataset,
     check_output_dir_safety,
     file_sha256,
     resolve_device,
+    resource_budget_from_config,
     run_mini,
+    run_mini_b04a,
     validate_mini_config,
     write_mini_artifacts,
     write_status_files,
-    _gather_environment,
 )
 from topper_perception.neural.slp8_region_models import (
     B04_MAX_PARAMETERS,
-    SMALL_UNET_VERSION,
+    B04A_EXACT_PARAMETER_COUNTS,
+    B04A_MAX_PARAMETERS,
+    DEEPLABV3PLUS_LITE_VERSION,
     MODEL_VERSION,
+    RESUNET_LITE_VERSION,
+    SMALL_UNET_VERSION,
     get_model_builder,
 )
 from topper_perception.neural.slp8_region_resume import (
@@ -169,7 +187,15 @@ def _json_default(obj: Any) -> Any:
 def _run_validate_config(
     config_path: Path, output_dir: Path
 ) -> int:
-    """Validate the config (and the model registry) without running anything."""
+    """Validate the config (and the model registry) without running anything.
+
+    This is a protocol-dispatch entry point.  After the shared config
+    validation, the resolved ``MiniConfig.protocol`` routes to the
+    B04 branch (writing the historical B04 identity) or the B04A
+    branch (writing the frozen B04A protocol identity).  Cross-
+    protocol use is fail-closed: an unknown protocol raises
+    :class:`MiniProtocolError` before any artifact is written.
+    """
 
     output_dir = Path(output_dir).resolve()
     check_output_dir_safety(output_dir)
@@ -182,20 +208,78 @@ def _run_validate_config(
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(f"[{_now_iso()}] {msg}\n")
 
-    _log(f"task_id={TASK_ID}")
-    _log(f"config_path={config_path}")
-
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     validate_mini_config(raw)
     _log("config validation: PASSED")
 
-    # Build a MiniConfig purely to serialize the resolved view.
+    # Build a MiniConfig purely to serialize the resolved view and
+    # to drive the protocol dispatch.
     config = build_mini_config(
         raw,
         b01_freeze_dir=None,
         data_root=None,
         config_path=str(config_path),
     )
+    _log(f"resolved protocol={config.protocol!r} config_version={config.config_version!r}")
+
+    if config.protocol == B04_PROTOCOL_NAME:
+        return _run_validate_config_b04(
+            config_path=config_path,
+            output_dir=output_dir,
+            raw=raw,
+            config=config,
+            log_path=log_path,
+        )
+    if config.protocol == B04A_PROTOCOL_NAME:
+        return _run_validate_config_b04a(
+            config_path=config_path,
+            output_dir=output_dir,
+            raw=raw,
+            config=config,
+            log_path=log_path,
+        )
+    raise MiniProtocolError(
+        f"_run_validate_config: config.protocol={config.protocol!r} is "
+        f"not recognised.  Expected {B04_PROTOCOL_NAME!r} or "
+        f"{B04A_PROTOCOL_NAME!r}.  Rejecting before any artifact is "
+        "written."
+    )
+
+
+def _run_validate_config_b04(
+    *,
+    config_path: Path,
+    output_dir: Path,
+    raw: dict[str, Any],
+    config: MiniConfig,
+    log_path: Path,
+) -> int:
+    """Validate-only path for the B04 protocol.
+
+    Writes the historical B04 identity:
+
+    * ``status.json`` -- ``task_id=TASK_ID``,
+      ``config_version=MINI_VERSION``,
+      ``registered_candidates=B04_CANDIDATE_NAMES``,
+      ``model_parameter_cap=B04_MAX_PARAMETERS``.
+    * ``resolved_config.json`` -- the resolved ``MiniConfig`` dict.
+    * ``input_manifest_hashes.json`` -- config + A06 split SHA +
+      registered candidates.
+    * ``DONE.json`` -- the terminal mutual-exclusion file.
+    * ``logs/run.log`` -- per-candidate parameter count + model
+      version.
+
+    This branch is the only path that references
+    :data:`TASK_ID`, :data:`MINI_VERSION`,
+    :data:`B04_CANDIDATE_NAMES`, and :data:`B04_MAX_PARAMETERS`.
+    """
+
+    def _log(msg: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(f"task_id={TASK_ID} config_path={config_path} protocol=B04")
+
     _write_json(output_dir / "resolved_config.json", config.as_dict())
     _write_json(
         output_dir / "input_manifest_hashes.json",
@@ -227,6 +311,7 @@ def _run_validate_config(
         {
             "task_id": TASK_ID,
             "config_version": MINI_VERSION,
+            "protocol": B04_PROTOCOL_NAME,
             "status": "VALIDATED",
             "started_at_utc": _now_iso(),
             "ended_at_utc": _now_iso(),
@@ -240,8 +325,154 @@ def _run_validate_config(
         status="DONE",
         extra={
             "mode": "validate-config",
+            "protocol": B04_PROTOCOL_NAME,
+            "task_id": TASK_ID,
+            "config_version": MINI_VERSION,
             "config_path": str(config_path),
             "config_sha256": file_sha256(config_path),
+        },
+    )
+    return 0
+
+
+def _run_validate_config_b04a(
+    *,
+    config_path: Path,
+    output_dir: Path,
+    raw: dict[str, Any],
+    config: MiniConfig,
+    log_path: Path,
+) -> int:
+    """Validate-only path for the B04A protocol.
+
+    Writes the frozen B04A identity:
+
+    * ``status.json`` -- ``task_id=B04A_TASK_ID``,
+      ``config_version=B04A_CONFIG_VERSION``,
+      ``protocol=B04A_PROTOCOL_NAME``,
+      ``registered_candidates=B04A_ACTIVE_CANDIDATE_NAMES``,
+      ``seeds=B04A_SEEDS``,
+      ``deferred_candidates=[...from config...]``,
+      ``model_parameter_cap=B04A_MAX_PARAMETERS``,
+      ``feasibility_threshold=B04A_FEASIBILITY_THRESHOLD``.
+    * ``resolved_config.json`` -- the resolved ``MiniConfig`` dict.
+    * ``input_manifest_hashes.json`` -- config + A06 split SHA +
+      B04A registered candidates.
+    * ``DONE.json`` -- the terminal mutual-exclusion file.
+    * ``logs/run.log`` -- per-(candidate, seed) parameter count.
+
+    The B04A branch is the only path that writes
+    :data:`B04A_TASK_ID`, :data:`B04A_CONFIG_VERSION`,
+    :data:`B04A_ACTIVE_CANDIDATE_NAMES`,
+    :data:`B04A_MAX_PARAMETERS`, and the B04A seeds.  It MUST NOT
+    import :data:`TASK_ID`, :data:`MINI_VERSION`,
+    :data:`B04_CANDIDATE_NAMES`, or :data:`B04_MAX_PARAMETERS` --
+    identity leakage between protocols is forbidden.
+    """
+
+    def _log(msg: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(
+        f"task_id={B04A_TASK_ID} config_path={config_path} protocol=B04A"
+    )
+
+    # Derive the deferred-candidate list from the config: every
+    # entry with role="DEFERRED" is included so a Reviewer can
+    # audit why SegFormer-B0 (or any future deferral) is not in
+    # the registered active set.
+    deferred_candidates: list[dict[str, Any]] = []
+    for entry in raw.get("candidates", []):
+        if str(entry.get("role", "")).upper() == "DEFERRED":
+            deferred_candidates.append(
+                {
+                    "name": str(entry.get("name", "")),
+                    "version": str(entry.get("version", entry.get("name", ""))),
+                    "role": "DEFERRED",
+                    "deferred_reason": str(
+                        entry.get("deferred_reason", "")
+                    ),
+                }
+            )
+
+    _write_json(output_dir / "resolved_config.json", config.as_dict())
+    _write_json(
+        output_dir / "input_manifest_hashes.json",
+        {
+            "config_path": str(config_path),
+            "config_sha256": file_sha256(config_path),
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "registered_candidates": list(B04A_ACTIVE_CANDIDATE_NAMES),
+            "forbidden_candidates": list(B04A_FORBIDDEN_CANDIDATE_NAMES),
+            "deferred_candidates": [c["name"] for c in deferred_candidates],
+            "seeds": list(B04A_SEEDS),
+            "note": "validate-only mode: no B01 freeze tables read",
+        },
+    )
+    _write_json(output_dir / "environment.json", _gather_environment())
+
+    # Verify the model registry can build the B04A active candidates
+    # on CPU and that the parameter count cap (B04A_MAX_PARAMETERS)
+    # is respected.  Exact parameter counts are checked too: B04A
+    # binds the active candidates' parameter counts to the values
+    # registered in B04A_EXACT_PARAMETER_COUNTS.
+    for cand in B04A_ACTIVE_CANDIDATE_NAMES:
+        builder = get_model_builder(cand)
+        model, _ = builder.factory(9, "cpu")
+        count = int(sum(p.numel() for p in model.parameters() if p.requires_grad))
+        if count > B04A_MAX_PARAMETERS:
+            raise MiniProtocolError(
+                f"candidate {cand} has {count} parameters; exceeds B04A cap "
+                f"of {B04A_MAX_PARAMETERS}"
+            )
+        expected_count = int(B04A_EXACT_PARAMETER_COUNTS.get(cand, count))
+        if count != expected_count:
+            raise MiniProtocolError(
+                f"candidate {cand} has {count} parameters; B04A frozen "
+                f"exact_parameter_count is {expected_count}"
+            )
+        _log(
+            f"candidate={cand} model_version={builder.version} "
+            f"parameters={count} seed_in_set=True"
+        )
+
+    for entry in deferred_candidates:
+        _log(
+            f"candidate={entry['name']} role=DEFERRED reason={entry['deferred_reason'][:80]}"
+        )
+
+    _write_json(
+        output_dir / "status.json",
+        {
+            "task_id": B04A_TASK_ID,
+            "config_version": B04A_CONFIG_VERSION,
+            "protocol": B04A_PROTOCOL_NAME,
+            "status": "VALIDATED",
+            "started_at_utc": _now_iso(),
+            "ended_at_utc": _now_iso(),
+            "mode": "validate-config",
+            "registered_candidates": list(B04A_ACTIVE_CANDIDATE_NAMES),
+            "forbidden_candidates": list(B04A_FORBIDDEN_CANDIDATE_NAMES),
+            "deferred_candidates": deferred_candidates,
+            "seeds": list(B04A_SEEDS),
+            "model_parameter_cap": B04A_MAX_PARAMETERS,
+            "feasibility_threshold": B04A_FEASIBILITY_THRESHOLD,
+        },
+    )
+    write_status_files(
+        output_dir,
+        status="DONE",
+        extra={
+            "mode": "validate-config",
+            "protocol": B04A_PROTOCOL_NAME,
+            "task_id": B04A_TASK_ID,
+            "config_version": B04A_CONFIG_VERSION,
+            "config_path": str(config_path),
+            "config_sha256": file_sha256(config_path),
+            "registered_candidates": list(B04A_ACTIVE_CANDIDATE_NAMES),
+            "seeds": list(B04A_SEEDS),
+            "deferred_candidates": [c["name"] for c in deferred_candidates],
         },
     )
     return 0
@@ -527,15 +758,255 @@ def _hash_dict(payload: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _run_real_b01(
+# ---------------------------------------------------------------------------
+# Synthetic CPU smoke (B04A protocol)
+# ---------------------------------------------------------------------------
+
+
+def _run_synthetic_cpu_smoke_b04a(
     config_path: Path,
     output_dir: Path,
-    b01_freeze_dir: Path,
-    dataset_root: Path,
     *,
     resume_from: Path | None = None,
+    no_write: bool = False,
 ) -> int:
-    """Run the B04 Mini on real B01 freeze tables.  Requires --run-authorized.
+    """Run the B04A Mini on synthetic CPU data.
+
+    The synthetic path keeps the B04A three-seed orchestration
+    semantics but shrinks the per-candidate epoch budget so the
+    smoke finishes in seconds, not minutes.  The protocol budget
+    (45 min/candidate, 135 min total) is enforced by the B04A
+    orchestrator's resource budget monitor; the smoke overrides the
+    *real* B04A budget only via the test-only environment variable
+    ``B04A_SMOKE_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS`` so a
+    reviewer's tiny-budget test can trigger STOPPED without rewiring
+    the contract.
+
+    The output policy is identical to the B04 smoke:
+    ``--no-write`` exits 0 without writing any artifact; otherwise
+    the existing output directory is refused (collision rule).
+    """
+
+    output_dir = Path(output_dir).resolve()
+    check_output_dir_safety(output_dir)
+    if not no_write:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = output_dir / "logs"
+    if not no_write:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "run.log"
+
+    def _log(msg: str) -> None:
+        if no_write:
+            return
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(f"task_id=B04A protocol={B04A_PROTOCOL_NAME} config_version={B04A_CONFIG_VERSION}")
+    _log(f"config_path={config_path}")
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    validate_mini_config(raw)
+    if _protocol_of_config(raw) != B04A_PROTOCOL_NAME:
+        raise MiniProtocolError(
+            f"--synthetic-cpu-smoke-b04a requires protocol "
+            f"{B04A_PROTOCOL_NAME!r}; got config_version "
+            f"{raw.get('config_version')!r}"
+        )
+
+    # Validate the frozen protocol config first; then apply
+    # synthetic-CPU overrides.  The B04A protocol mandates
+    # ``device=cuda`` so the validator would otherwise reject the
+    # ``cpu`` override.
+    # Synthetic override: force CPU, shrink the per-candidate epoch budget.
+    # The candidate set, seeds, threshold, and aggregator are unchanged.
+    raw["training"]["device"] = "cpu"
+    raw["training"]["max_epochs"] = int(SYNTHETIC_DEFAULTS_B04A["max_epochs_per_seed"])
+    raw["training"]["min_epochs"] = int(SYNTHETIC_DEFAULTS_B04A["min_epochs"])
+    raw["training"]["early_stopping"]["patience"] = int(
+        SYNTHETIC_DEFAULTS_B04A["early_stopping_patience"]
+    )
+    config = build_mini_config(
+        raw,
+        b01_freeze_dir="<SYNTHETIC>",
+        data_root="<SYNTHETIC>",
+        config_path=str(config_path),
+    )
+    if config.protocol != B04A_PROTOCOL_NAME:
+        raise MiniProtocolError(
+            f"build_mini_config produced protocol {config.protocol!r}; "
+            f"expected {B04A_PROTOCOL_NAME!r}"
+        )
+
+    device = resolve_device("cpu", allow_cpu_fallback=True)
+    if str(device) != "cpu":
+        raise MiniProtocolError("B04A synthetic CPU smoke must run on cpu")
+
+    # Test-only budget override (seconds).  When set, the smoke uses
+    # this value as the per-candidate wall budget; total = per * 3.
+    budget_override = os.environ.get("B04A_SMOKE_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS")
+    if budget_override is not None:
+        try:
+            override_seconds = float(budget_override)
+        except ValueError:
+            raise MiniProtocolError(
+                "B04A_SMOKE_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS must "
+                f"parse as float; got {budget_override!r}"
+            )
+        if override_seconds <= 0:
+            raise MiniProtocolError(
+                "B04A_SMOKE_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS must "
+                f"be > 0; got {override_seconds}"
+            )
+        budget = ResourceBudget(
+            max_wall_seconds_per_candidate=float(override_seconds),
+            max_wall_seconds_total=float(override_seconds) * 3,
+            max_peak_cuda_mb=8192.0,
+        )
+        _log(
+            f"test-only budget override: per_candidate={override_seconds}s "
+            f"total={override_seconds * 3}s"
+        )
+    else:
+        budget = ResourceBudget(
+            max_wall_seconds_per_candidate=45 * 60.0,
+            max_wall_seconds_total=135 * 60.0,
+            max_peak_cuda_mb=8192.0,
+        )
+
+    _log(f"device={device}")
+    _log(f"seeds={list(B04A_SEEDS)}")
+    _log(f"active_candidates={list(B04A_ACTIVE_CANDIDATE_NAMES)}")
+
+    # Build a small synthetic dataset (per-candidate shared TRAIN/VAL).
+    train_dataset, val_dataset, dataset_manifest, train_class_stats = build_synthetic_dataset(
+        n_train_samples=int(SYNTHETIC_DEFAULTS_B04A["n_train_samples"]),
+        n_val_samples=int(SYNTHETIC_DEFAULTS_B04A["n_val_samples"]),
+        seed=int(SYNTHETIC_DEFAULTS_B04A["seed"]),
+    )
+    if dataset_manifest["n_test_samples"] != 0:
+        raise MiniProtocolError(
+            "B04A synthetic dataset must report n_test_samples=0; got "
+            f"{dataset_manifest['n_test_samples']}"
+        )
+    _log(
+        f"train_subjects={dataset_manifest['train_subjects']} "
+        f"n_train={dataset_manifest['n_train_samples']} "
+        f"n_val={dataset_manifest['n_val_samples']}"
+    )
+
+    class_weight_result = compute_class_weights(
+        {
+            "n_samples": int(train_class_stats["n_samples"]),
+            "n_pixels": int(train_class_stats["n_pixels"]),
+            "per_class_pixel_ratio": {
+                int(k): float(v)
+                for k, v in train_class_stats["per_class_pixel_ratio"].items()
+            },
+        }
+    )
+    assert_class_weight_invariants(class_weight_result)
+
+    t_start = time.perf_counter()
+    result = run_mini_b04a(
+        config=config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        dataset_manifest=dataset_manifest,
+        class_weight_result=class_weight_result,
+        output_dir=output_dir,
+        device=device,
+        input_hashes={
+            "config_sha256": file_sha256(config_path),
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "synthetic": True,
+        },
+        train_class_stats_source="synthetic_train_class_stats",
+        synthetic=True,
+        budget=budget,
+    )
+    t_end = time.perf_counter()
+    result.wall_clock_seconds = float(t_end - t_start)
+
+    _log(
+        f"completed in {result.wall_clock_seconds:.4f}s; "
+        f"terminal_state={result.terminal_state} "
+        f"overall_decision={result.overall_decision} "
+        f"advanced={list(result.advanced)} "
+        f"near_tie_applied={result.near_tie_applied}"
+    )
+
+    if no_write:
+        # Do NOT write any artifact; the runner integration smoke
+        # script prints a single-line summary instead.
+        n_advanced = len(result.advanced)
+        n_feasible = int(result.n_candidates_feasible)
+        n_failed = int(result.n_candidates_failed)
+        n_stopped = int(result.n_candidates_stopped)
+        all_seeds_passed = all(
+            cand_result.n_seeds_failed == 0 and cand_result.n_seeds_stopped == 0
+            and cand_result.feasibility in {"FEASIBLE", "INFEASIBLE"}
+            for cand_result in result.candidate_results.values()
+        )
+        any_seed_feasible = any(
+            seed_cand.feasibility == "FEASIBLE"
+            for cand_result in result.candidate_results.values()
+            for seed_cand in cand_result.per_seed.values()
+        )
+        print(
+            f"B04A_SMOKE_NO_WRITE terminal_state={result.terminal_state} "
+            f"feasible={n_feasible} failed={n_failed} stopped={n_stopped} "
+            f"advanced={n_advanced} near_tie_applied={bool(result.near_tie_applied)} "
+            f"all_seeds_attempted={bool(all_seeds_passed)} "
+            f"any_seed_feasible={bool(any_seed_feasible)}"
+        )
+        return 0
+
+    config_sha256 = file_sha256(config_path)
+    _write_b04a_run_bundle(
+        output_dir=output_dir,
+        result=result,
+        config_sha256=config_sha256,
+    )
+
+    # Terminal file (DONE/FAILED/STOPPED) — mutually exclusive.
+    write_status_files(
+        output_dir,
+        status=result.terminal_state,
+        extra={
+            "task_id": result.config.task_id,
+            "protocol": result.config.protocol,
+            "config_version": result.config.config_version,
+            "mode": "synthetic-cpu-smoke-b04a",
+            "overall_decision": result.overall_decision,
+            "advanced": list(result.advanced),
+            "near_tie_applied": bool(result.near_tie_applied),
+            "wall_clock_seconds": result.wall_clock_seconds,
+            "n_candidates_feasible": int(result.n_candidates_feasible),
+            "n_candidates_not_feasible": int(result.n_candidates_not_feasible),
+            "n_candidates_failed": int(result.n_candidates_failed),
+            "n_candidates_stopped": int(result.n_candidates_stopped),
+            "terminal_state": result.terminal_state,
+        },
+    )
+    return 0 if result.terminal_state == "DONE" else 1
+
+
+def _load_b01_freeze_and_contract(
+    raw: dict[str, Any],
+    b01_freeze_dir: Path,
+    dataset_root: Path,
+) -> dict[str, Any]:
+    """Load B01 freeze tables and run the B01 input contract.
+
+    Returns a dict with:
+      * ``freeze`` -- the B01 freeze handle
+      * ``snapshot`` -- the :class:`B01FreezeSnapshot`
+      * ``b01_contract_report`` -- dict report
+      * ``freeze_manifest_path`` / ``train_class_stats_path``
+      * ``fm_file_sha`` / ``train_class_stats_sha256``
+      * ``train_class_stats`` -- parsed JSON
+      * ``b01_expected`` -- the :class:`B01ContractExpected`
 
     The real B01 input contract is enforced **before** any training
     artifact is written:
@@ -549,54 +1020,28 @@ def _run_real_b01(
        :func:`verify_b01_contract` which fail-closes on
        train/val/test count, subject count, A06 split SHA, provenance,
        source review status, setting, cover, or freeze manifest SHA
-       mismatch.  The snapshot is built **from the freeze data** —
+       mismatch.  The snapshot is built **from the freeze data** --
        no constant defaults may be substituted.
 
     The B01 freeze tables DO include the held-out TEST 495 rows in
     their ``test_manifest.csv``.  That is a *structural* fact of the
-    freeze.  However, the B04 contract insists the loaded dataset
-    reports ``n_test_samples=0`` and TEST labels / onehots are never
-    reachable from the runner.  We explicitly do not pass TEST rows
-    to the B04 dataset builder: ``load_b01_freeze_tables(..., load_test=False)``
-    returns a freeze whose ``_test_rows`` is ``None``.
-
-    The terminal state is taken from :attr:`MiniRunResult.terminal_state`
-    so the CLI writes ``DONE.json`` / ``FAILED.json`` / ``STOPPED.json``
-    in lock-step with the runner.
+    freeze.  However, both protocols insist the loaded dataset
+    reports ``n_test_samples=0`` and TEST labels / onehots are
+    never reachable from the runner.  We explicitly do not pass
+    TEST rows to the dataset builder:
+    ``load_b01_freeze_tables(..., load_test=False)`` returns a
+    freeze whose ``_test_rows`` is ``None``.
     """
 
-    output_dir = Path(output_dir).resolve()
-    b01_freeze_dir = Path(b01_freeze_dir).resolve()
-    dataset_root = Path(dataset_root).resolve()
-    check_output_dir_safety(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    log_dir = output_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "run.log"
-
-    def _log(msg: str) -> None:
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{_now_iso()}] {msg}\n")
-
-    _log(f"task_id={TASK_ID} mode=real-b01")
-
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
-    validate_mini_config(raw)
-    config = build_mini_config(
-        raw,
-        b01_freeze_dir=str(b01_freeze_dir),
-        data_root=str(dataset_root),
-        config_path=str(config_path),
-    )
-
     if not b01_freeze_dir.is_dir():
-        raise FileNotFoundError(f"B01 freeze directory not found: {b01_freeze_dir}")
+        raise FileNotFoundError(
+            f"B01 freeze directory not found: {b01_freeze_dir}"
+        )
     if not dataset_root.is_dir():
-        raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
+        raise FileNotFoundError(
+            f"Dataset root not found: {dataset_root}"
+        )
 
-    # Load B01 freeze tables with TEST access explicitly off.  The
-    # freeze structurally contains TEST 495 rows in test_manifest.csv
-    # but we never read them into FreezeRow objects.
     freeze = load_b01_freeze_tables(b01_freeze_dir, load_test=False)
     if freeze._test_rows is not None:  # noqa: SLF001
         raise MiniProtocolError(
@@ -608,107 +1053,207 @@ def _run_real_b01(
     n_val = len(freeze.val_rows)
     if n_train == 0 or n_val == 0:
         raise MiniProtocolError(
-            f"B01 freeze has zero rows for an essential split: train={n_train}, val={n_val}"
+            f"B01 freeze has zero rows for an essential split: "
+            f"train={n_train}, val={n_val}"
         )
 
-    # Hash input artefacts for the audit record.
     freeze_manifest_path = b01_freeze_dir / "freeze_manifest.json"
     train_class_stats_path = b01_freeze_dir / "train_class_stats.json"
     if not freeze_manifest_path.is_file():
-        raise FileNotFoundError(f"freeze_manifest.json missing in {b01_freeze_dir}")
+        raise FileNotFoundError(
+            f"freeze_manifest.json missing in {b01_freeze_dir}"
+        )
     if not train_class_stats_path.is_file():
-        raise FileNotFoundError(f"train_class_stats.json missing in {b01_freeze_dir}")
-    train_class_stats = json.loads(train_class_stats_path.read_text(encoding="utf-8"))
+        raise FileNotFoundError(
+            f"train_class_stats.json missing in {b01_freeze_dir}"
+        )
+    train_class_stats = json.loads(
+        train_class_stats_path.read_text(encoding="utf-8")
+    )
 
-    # ------------------------------------------------------------------
-    # B01 input contract — fail-closed, BEFORE the CUDA check so a
-    # Reviewer can audit any contract failure on a CPU machine.
-    # ------------------------------------------------------------------
     b01_expected = build_b01_contract_expected(raw)
-    # Fail-closed core-SHA check.  A file SHA is observational because
-    # metadata may vary; the B01 contract is the canonical ``core`` hash.
-    # Do not compare a freshly calculated file SHA against itself.
     fm_file_sha = sha256_file(freeze_manifest_path)
     check_freeze_manifest_file_consistency(
         b01_freeze_dir,
         freeze_manifest_sha256=b01_expected.freeze_manifest_core_sha256,
     )
-    # Build a B01FreezeSnapshot from the loaded freeze and verify the
-    # full input contract.  No constant may be substituted; if any
-    # field is missing or mismatched the runner fail-closes.
     snapshot = B01FreezeSnapshot.from_freeze_tables(
         freeze_dir=b01_freeze_dir,
         train_rows=freeze.train_rows,
         val_rows=freeze.val_rows,
-        test_rows=None,  # explicitly None — TEST is never loaded
+        test_rows=None,  # explicitly None -- TEST is never loaded
         freeze_manifest=freeze.freeze_manifest,
     )
     b01_contract_report = verify_b01_contract(
         snapshot, b01_expected
     ).as_dict()
-    _log(
-        "B01 contract verified: "
-        f"train={snapshot.train_count} val={snapshot.val_count} "
-        f"test={snapshot.structural_test.sample_count} "
-        f"a06={snapshot.a06_split_sha256[:12]}…"
+    return {
+        "freeze": freeze,
+        "snapshot": snapshot,
+        "b01_contract_report": b01_contract_report,
+        "freeze_manifest_path": freeze_manifest_path,
+        "train_class_stats_path": train_class_stats_path,
+        "fm_file_sha": fm_file_sha,
+        "train_class_stats_sha256": sha256_file(train_class_stats_path),
+        "train_class_stats": train_class_stats,
+        "b01_expected": b01_expected,
+    }
+
+
+def _auto_detect_resume_candidates_b04a(
+    resume_from: Path,
+    config: "MiniConfig",
+) -> dict[str, dict[int, Path]]:
+    """Auto-detect per-(candidate, seed) ``last.pt`` files for B04A.
+
+    The CLI takes a single ``--resume-from`` path that is the
+    output directory of a previous (interrupted) B04A run.  This
+    function walks the directory and returns a mapping
+    ``{candidate_name: {seed: last_pt_path}}`` for
+    (candidate, seed) pairs that completed at least one epoch.
+    B04A never advances without a per-seed budget, so the
+    resume contract is per-seed.
+
+    Same DONE / unknown-state / empty-state refuse rules as the
+    B04 helper.
+    """
+
+    from topper_perception.neural.slp8_region_resume import ResumeRefusedError
+    from topper_perception.neural.slp8_region_mini import (
+        MiniProtocolError,
+        refuse_resume_for_done_run,
     )
 
-    # Real data path: B04 demands device='cuda'.  In a real B01 run, CUDA
-    # must be available; otherwise fail-closed.  Run AFTER the
-    # B01 input contract so a Reviewer can audit on a CPU machine.
+    if not resume_from.is_dir():
+        raise MiniProtocolError(
+            f"--resume-from path is not a directory: {resume_from}"
+        )
+    refuse_resume_for_done_run(resume_from)
+    status_path = resume_from / "status.json"
+    if not status_path.is_file():
+        raise MiniProtocolError(
+            f"--resume-from source lacks status.json: {resume_from}"
+        )
+    try:
+        source_status = json.loads(status_path.read_text(encoding="utf-8"))
+        source_terminal_state = str(
+            source_status.get("terminal_state", source_status.get("status", ""))
+        )
+    except Exception as exc:
+        raise MiniProtocolError(
+            f"--resume-from source status.json is unreadable: {exc}"
+        ) from exc
+    if source_terminal_state not in {"RUNNING", "FAILED", "STOPPED"}:
+        raise MiniProtocolError(
+            "--resume-from source must have terminal_state RUNNING, FAILED, "
+            f"or STOPPED; got {source_terminal_state!r}"
+        )
+    result: dict[str, dict[int, Path]] = {}
+    for cand in config.candidates:
+        for seed in config.seeds:
+            last_pt = (
+                resume_from
+                / "checkpoints"
+                / cand
+                / f"seed_{seed:04d}"
+                / "last.pt"
+            )
+            if last_pt.is_file():
+                result.setdefault(cand, {})[int(seed)] = last_pt
+    if not result:
+        raise MiniProtocolError(
+            "--resume-from source contains no completed-epoch (candidate, "
+            "seed) last.pt; there is no safe state to resume"
+        )
+    return result
+
+
+def _run_real_b01_b04(
+    config_path: Path,
+    output_dir: Path,
+    b01_freeze_dir: Path,
+    dataset_root: Path,
+    *,
+    resume_from: Path | None,
+    config: "MiniConfig",
+    b01: dict[str, Any],
+    log_path: Path,
+) -> int:
+    """Run the B04 (single-seed) real B01 path.
+
+    Pulled out of ``_run_real_b01`` so the protocol dispatch is
+    trivially testable and the B04A real path can be implemented
+    symmetrically without falling through the wrong orchestrator.
+    """
+
+    def _log(msg: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(f"task_id={TASK_ID} mode=real-b01 protocol={B04_PROTOCOL_NAME}")
+
     device = resolve_device("cuda", allow_cpu_fallback=False)
     _log(f"device={device}")
 
-    # Subject isolation sanity (B01 should already guarantee this; we
-    # re-verify as a defense in depth).
-    train_subjects = sorted({row.subject_id for row in freeze.train_rows})
-    val_subjects = sorted({row.subject_id for row in freeze.val_rows})
+    train_subjects = sorted(
+        {row.subject_id for row in b01["freeze"].train_rows}
+    )
+    val_subjects = sorted(
+        {row.subject_id for row in b01["freeze"].val_rows}
+    )
     if not verify_subject_isolation(train_subjects, val_subjects):
-        raise MiniProtocolError("TRAIN/VAL subject overlap detected in B01 freeze")
+        raise MiniProtocolError(
+            "TRAIN/VAL subject overlap detected in B01 freeze"
+        )
 
-    # Class weights from the B01 train_class_stats.json.
-    class_weight_result = compute_class_weights(train_class_stats)
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    class_weight_result = compute_class_weights(b01["train_class_stats"])
     assert_class_weight_invariants(class_weight_result)
 
-    # Build the real B01 dataset using the B03 dataset builder.
     from topper_perception.neural.slp8_region_dataset import (
         build_smoke_dataset,
     )
     train_dataset, val_dataset, dataset_manifest = build_smoke_dataset(
         b01_freeze_dir=b01_freeze_dir,
         dataset_root=dataset_root,
-        seed=int(raw.get("dataset", {}).get("smoke_subset", {}).get("seed", 42)),
+        seed=int(
+            raw.get("dataset", {})
+            .get("smoke_subset", {})
+            .get("seed", 42)
+        ),
         n_train_subjects=int(
-            raw.get("dataset", {}).get("smoke_subset", {}).get(
-                "n_train_subjects", len(train_subjects)
-            )
+            raw.get("dataset", {})
+            .get("smoke_subset", {})
+            .get("n_train_subjects", len(train_subjects))
         ),
         n_val_subjects=int(
-            raw.get("dataset", {}).get("smoke_subset", {}).get(
-                "n_val_subjects", len(val_subjects)
-            )
+            raw.get("dataset", {})
+            .get("smoke_subset", {})
+            .get("n_val_subjects", len(val_subjects))
         ),
     )
-    # Structural TEST rows exist in the freeze but our loader / dataset
-    # report n_test_samples=0; never trust the structural 495 again.
     if dataset_manifest["n_test_samples"] != 0:
         raise MiniProtocolError(
             f"real B01 dataset must report n_test_samples=0; got "
             f"{dataset_manifest['n_test_samples']}"
         )
 
-    _write_json(output_dir / "resolved_config.json", config.as_dict())
+    _write_json(
+        output_dir / "resolved_config.json", config.as_dict()
+    )
     _write_json(
         output_dir / "input_manifest_hashes.json",
         {
             "config_sha256": file_sha256(config_path),
-            "freeze_manifest_file_sha256": fm_file_sha,
-            "freeze_manifest_core_sha256": b01_expected.freeze_manifest_core_sha256,
+            "freeze_manifest_file_sha256": b01["fm_file_sha"],
+            "freeze_manifest_core_sha256": (
+                b01["b01_expected"].freeze_manifest_core_sha256
+            ),
             "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
             "b01_freeze_dir": REDACTED_LOCAL_PATH,
             "dataset_root": REDACTED_LOCAL_PATH,
-            "train_class_stats_sha256": sha256_file(train_class_stats_path),
-            "b01_contract_report": b01_contract_report,
+            "train_class_stats_sha256": b01["train_class_stats_sha256"],
+            "b01_contract_report": b01["b01_contract_report"],
         },
     )
     _write_json(output_dir / "environment.json", _gather_environment())
@@ -719,7 +1264,8 @@ def _run_real_b01(
             Path(resume_from), config
         )
         _log(
-            f"resume_from={resume_from} -> {sorted(resume_from_per_candidate.keys())}"
+            f"resume_from={resume_from} -> "
+            f"{sorted(resume_from_per_candidate.keys())}"
         )
 
     t_start = time.perf_counter()
@@ -733,14 +1279,16 @@ def _run_real_b01(
         device=device,
         input_hashes={
             "config_sha256": file_sha256(config_path),
-            "freeze_manifest_sha256": b01_expected.freeze_manifest_core_sha256,
-            "freeze_manifest_file_sha256": fm_file_sha,
+            "freeze_manifest_sha256": (
+                b01["b01_expected"].freeze_manifest_core_sha256
+            ),
+            "freeze_manifest_file_sha256": b01["fm_file_sha"],
             "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
-            "train_class_stats_sha256": sha256_file(train_class_stats_path),
+            "train_class_stats_sha256": b01["train_class_stats_sha256"],
         },
         train_class_stats_source="b01_train_class_stats.json",
         synthetic=False,
-        b01_contract_report=b01_contract_report,
+        b01_contract_report=b01["b01_contract_report"],
         resume_from_per_candidate=resume_from_per_candidate,
     )
     t_end = time.perf_counter()
@@ -751,12 +1299,13 @@ def _run_real_b01(
         f"overall_decision={result.overall_decision}"
     )
 
-    # Terminal file follows result.terminal_state, NOT a hard-coded
-    # DONE.  DONE → exit 0; FAILED/STOPPED → exit 1.
     write_status_files(
         output_dir,
         status=result.terminal_state,
         extra={
+            "task_id": TASK_ID,
+            "protocol": config.protocol,
+            "config_version": config.config_version,
             "mode": "real-b01",
             "overall_decision": result.overall_decision,
             "wall_clock_seconds": result.wall_clock_seconds,
@@ -767,20 +1316,334 @@ def _run_real_b01(
             "terminal_state": result.terminal_state,
         },
     )
-    _write_json(output_dir / "status.json", {
-        "task_id": TASK_ID,
-        "config_version": MINI_VERSION,
-        "status": result.terminal_state,
-        "mode": "real-b01",
-        "terminal_state": result.terminal_state,
-        "overall_decision": result.overall_decision,
-        "wall_clock_seconds": result.wall_clock_seconds,
-        "n_candidates_feasible": result.n_candidates_feasible,
-        "n_candidates_not_feasible": result.n_candidates_not_feasible,
-        "n_candidates_failed": result.n_candidates_failed,
-        "n_candidates_stopped": result.n_candidates_stopped,
-    })
+    _write_json(
+        output_dir / "status.json",
+        {
+            "task_id": TASK_ID,
+            "config_version": MINI_VERSION,
+            "protocol": B04_PROTOCOL_NAME,
+            "status": result.terminal_state,
+            "mode": "real-b01",
+            "terminal_state": result.terminal_state,
+            "overall_decision": result.overall_decision,
+            "wall_clock_seconds": result.wall_clock_seconds,
+            "n_candidates_feasible": result.n_candidates_feasible,
+            "n_candidates_not_feasible": result.n_candidates_not_feasible,
+            "n_candidates_failed": result.n_candidates_failed,
+            "n_candidates_stopped": result.n_candidates_stopped,
+        },
+    )
     return 0 if result.terminal_state == "DONE" else 1
+
+
+def _run_real_b01_b04a(
+    config_path: Path,
+    output_dir: Path,
+    b01_freeze_dir: Path,
+    dataset_root: Path,
+    *,
+    resume_from: Path | None,
+    config: "MiniConfig",
+    b01: dict[str, Any],
+    log_path: Path,
+) -> int:
+    """Run the B04A (three-seed) real B01 path.
+
+    Pulled out of ``_run_real_b01`` so the protocol dispatch is
+    trivially testable.  The B04A real path:
+
+    1. Verifies the B01 contract (shared with B04).
+    2. Builds the real B01 dataset (shared with B04).
+    3. Calls :func:`run_mini_b04a`, which iterates
+       ``candidates × seeds`` with per-seed identity, per-seed
+       budget accumulator, ``all_seeds_must_succeed``, and the
+       B04A candidate-level decision rules.
+    4. Auto-detects per-(candidate, seed) resume mapping from
+       ``checkpoints/<candidate>/seed_<seed>/last.pt``.
+    5. Writes B04A artifacts (manifest, candidate_decision with
+       tiebreak records, budget_report, per-seed identity
+       siblings) via :func:`_write_b04a_run_bundle` and the
+       mutually-exclusive terminal file.
+
+    No real data is loaded by this task; the dispatch is
+    unit-tested via mocks/stubs.  ``--run-authorized`` is still
+    required (B04 and B04A both gate on it).
+    """
+
+    def _log(msg: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_iso()}] {msg}\n")
+
+    _log(
+        f"task_id={config.task_id} mode=real-b01 protocol={B04A_PROTOCOL_NAME}"
+    )
+    _log(f"seeds={list(config.seeds)}")
+    _log(f"active_candidates={list(config.candidates)}")
+
+    device = resolve_device("cuda", allow_cpu_fallback=False)
+    _log(f"device={device}")
+
+    train_subjects = sorted(
+        {row.subject_id for row in b01["freeze"].train_rows}
+    )
+    val_subjects = sorted(
+        {row.subject_id for row in b01["freeze"].val_rows}
+    )
+    if not verify_subject_isolation(train_subjects, val_subjects):
+        raise MiniProtocolError(
+            "TRAIN/VAL subject overlap detected in B01 freeze"
+        )
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    class_weight_result = compute_class_weights(b01["train_class_stats"])
+    assert_class_weight_invariants(class_weight_result)
+
+    from topper_perception.neural.slp8_region_dataset import (
+        build_smoke_dataset,
+    )
+    train_dataset, val_dataset, dataset_manifest = build_smoke_dataset(
+        b01_freeze_dir=b01_freeze_dir,
+        dataset_root=dataset_root,
+        seed=int(
+            raw.get("dataset", {})
+            .get("smoke_subset", {})
+            .get("seed", 42)
+        ),
+        n_train_subjects=int(
+            raw.get("dataset", {})
+            .get("smoke_subset", {})
+            .get("n_train_subjects", len(train_subjects))
+        ),
+        n_val_subjects=int(
+            raw.get("dataset", {})
+            .get("smoke_subset", {})
+            .get("n_val_subjects", len(val_subjects))
+        ),
+    )
+    if dataset_manifest["n_test_samples"] != 0:
+        raise MiniProtocolError(
+            f"real B01 dataset must report n_test_samples=0; got "
+            f"{dataset_manifest['n_test_samples']}"
+        )
+
+    budget = ResourceBudget(
+        max_wall_seconds_per_candidate=45 * 60.0,
+        max_wall_seconds_total=135 * 60.0,
+        max_peak_cuda_mb=8192.0,
+    )
+
+    resume_per_candidate_seed: dict[str, dict[int, Path]] | None = None
+    if resume_from is not None:
+        resume_per_candidate_seed = (
+            _auto_detect_resume_candidates_b04a(
+                Path(resume_from), config
+            )
+        )
+        _log(
+            f"resume_from={resume_from} -> "
+            + str(
+                {
+                    cand: sorted(seeds.keys())
+                    for cand, seeds in sorted(
+                        resume_per_candidate_seed.items()
+                    )
+                }
+            )
+        )
+
+    config_sha256 = file_sha256(config_path)
+    _write_json(
+        output_dir / "resolved_config.json", config.as_dict()
+    )
+    _write_json(
+        output_dir / "input_manifest_hashes.json",
+        {
+            "config_sha256": config_sha256,
+            "freeze_manifest_file_sha256": b01["fm_file_sha"],
+            "freeze_manifest_core_sha256": (
+                b01["b01_expected"].freeze_manifest_core_sha256
+            ),
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "b01_freeze_dir": REDACTED_LOCAL_PATH,
+            "dataset_root": REDACTED_LOCAL_PATH,
+            "train_class_stats_sha256": b01["train_class_stats_sha256"],
+            "b01_contract_report": b01["b01_contract_report"],
+        },
+    )
+    _write_json(output_dir / "environment.json", _gather_environment())
+
+    t_start = time.perf_counter()
+    result = run_mini_b04a(
+        config=config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        dataset_manifest=dataset_manifest,
+        class_weight_result=class_weight_result,
+        output_dir=output_dir,
+        device=device,
+        input_hashes={
+            "config_sha256": config_sha256,
+            "freeze_manifest_sha256": (
+                b01["b01_expected"].freeze_manifest_core_sha256
+            ),
+            "freeze_manifest_file_sha256": b01["fm_file_sha"],
+            "a06_split_sha256_expected": A06_SPLIT_SHA256_EXPECTED,
+            "train_class_stats_sha256": b01["train_class_stats_sha256"],
+        },
+        train_class_stats_source="b01_train_class_stats.json",
+        synthetic=False,
+        budget=budget,
+        b01_contract_report=b01["b01_contract_report"],
+        resume_from_per_candidate_seed=resume_per_candidate_seed,
+    )
+    t_end = time.perf_counter()
+    result.wall_clock_seconds = float(t_end - t_start)
+    _log(
+        f"completed in {result.wall_clock_seconds:.4f}s; "
+        f"terminal_state={result.terminal_state} "
+        f"overall_decision={result.overall_decision} "
+        f"advanced={list(result.advanced)} "
+        f"near_tie_applied={bool(result.near_tie_applied)}"
+    )
+
+    _write_b04a_run_bundle(
+        output_dir=output_dir,
+        result=result,
+        config_sha256=config_sha256,
+    )
+    write_status_files(
+        output_dir,
+        status=result.terminal_state,
+        extra={
+            "task_id": config.task_id,
+            "protocol": config.protocol,
+            "config_version": config.config_version,
+            "mode": "real-b01-b04a",
+            "overall_decision": result.overall_decision,
+            "advanced": list(result.advanced),
+            "near_tie_applied": bool(result.near_tie_applied),
+            "wall_clock_seconds": result.wall_clock_seconds,
+            "n_candidates_feasible": result.n_candidates_feasible,
+            "n_candidates_not_feasible": result.n_candidates_not_feasible,
+            "n_candidates_failed": result.n_candidates_failed,
+            "n_candidates_stopped": result.n_candidates_stopped,
+            "terminal_state": result.terminal_state,
+        },
+    )
+    return 0 if result.terminal_state == "DONE" else 1
+
+
+def _run_real_b01(
+    config_path: Path,
+    output_dir: Path,
+    b01_freeze_dir: Path,
+    dataset_root: Path,
+    *,
+    resume_from: Path | None = None,
+) -> int:
+    """Run the B04 / B04A Mini on real B01 freeze tables.  Requires ``--run-authorized``.
+
+    This function is the protocol-dispatch entry point for the
+    real B01 path.  After validating the config and loading the
+    B01 freeze handle, it dispatches to:
+
+    * :func:`_run_real_b01_b04` for ``config.protocol == "B04"``;
+    * :func:`_run_real_b01_b04a` for ``config.protocol == "B04A"``.
+
+    The cross-protocol path is fail-closed: an unknown protocol
+    raises :class:`MiniProtocolError` BEFORE any training
+    artifact is written.  The shared B01 contract loading lives
+    in :func:`_load_b01_freeze_and_contract` and runs for both
+    protocols, so a contract failure is auditable on either
+    path.
+
+    No real data is loaded by the current task; the dispatch
+    is exercised by ``test_b04a_runner_integration.py`` via
+    ``monkeypatch``-replaced ``run_mini`` / ``run_mini_b04a``.
+    """
+
+    output_dir = Path(output_dir).resolve()
+    b01_freeze_dir = Path(b01_freeze_dir).resolve()
+    dataset_root = Path(dataset_root).resolve()
+    check_output_dir_safety(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "run.log"
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    validate_mini_config(raw)
+    config = build_mini_config(
+        raw,
+        b01_freeze_dir=str(b01_freeze_dir),
+        data_root=str(dataset_root),
+        config_path=str(config_path),
+    )
+
+    if config.protocol == B04_PROTOCOL_NAME:
+        _log_path = log_path
+        with open(_log_path, "a", encoding="utf-8") as f:
+            f.write(
+                f"[{_now_iso()}] task_id={TASK_ID} config_path={config_path} "
+                f"protocol={B04_PROTOCOL_NAME} mode=real-b01-dispatch\n"
+            )
+        b01 = _load_b01_freeze_and_contract(
+            raw, b01_freeze_dir, dataset_root
+        )
+        with open(_log_path, "a", encoding="utf-8") as f:
+            f.write(
+                f"[{_now_iso()}] B01 contract verified: "
+                f"train={b01['snapshot'].train_count} "
+                f"val={b01['snapshot'].val_count} "
+                f"test={b01['snapshot'].structural_test.sample_count} "
+                f"a06={b01['snapshot'].a06_split_sha256[:12]}…\n"
+            )
+        return _run_real_b01_b04(
+            config_path=config_path,
+            output_dir=output_dir,
+            b01_freeze_dir=b01_freeze_dir,
+            dataset_root=dataset_root,
+            resume_from=resume_from,
+            config=config,
+            b01=b01,
+            log_path=_log_path,
+        )
+
+    if config.protocol == B04A_PROTOCOL_NAME:
+        _log_path = log_path
+        with open(_log_path, "a", encoding="utf-8") as f:
+            f.write(
+                f"[{_now_iso()}] task_id={config.task_id} config_path={config_path} "
+                f"protocol={B04A_PROTOCOL_NAME} mode=real-b01-dispatch\n"
+            )
+        b01 = _load_b01_freeze_and_contract(
+            raw, b01_freeze_dir, dataset_root
+        )
+        with open(_log_path, "a", encoding="utf-8") as f:
+            f.write(
+                f"[{_now_iso()}] B01 contract verified: "
+                f"train={b01['snapshot'].train_count} "
+                f"val={b01['snapshot'].val_count} "
+                f"test={b01['snapshot'].structural_test.sample_count} "
+                f"a06={b01['snapshot'].a06_split_sha256[:12]}…\n"
+            )
+        return _run_real_b01_b04a(
+            config_path=config_path,
+            output_dir=output_dir,
+            b01_freeze_dir=b01_freeze_dir,
+            dataset_root=dataset_root,
+            resume_from=resume_from,
+            config=config,
+            b01=b01,
+            log_path=_log_path,
+        )
+
+    raise MiniProtocolError(
+        f"_run_real_b01: config.protocol={config.protocol!r} is not "
+        f"recognised.  Expected {B04_PROTOCOL_NAME!r} or "
+        f"{B04A_PROTOCOL_NAME!r}.  Rejecting before any training "
+        "artifact is written."
+    )
 
 
 def _auto_detect_resume_candidates(
@@ -869,6 +1732,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Run the B04 Mini on synthetic CPU data (no real B01).",
     )
     parser.add_argument(
+        "--synthetic-cpu-smoke-b04a", dest="synthetic_cpu_smoke_b04a",
+        action="store_true",
+        help=(
+            "Run the B04A Mini on synthetic CPU data (3 seeds, 3 "
+            "candidates, smaller epoch/sample budget).  Refuses any "
+            "non-B04A config.  This is the runner-integration smoke "
+            "for the B04A architecture expansion protocol."
+        ),
+    )
+    parser.add_argument(
+        "--no-write", dest="no_write", action="store_true",
+        help=(
+            "Run the synthetic smoke end-to-end but do NOT write any "
+            "artifact.  The CLI exits 0 and prints a single-line "
+            "summary.  This is the no-write variant used by the "
+            "runner-integration smoke script and by Codex Reviewer "
+            "audit runs."
+        ),
+    )
+    parser.add_argument(
         "--b01-freeze-dir", type=Path, default=None,
         help="Path to the B01 freeze directory (real run only).",
     )
@@ -895,9 +1778,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Mutual-exclusion: --validate-config and --synthetic-cpu-smoke
         # and a real run cannot coexist.
-        if args.validate_config and args.synthetic_cpu_smoke:
+        if (
+            args.validate_config
+            + args.synthetic_cpu_smoke
+            + args.synthetic_cpu_smoke_b04a
+            > 1
+        ):
             raise MiniProtocolError(
-                "--validate-config and --synthetic-cpu-smoke are mutually exclusive"
+                "--validate-config, --synthetic-cpu-smoke and "
+                "--synthetic-cpu-smoke-b04a are mutually exclusive"
             )
 
         if args.validate_config:
@@ -906,6 +1795,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.synthetic_cpu_smoke:
             return _run_synthetic_cpu_smoke(
                 args.config, args.output_dir, resume_from=args.resume_from
+            )
+
+        if args.synthetic_cpu_smoke_b04a:
+            return _run_synthetic_cpu_smoke_b04a(
+                args.config,
+                args.output_dir,
+                resume_from=args.resume_from,
+                no_write=bool(args.no_write),
             )
 
         if args.b01_freeze_dir is not None or args.dataset_root is not None:

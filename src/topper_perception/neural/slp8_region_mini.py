@@ -134,9 +134,13 @@ from topper_perception.neural.slp8_region_determinism import (
 )
 from topper_perception.neural.slp8_region_models import (
     B04_MAX_PARAMETERS,
+    B04A_MAX_PARAMETERS,
+    B04A_EXACT_PARAMETER_COUNTS,
+    DEEPLABV3PLUS_LITE_VERSION,
     INPUT_SHAPE,
     MODEL_REGISTRY,
     ModelBuilder,
+    RESUNET_LITE_VERSION,
     SMALL_UNET_VERSION,
     MODEL_VERSION,
     get_model_builder,
@@ -173,6 +177,34 @@ from topper_perception.neural.slp8_region_resume import (
 TASK_ID = "TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1"
 MINI_VERSION = "slp8_region_mini_v0.1"
 
+# ---------------------------------------------------------------------------
+# Protocol / profile dispatch (B04 vs B04A)
+# ---------------------------------------------------------------------------
+#
+# The runner supports two protocols.  The two protocols are NOT
+# interchangeable; each has its own frozen candidate set, seed list,
+# resource budget, feasibility threshold, near-tie tiebreak, and
+# terminal-state semantics.  The dispatch is performed by inspecting
+# ``config_version`` (and ``task_id``) — there are no task_id if/else
+# blocks scattered across the runner.  Unknown ``config_version`` is
+# rejected fail-closed by :func:`validate_mini_config`.
+# ---------------------------------------------------------------------------
+
+#: Protocol identifier for the B04 PM-only Region Mini (frozen).
+B04_PROTOCOL_NAME = "B04"
+#: Protocol identifier for the B04A PM-only controlled architecture
+#: expansion Mini (frozen).
+B04A_PROTOCOL_NAME = "B04A"
+
+#: task_id frozen in the B04A architecture expansion Mini config.
+#: This is the protocol-side task_id (the same task_id that lives in
+#: the frozen JSON config).  The current implementation TASK-ID
+#: (``TASK-SLP-B04A-RUNNER-INTEGRATION-SMOKE-v0.1``) operates on this
+#: config but does not change it.
+B04A_TASK_ID = "TASK-SLP-B04A-PROTOCOL-FREEZE-v0.1"
+#: config_version frozen in the B04A architecture expansion Mini config.
+B04A_CONFIG_VERSION = "slp8_pm_architecture_expansion_mini_v0.1"
+
 #: Default seed.
 DEFAULT_SEED = 42
 
@@ -181,6 +213,45 @@ B04_CANDIDATE_NAMES: tuple[str, ...] = (
     MODEL_VERSION,         # slp8_tiny_fcn_v0.1
     SMALL_UNET_VERSION,    # slp8_small_unet_v0.1
 )
+
+#: B04A active candidates (frozen; the only three candidates that may
+#: enter a B04A Mini run).  TinyFCN and SegFormer-B0 are explicitly
+#: excluded.
+B04A_ACTIVE_CANDIDATE_NAMES: tuple[str, ...] = (
+    SMALL_UNET_VERSION,           # slp8_small_unet_v0.1
+    RESUNET_LITE_VERSION,         # slp8_resunet_lite_v0.1
+    DEEPLABV3PLUS_LITE_VERSION,   # slp8_deeplabv3plus_lite_v0.1
+)
+
+#: B04A forbidden candidate names (must NOT appear in B04A active runs).
+#: TinyFCN is the B04 control candidate (already retired in B04 R05);
+#: SegFormer-B0 is the architecture that the B04A protocol explicitly
+#: defers.
+B04A_FORBIDDEN_CANDIDATE_NAMES: tuple[str, ...] = (
+    MODEL_VERSION,                # slp8_tiny_fcn_v0.1
+    "slp8_segformer_b0_v0.1",     # DEFERRED by the B04A protocol
+)
+
+#: B04A frozen seed list.  Three registered seeds; ``all_seeds_must_succeed``
+#: is enforced at the candidate level.  The runner MUST NOT silently
+#: degrade to a single seed and MUST NOT run a seed outside this set.
+B04A_SEEDS: tuple[int, ...] = (42, 123, 2026)
+
+#: B04A feasibility threshold (``B02 baseline 0.205644 + absolute
+#: margin 0.15``); comparison operator is ``>=``.  The threshold is
+#: applied to ``macro_iou_mean_across_seeds`` for candidates that pass
+#: all per-seed hard gates.
+B04A_FEASIBILITY_THRESHOLD: float = 0.355644
+
+#: B04A near-tie margin.  When two feasible candidates differ by less
+#: than this margin in ``macro_iou_mean``, the simpler model (lower
+#: parameter count) is preferred.
+B04A_NEAR_TIE_MARGIN: float = 0.02
+
+#: B04A maximum number of candidates that may be advanced to the next
+#: round.  The 0/1/2/3_feasible decision rules produce 0, 1, 2, or
+#: (top-2 of 3) advanced candidates.
+B04A_MAX_ADVANCE: int = 2
 
 #: Frozen training defaults from the B04 protocol.
 B04_FROZEN_DEFAULTS: dict[str, Any] = {
@@ -203,7 +274,29 @@ B04_FROZEN_DEFAULTS: dict[str, Any] = {
     "num_workers": 0,
 }
 
-#: Frozen resource budget.
+#: Frozen training defaults for the B04A protocol (matches the
+#: ``training`` block of
+#: ``configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json``).
+B04A_FROZEN_DEFAULTS: dict[str, Any] = {
+    "seeds": list(B04A_SEEDS),
+    "device": "cuda",
+    "batch_size": 16,
+    "max_epochs": 30,
+    "min_epochs": 5,
+    "early_stopping": {
+        "monitor": "val_loss",
+        "mode": "min",
+        "patience": 4,
+        "min_delta": 0.0,
+    },
+    "optimizer": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "scheduler": "none",
+    "num_workers": 0,
+}
+
+#: Frozen resource budget for the B04 protocol.
 B04_RESOURCE_BUDGET: dict[str, Any] = {
     "max_wall_minutes_per_candidate": 45,
     "max_total_wall_minutes": 90,
@@ -211,16 +304,52 @@ B04_RESOURCE_BUDGET: dict[str, Any] = {
     "candidates_serial": True,
 }
 
+#: Frozen resource budget for the B04A protocol.  Per-candidate
+#: budget (45 minutes) is the cumulative wall time of the three
+#: registered seeds; the total budget (135 minutes) is the cumulative
+#: wall time of all three candidates.
+B04A_RESOURCE_BUDGET: dict[str, Any] = {
+    "max_wall_minutes_per_candidate": 45,
+    "max_total_wall_minutes": 135,
+    "max_peak_cuda_mb": 8192,
+    "candidates_serial": True,
+    "seeds_serial_within_candidate": True,
+}
+
 #: Frozen B02 baseline reference (Train Spatial Prior).  Used as the
 #: FEASIBLE gate threshold for B04 candidates (must be >= 0.205644).
 B02_BASELINE_REFERENCE_VAL_FIXED_IOU = 0.205644
 
-#: Synthetic CPU smoke defaults.
+#: Synthetic CPU smoke defaults (B04).
 SYNTHETIC_DEFAULTS: dict[str, Any] = {
     "n_train_samples": 8,
     "n_val_samples": 4,
     "image_shape": list(PRESSURE_SHAPE),
     "seed": 42,
+}
+
+#: Synthetic CPU smoke defaults (B04A).  The synthetic path keeps the
+#: three-seed orchestration semantics but uses a small
+#: ``epochs_per_seed`` / ``samples_per_seed`` budget so the runner
+#: integration smoke finishes in seconds, not minutes.  The reduced
+#: budget is a smoke-only concession; the protocol budget remains
+#: 45 min/candidate and 135 min total.
+SYNTHETIC_DEFAULTS_B04A: dict[str, Any] = {
+    "n_train_samples": 4,
+    "n_val_samples": 2,
+    "image_shape": list(PRESSURE_SHAPE),
+    "max_epochs_per_seed": 1,
+    "min_epochs": 1,
+    "early_stopping_patience": 1,
+    "seed": 42,
+}
+
+#: Mapping ``config_version`` -> protocol name.  Used by
+#: :func:`_protocol_of_config` to dispatch the validator and
+#: :func:`build_mini_config` to dispatch the config builder.
+_CONFIG_VERSION_TO_PROTOCOL: dict[str, str] = {
+    MINI_VERSION: B04_PROTOCOL_NAME,
+    B04A_CONFIG_VERSION: B04A_PROTOCOL_NAME,
 }
 
 
@@ -256,17 +385,26 @@ class NonFiniteMetricsError(MiniProtocolError):
 
 @dataclass(frozen=True)
 class MiniConfig:
-    """The B04 Mini frozen configuration (built from the JSON config).
+    """The B04 / B04A Mini frozen configuration (built from the JSON config).
 
     Every field is explicit; defaults are not used to mask missing
-    config.  Validation lives in :func:`validate_mini_config`.
+    config.  Validation lives in :func:`validate_mini_config`, which
+    dispatches by :attr:`protocol` (``B04`` or ``B04A``).
+
+    The B04 protocol uses a single-element :attr:`seeds` tuple.  The
+    B04A protocol uses the frozen :data:`B04A_SEEDS` triple
+    ``(42, 123, 2026)``.  :attr:`seed` is always equal to
+    ``seeds[0]`` and is retained for backward compatibility with code
+    that consumed the B04 single-seed field directly.
     """
 
+    protocol: str
     task_id: str
     config_version: str
     config_path: str
     candidates: tuple[str, ...]
     seed: int
+    seeds: tuple[int, ...]
     device: str
     batch_size: int
     max_epochs: int
@@ -303,11 +441,13 @@ class MiniConfig:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "protocol": self.protocol,
             "task_id": self.task_id,
             "config_version": self.config_version,
             "config_path": self.config_path,
             "candidates": list(self.candidates),
             "seed": self.seed,
+            "seeds": list(self.seeds),
             "device": self.device,
             "batch_size": self.batch_size,
             "max_epochs": self.max_epochs,
@@ -433,8 +573,79 @@ def _expect_keys(parent: str, payload: Mapping[str, Any], required: Sequence[str
         )
 
 
+# ---------------------------------------------------------------------------
+# Protocol dispatch
+# ---------------------------------------------------------------------------
+
+
+def _protocol_of_config(cfg: Mapping[str, Any]) -> str:
+    """Return the protocol name (B04 or B04A) implied by ``config_version``.
+
+    Falls back to B04 for the historical ``config_version``
+    ``slp8_region_mini_v0.1`` and to B04A for the B04A architecture
+    expansion config.  Any other ``config_version`` raises
+    :class:`ConfigValidationError` so unknown / mixed protocols cannot
+    sneak through the dispatch.
+    """
+
+    if "config_version" not in cfg:
+        raise ConfigValidationError(
+            "config is missing the required 'config_version' field; "
+            "cannot dispatch to a protocol validator"
+        )
+    cv = str(cfg["config_version"])
+    protocol = _CONFIG_VERSION_TO_PROTOCOL.get(cv)
+    if protocol is None:
+        supported = sorted(_CONFIG_VERSION_TO_PROTOCOL)
+        raise ConfigValidationError(
+            f"unknown config_version {cv!r}; supported: {supported}.  "
+            "Refusing to dispatch a non-B04/B04A protocol."
+        )
+    return protocol
+
+
 def validate_mini_config(cfg: Mapping[str, Any]) -> None:
-    """Validate the B04 Mini JSON config (fail-closed)."""
+    """Validate the Mini JSON config (fail-closed).
+
+    The validation is dispatched by ``config_version``:
+
+    * ``slp8_region_mini_v0.1`` -> B04 protocol
+      (:func:`_validate_b04_mini_config`).
+    * ``slp8_pm_architecture_expansion_mini_v0.1`` -> B04A protocol
+      (:func:`_validate_b04a_mini_config`).
+
+    Unknown ``config_version`` is rejected fail-closed.
+    """
+
+    if not isinstance(cfg, Mapping):
+        raise ConfigValidationError(
+            f"config must be a mapping; got {type(cfg).__name__}"
+        )
+    protocol = _protocol_of_config(cfg)
+    if protocol == B04_PROTOCOL_NAME:
+        _validate_b04_mini_config(cfg)
+        return
+    if protocol == B04A_PROTOCOL_NAME:
+        _validate_b04a_mini_config(cfg)
+        return
+    raise ConfigValidationError(
+        f"unsupported protocol {protocol!r}; refusing to validate"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B04 protocol validator (frozen — the historical B04 contract)
+# ---------------------------------------------------------------------------
+
+
+def _validate_b04_mini_config(cfg: Mapping[str, Any]) -> None:
+    """Validate the B04 Mini JSON config (fail-closed).
+
+    This is the historical B04 v0.1 R02 validator, byte-for-byte
+    unchanged from the original ``validate_mini_config`` body.  The
+    runner-integration stage keeps the B04 protocol as a frozen
+    contract and only adds the B04A protocol alongside it.
+    """
 
     _expect_keys("config", cfg, _REQUIRED_TOP_LEVEL_KEYS)
 
@@ -657,6 +868,411 @@ def validate_mini_config(cfg: Mapping[str, Any]) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# B04A protocol validator (B04A architecture expansion Mini)
+# ---------------------------------------------------------------------------
+
+
+_REQUIRED_B04A_TOP_LEVEL_KEYS: tuple[str, ...] = (
+    "config_version",
+    "task_id",
+    "provenance",
+    "raw_semantics",
+    "source_review_status",
+    "b01_a06_split_sha256_expected",
+    "b01_freeze_manifest_core_sha256_expected",
+    "b01_structural_test",
+    "candidates",
+    "training",
+    "dataset",
+    "metrics",
+    "resource_budget",
+    "feasibility_gate",
+    "expected_split_counts",
+    "expected_subjects",
+    "lifecycle",
+    "test_access_policy",
+)
+
+_REQUIRED_B04A_CANDIDATE_KEYS: tuple[str, ...] = (
+    "name",
+    "version",
+    "max_parameters",
+    "exact_parameter_count",
+)
+
+_REQUIRED_B04A_TRAINING_KEYS: tuple[str, ...] = (
+    "seeds",
+    "device",
+    "batch_size",
+    "max_epochs",
+    "min_epochs",
+    "early_stopping",
+    "optimizer",
+    "lr",
+    "weight_decay",
+    "num_workers",
+    "augmentation_policy_per_candidate",
+)
+
+_REQUIRED_B04A_DATASET_KEYS: tuple[str, ...] = (
+    "image_shape",
+    "n_classes",
+)
+
+
+def _validate_b04a_mini_config(cfg: Mapping[str, Any]) -> None:
+    """Validate the B04A architecture expansion Mini JSON config.
+
+    The B04A protocol is dispatched by
+    :func:`_protocol_of_config`; this function MUST NOT be called
+    with a B04 (``slp8_region_mini_v0.1``) config.  The validation is
+    fail-closed: any missing or wrong field aborts the run.
+    """
+
+    _expect_keys("config", cfg, _REQUIRED_B04A_TOP_LEVEL_KEYS)
+
+    # ----- task_id (B04A protocol task id) -----
+    if cfg["task_id"] != B04A_TASK_ID:
+        raise ConfigValidationError(
+            f"config.task_id {cfg['task_id']!r} != expected {B04A_TASK_ID!r} "
+            "for the B04A architecture expansion protocol"
+        )
+    if cfg["config_version"] != B04A_CONFIG_VERSION:
+        raise ConfigValidationError(
+            f"config.config_version {cfg['config_version']!r} != "
+            f"expected {B04A_CONFIG_VERSION!r}"
+        )
+
+    # ----- data provenance / semantics -----
+    if cfg["provenance"] != "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED":
+        raise ConfigValidationError(
+            "config.provenance must be 'V221_CORRECTED_SUPPORT_AUTO_ACCEPTED'"
+        )
+    if cfg["raw_semantics"] != "raw_pmarray_response":
+        raise ConfigValidationError(
+            "config.raw_semantics must be 'raw_pmarray_response' (NOT kPa)"
+        )
+    if cfg["source_review_status"] != "NOT_REVIEWED":
+        raise ConfigValidationError(
+            "config.source_review_status must be 'NOT_REVIEWED'"
+        )
+
+    # ----- candidates: must be exactly the B04A active set, in any order,
+    # with no forbidden / duplicate names.  DEFERRED entries (e.g.
+    # SegFormer-B0) may be present in the candidate list to record the
+    # protocol's deferral decision, but they MUST NOT be registered and
+    # MUST NOT contribute to the active set.
+    candidates = cfg["candidates"]
+    if not isinstance(candidates, list) or not candidates:
+        raise ConfigValidationError(
+            "config.candidates must be a non-empty list"
+        )
+    candidate_names: list[str] = []
+    deferred_names: list[str] = []
+    for c in candidates:
+        name = str(c["name"])
+        role = str(c.get("role", "active"))
+        is_deferred = role.upper() == "DEFERRED"
+        if is_deferred:
+            # DEFERRED entries are allowed to exist in the config but
+            # MUST NOT be registered, MUST NOT be in the active set, and
+            # MUST declare the deferral rationale.
+            if name not in B04A_FORBIDDEN_CANDIDATE_NAMES:
+                raise ConfigValidationError(
+                    f"DEFERRED candidate {name!r} is not in "
+                    f"B04A_FORBIDDEN_CANDIDATE_NAMES "
+                    f"{list(B04A_FORBIDDEN_CANDIDATE_NAMES)}; refusing "
+                    "to allow a non-DEFERRED B04 candidate into the "
+                    "B04A candidate list"
+                )
+            if not str(c.get("deferred_reason", "")).strip():
+                raise ConfigValidationError(
+                    f"DEFERRED candidate {name!r} must declare a "
+                    "deferred_reason"
+                )
+            deferred_names.append(name)
+            continue
+        _expect_keys("config.candidates[]", c, _REQUIRED_B04A_CANDIDATE_KEYS)
+        # 1) Must be registered.
+        if name not in MODEL_REGISTRY:
+            raise ConfigValidationError(
+                f"candidate {name!r} is not registered; known: "
+                f"{list_model_builders()}"
+            )
+        # 2) Version must match the registry.
+        if str(c["version"]) != get_model_builder(name).version:
+            raise ConfigValidationError(
+                f"candidate {name!r} version mismatch: config says "
+                f"{c['version']!r}, registry has {get_model_builder(name).version!r}"
+            )
+        # 3) Must not be one of the B04A-forbidden candidates
+        #    (TinyFCN, SegFormer-B0).  This is the explicit guard against
+        #    B04/B04A mix-up.
+        if name in B04A_FORBIDDEN_CANDIDATE_NAMES:
+            raise ConfigValidationError(
+                f"candidate {name!r} is forbidden in the B04A protocol; "
+                f"forbidden names: {list(B04A_FORBIDDEN_CANDIDATE_NAMES)}"
+            )
+        # 4) Parameter cap = 300,000.
+        max_params = int(c["max_parameters"])
+        if max_params > B04A_MAX_PARAMETERS:
+            raise ConfigValidationError(
+                f"candidate {name!r} max_parameters={max_params} exceeds "
+                f"B04A cap of {B04A_MAX_PARAMETERS}"
+            )
+        # 5) Exact parameter count must match the registered count.
+        expected = int(c["exact_parameter_count"])
+        registry_count = int(B04A_EXACT_PARAMETER_COUNTS.get(name, -1))
+        if registry_count < 0:
+            raise ConfigValidationError(
+                f"candidate {name!r} has no entry in B04A_EXACT_PARAMETER_COUNTS; "
+                "the B04A protocol only accepts candidates whose exact "
+                "parameter count was frozen at the implementation stage"
+            )
+        if expected != registry_count:
+            raise ConfigValidationError(
+                f"candidate {name!r} exact_parameter_count={expected} does not "
+                f"match the frozen registry count {registry_count}"
+            )
+        # 6) No duplicate names.
+        if name in candidate_names:
+            raise ConfigValidationError(
+                f"candidate {name!r} listed more than once in config.candidates"
+            )
+        candidate_names.append(name)
+    # 7) The active candidate set MUST be the B04A active set exactly.
+    if set(candidate_names) != set(B04A_ACTIVE_CANDIDATE_NAMES):
+        missing = sorted(set(B04A_ACTIVE_CANDIDATE_NAMES) - set(candidate_names))
+        extra = sorted(set(candidate_names) - set(B04A_ACTIVE_CANDIDATE_NAMES))
+        raise ConfigValidationError(
+            "config.candidates active set must be exactly the B04A "
+            f"active set {list(B04A_ACTIVE_CANDIDATE_NAMES)}; "
+            f"missing={missing}, extra={extra}"
+        )
+    if len(candidate_names) != len(B04A_ACTIVE_CANDIDATE_NAMES):
+        raise ConfigValidationError(
+            f"config.candidates has {len(candidate_names)} active entries "
+            f"but the B04A active set has {len(B04A_ACTIVE_CANDIDATE_NAMES)}"
+        )
+
+    # ----- training -----
+    training = cfg["training"]
+    _expect_keys("config.training", training, _REQUIRED_B04A_TRAINING_KEYS)
+    seeds = training["seeds"]
+    if not isinstance(seeds, list) or tuple(seeds) != B04A_SEEDS:
+        raise ConfigValidationError(
+            f"config.training.seeds must be exactly {list(B04A_SEEDS)}; "
+            f"got {seeds!r}"
+        )
+    if str(training["device"]) != "cuda":
+        raise ConfigValidationError(
+            f"config.training.device must be 'cuda' for the B04A frozen "
+            f"protocol; got {training['device']!r}"
+        )
+    if int(training["batch_size"]) != 16:
+        raise ConfigValidationError(
+            f"config.training.batch_size must be 16; got {training['batch_size']}"
+        )
+    if int(training["max_epochs"]) != 30:
+        raise ConfigValidationError(
+            f"config.training.max_epochs must be 30; got {training['max_epochs']}"
+        )
+    if int(training["min_epochs"]) != 5:
+        raise ConfigValidationError(
+            f"config.training.min_epochs must be 5; got {training['min_epochs']}"
+        )
+    early = training["early_stopping"]
+    if str(early["monitor"]) != "val_loss":
+        raise ConfigValidationError(
+            f"config.training.early_stopping.monitor must be 'val_loss'; got "
+            f"{early['monitor']!r}"
+        )
+    if str(early["mode"]) != "min":
+        raise ConfigValidationError(
+            f"config.training.early_stopping.mode must be 'min'; got "
+            f"{early['mode']!r}"
+        )
+    if int(early["patience"]) != 4:
+        raise ConfigValidationError(
+            f"config.training.early_stopping.patience must be 4; got "
+            f"{early['patience']}"
+        )
+    if float(early["min_delta"]) != 0.0:
+        raise ConfigValidationError(
+            f"config.training.early_stopping.min_delta must be 0.0; got "
+            f"{early['min_delta']}"
+        )
+    if str(training["optimizer"]) != "AdamW":
+        raise ConfigValidationError(
+            f"config.training.optimizer must be 'AdamW'; got "
+            f"{training['optimizer']!r}"
+        )
+    if float(training["lr"]) != 0.001:
+        raise ConfigValidationError(
+            f"config.training.lr must be 0.001; got {training['lr']}"
+        )
+    if float(training["weight_decay"]) != 0.0001:
+        raise ConfigValidationError(
+            f"config.training.weight_decay must be 0.0001; got "
+            f"{training['weight_decay']}"
+        )
+    if int(training["num_workers"]) != 0:
+        raise ConfigValidationError(
+            f"config.training.num_workers must be 0; got {training['num_workers']}"
+        )
+    aug_per_candidate = training["augmentation_policy_per_candidate"]
+    if not isinstance(aug_per_candidate, dict):
+        raise ConfigValidationError(
+            "config.training.augmentation_policy_per_candidate must be a "
+            "mapping {candidate_name: 'none'}"
+        )
+    for cand_name in B04A_ACTIVE_CANDIDATE_NAMES:
+        if aug_per_candidate.get(cand_name) != "none":
+            raise ConfigValidationError(
+                f"config.training.augmentation_policy_per_candidate."
+                f"{cand_name!r} must be 'none'; got {aug_per_candidate.get(cand_name)!r}"
+            )
+
+    # ----- dataset -----
+    dataset = cfg["dataset"]
+    _expect_keys("config.dataset", dataset, _REQUIRED_B04A_DATASET_KEYS)
+    if tuple(dataset["image_shape"]) != INPUT_SHAPE:
+        raise ConfigValidationError(
+            f"config.dataset.image_shape must be {list(INPUT_SHAPE)!r}; "
+            f"got {dataset['image_shape']!r}"
+        )
+    if int(dataset["n_classes"]) != N_CLASSES:
+        raise ConfigValidationError(
+            f"config.dataset.n_classes must be {N_CLASSES}; got "
+            f"{dataset['n_classes']}"
+        )
+
+    # ----- metrics -----
+    metrics_cfg = cfg["metrics"]
+    primary = metrics_cfg.get("primary_metrics", {})
+    fixed_fg = primary.get("fixed_foreground_class_ids")
+    if list(fixed_fg) != list(FOREGROUND_CLASS_IDS):
+        raise ConfigValidationError(
+            f"config.metrics.primary_metrics.fixed_foreground_class_ids "
+            f"must be {list(FOREGROUND_CLASS_IDS)!r}; got {fixed_fg!r}"
+        )
+    if bool(primary.get("background_included_in_macro_average", True)):
+        raise ConfigValidationError(
+            "config.metrics.primary_metrics."
+            "background_included_in_macro_average must be false; "
+            "B04A reports background separately, not in the macro"
+        )
+
+    # ----- resource budget -----
+    rb = cfg["resource_budget"]
+    if int(rb["per_candidate_wall_minutes"]) != 45:
+        raise ConfigValidationError(
+            f"config.resource_budget.per_candidate_wall_minutes must be 45; "
+            f"got {rb['per_candidate_wall_minutes']}"
+        )
+    if int(rb["total_wall_minutes"]) != 135:
+        raise ConfigValidationError(
+            f"config.resource_budget.total_wall_minutes must be 135; "
+            f"got {rb['total_wall_minutes']}"
+        )
+    if int(rb["max_peak_cuda_mb"]) != 8192:
+        raise ConfigValidationError(
+            f"config.resource_budget.max_peak_cuda_mb must be 8192; got "
+            f"{rb['max_peak_cuda_mb']}"
+        )
+
+    # ----- feasibility gate -----
+    fg = cfg["feasibility_gate"]
+    threshold = float(fg.get("effective_threshold", -1))
+    if not math.isclose(threshold, B04A_FEASIBILITY_THRESHOLD, rel_tol=0, abs_tol=0):
+        raise ConfigValidationError(
+            f"config.feasibility_gate.effective_threshold must be "
+            f"{B04A_FEASIBILITY_THRESHOLD}; got {threshold}"
+        )
+    if not bool(fg.get("all_seeds_must_succeed", False)):
+        raise ConfigValidationError(
+            "config.feasibility_gate.all_seeds_must_succeed must be true for "
+            "the B04A protocol; a candidate may not pass on partial-seed mean"
+        )
+
+    # ----- expected split counts / subjects (same as B04 freeze contract) -----
+    expected_split = cfg.get("expected_split_counts", {})
+    if int(expected_split.get("train", -1)) != 3645:
+        raise ConfigValidationError(
+            "config.expected_split_counts.train must be 3645; got "
+            f"{expected_split.get('train')!r}"
+        )
+    if int(expected_split.get("val", -1)) != 450:
+        raise ConfigValidationError(
+            "config.expected_split_counts.val must be 450; got "
+            f"{expected_split.get('val')!r}"
+        )
+    if int(expected_split.get("test", -1)) != 0:
+        raise ConfigValidationError(
+            "config.expected_split_counts.test must be 0; got "
+            f"{expected_split.get('test')!r}"
+        )
+
+    expected_subjects = cfg.get("expected_subjects", {})
+    if int(expected_subjects.get("train", -1)) != 81:
+        raise ConfigValidationError(
+            "config.expected_subjects.train must be 81; got "
+            f"{expected_subjects.get('train')!r}"
+        )
+    if int(expected_subjects.get("val", -1)) != 10:
+        raise ConfigValidationError(
+            "config.expected_subjects.val must be 10; got "
+            f"{expected_subjects.get('val')!r}"
+        )
+    if int(expected_subjects.get("test", -1)) != 0:
+        raise ConfigValidationError(
+            "config.expected_subjects.test must be 0; got "
+            f"{expected_subjects.get('test')!r}"
+        )
+
+    # ----- lifecycle (DONE/FAILED/STOPPED + mutually exclusive files) -----
+    lifecycle = cfg.get("lifecycle", {})
+    if sorted(lifecycle.get("valid_terminal_states", [])) != sorted(
+        ["DONE", "FAILED", "STOPPED"]
+    ):
+        raise ConfigValidationError(
+            "config.lifecycle.valid_terminal_states must be "
+            "['DONE', 'FAILED', 'STOPPED']"
+        )
+    if sorted(lifecycle.get("exclusive_terminal_files", [])) != sorted(
+        ["DONE.json", "FAILED.json", "STOPPED.json"]
+    ):
+        raise ConfigValidationError(
+            "config.lifecycle.exclusive_terminal_files must be "
+            "['DONE.json', 'FAILED.json', 'STOPPED.json']"
+        )
+
+    # ----- TEST=0 (top-level + dataset) -----
+    tap = cfg.get("test_access_policy", {})
+    if bool(tap.get("this_run_loads_test", True)):
+        raise ConfigValidationError(
+            "config.test_access_policy.this_run_loads_test must be false; "
+            "B04A refuses to load TEST rows/labels in the runner integration"
+        )
+    if str(tap.get("test_access_in_this_run", "granted")) != "denied":
+        raise ConfigValidationError(
+            "config.test_access_policy.test_access_in_this_run must be "
+            "'denied' for the B04A protocol"
+        )
+    ds_tap = dataset.get("test_access_policy", {})
+    if bool(ds_tap.get("load_test_in_mini", True)):
+        raise ConfigValidationError(
+            "config.dataset.test_access_policy.load_test_in_mini must be false; "
+            "B04A refuses to load TEST rows/labels in the runner integration"
+        )
+    if str(ds_tap.get("test_access_in_mini", "granted")) != "denied":
+        raise ConfigValidationError(
+            "config.dataset.test_access_policy.test_access_in_mini must be "
+            "'denied' for the B04A protocol"
+        )
+
+
 def build_mini_config(
     cfg: Mapping[str, Any],
     *,
@@ -664,19 +1280,57 @@ def build_mini_config(
     data_root: str | None,
     config_path: str | None = None,
 ) -> MiniConfig:
-    """Build a :class:`MiniConfig` from a validated JSON config."""
+    """Build a :class:`MiniConfig` from a validated JSON config.
+
+    The build is dispatched by ``config_version`` (mirrors
+    :func:`validate_mini_config`).  B04 and B04A share the same
+    :class:`MiniConfig` shape but differ in their ``protocol``,
+    ``seeds``, and a few protocol-specific defaults.
+    """
+
+    protocol = _protocol_of_config(cfg)
+    if protocol == B04_PROTOCOL_NAME:
+        return _build_b04_mini_config(
+            cfg,
+            b01_freeze_dir=b01_freeze_dir,
+            data_root=data_root,
+            config_path=config_path,
+        )
+    if protocol == B04A_PROTOCOL_NAME:
+        return _build_b04a_mini_config(
+            cfg,
+            b01_freeze_dir=b01_freeze_dir,
+            data_root=data_root,
+            config_path=config_path,
+        )
+    raise ConfigValidationError(
+        f"unsupported protocol {protocol!r}; refusing to build MiniConfig"
+    )
+
+
+def _build_b04_mini_config(
+    cfg: Mapping[str, Any],
+    *,
+    b01_freeze_dir: str | None,
+    data_root: str | None,
+    config_path: str | None = None,
+) -> MiniConfig:
+    """Build the B04 protocol :class:`MiniConfig` (frozen)."""
 
     training = cfg["training"]
     early = training["early_stopping"]
     rb = cfg["resource_budget"]
     expected_split = cfg.get("expected_split_counts", {})
     expected_subjects = cfg.get("expected_subjects", {})
+    seed = int(training["seed"])
     return MiniConfig(
+        protocol=B04_PROTOCOL_NAME,
         task_id=str(cfg["task_id"]),
         config_version=str(cfg["config_version"]),
         config_path=str(config_path) if config_path else "",
         candidates=tuple(str(c["name"]) for c in cfg["candidates"]),
-        seed=int(training["seed"]),
+        seed=seed,
+        seeds=(seed,),
         device=str(training["device"]),
         batch_size=int(training["batch_size"]),
         max_epochs=int(training["max_epochs"]),
@@ -705,6 +1359,82 @@ def build_mini_config(
         image_shape=tuple(int(v) for v in cfg["dataset"]["image_shape"]),
         max_parameters=int(B04_MAX_PARAMETERS),
         val_feasibility_threshold=float(cfg["feasibility_gate"]["b02_reference_val_fixed_iou"]),
+        expected_train_count=int(expected_split.get("train", 3645)),
+        expected_val_count=int(expected_split.get("val", 450)),
+        expected_test_count=int(expected_split.get("test", 0)),
+        expected_train_subjects=int(expected_subjects.get("train", 81)),
+        expected_val_subjects=int(expected_subjects.get("val", 10)),
+        expected_test_subjects=int(expected_subjects.get("test", 0)),
+        expected_provenance=str(
+            cfg.get("expected_provenance", "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED")
+        ),
+        expected_source_review_status=str(
+            cfg.get("expected_source_review_status", "NOT_REVIEWED")
+        ),
+        expected_setting=str(cfg.get("expected_setting", "danaLab")),
+        expected_cover=str(cfg.get("expected_cover", "uncover")),
+    )
+
+
+def _build_b04a_mini_config(
+    cfg: Mapping[str, Any],
+    *,
+    b01_freeze_dir: str | None,
+    data_root: str | None,
+    config_path: str | None = None,
+) -> MiniConfig:
+    """Build the B04A protocol :class:`MiniConfig` from the validated JSON."""
+
+    training = cfg["training"]
+    early = training["early_stopping"]
+    rb = cfg["resource_budget"]
+    expected_split = cfg.get("expected_split_counts", {})
+    expected_subjects = cfg.get("expected_subjects", {})
+    seeds = tuple(int(s) for s in training["seeds"])
+    if seeds != B04A_SEEDS:
+        raise ConfigValidationError(
+            f"build_b04a_mini_config: seeds {seeds!r} != B04A_SEEDS {B04A_SEEDS!r}"
+        )
+    return MiniConfig(
+        protocol=B04A_PROTOCOL_NAME,
+        task_id=str(cfg["task_id"]),
+        config_version=str(cfg["config_version"]),
+        config_path=str(config_path) if config_path else "",
+        candidates=tuple(
+        str(c["name"])
+        for c in cfg["candidates"]
+        if str(c.get("role", "active")).upper() != "DEFERRED"
+    ),
+        seed=seeds[0],
+        seeds=seeds,
+        device=str(training["device"]),
+        batch_size=int(training["batch_size"]),
+        max_epochs=int(training["max_epochs"]),
+        min_epochs=int(training["min_epochs"]),
+        early_stopping_monitor=str(early["monitor"]),
+        early_stopping_mode=str(early["mode"]),
+        early_stopping_patience=int(early["patience"]),
+        early_stopping_min_delta=float(early["min_delta"]),
+        optimizer=str(training["optimizer"]),
+        lr=float(training["lr"]),
+        weight_decay=float(training["weight_decay"]),
+        num_workers=int(training["num_workers"]),
+        resource_budget={
+            "max_wall_minutes_per_candidate": int(rb["per_candidate_wall_minutes"]),
+            "max_total_wall_minutes": int(rb["total_wall_minutes"]),
+            "max_peak_cuda_mb": int(rb["max_peak_cuda_mb"]),
+            "candidates_serial": bool(rb.get("candidates_serial", True)),
+        },
+        data_root=str(data_root) if data_root else "",
+        b01_freeze_dir=str(b01_freeze_dir) if b01_freeze_dir else "",
+        b01_a06_split_sha256_expected=str(cfg["b01_a06_split_sha256_expected"]),
+        provenance=str(cfg["provenance"]),
+        raw_semantics=str(cfg["raw_semantics"]),
+        source_review_status=str(cfg["source_review_status"]),
+        n_classes=int(cfg["dataset"]["n_classes"]),
+        image_shape=tuple(int(v) for v in cfg["dataset"]["image_shape"]),
+        max_parameters=int(B04A_MAX_PARAMETERS),
+        val_feasibility_threshold=float(B04A_FEASIBILITY_THRESHOLD),
         expected_train_count=int(expected_split.get("train", 3645)),
         expected_val_count=int(expected_split.get("val", 450)),
         expected_test_count=int(expected_split.get("test", 0)),
@@ -1670,8 +2400,10 @@ def run_one_candidate(
     input_manifest_hashes: Mapping[str, Any],
     deterministic: DeterminismSettings,
     resume_from: Path | None = None,
+    seed: int | None = None,
+    checkpoint_dir: Path | None = None,
 ) -> CandidateResult:
-    """Train one B04 candidate end-to-end and write its outputs.
+    """Train one candidate end-to-end and write its outputs.
 
     The runner always writes ``checkpoints/<candidate>/last.pt`` after
     each epoch and overwrites ``checkpoints/<candidate>/best.pt`` only
@@ -1688,9 +2420,19 @@ def run_one_candidate(
     history, then resumes from the next epoch.  The saved
     :class:`CheckpointIdentity` is compared against the requested
     identity; any mismatch raises :class:`ResumeIdentityError`.
+
+    The ``seed`` keyword argument overrides the ``config.seed`` default.
+    It is used by the B04A orchestrator to run the same candidate with
+    each of the three registered seeds in turn.
+
+    The ``checkpoint_dir`` keyword argument overrides the default
+    ``<output_dir>/checkpoints/<candidate>`` location.  The B04A
+    orchestrator passes ``<output_dir>/checkpoints/<candidate>/seed_<seed>``
+    so each seed run gets its own subdirectory.
     """
 
-    apply_settings(config.seed, cpu_threads=deterministic.cpu_threads)
+    effective_seed = int(seed) if seed is not None else int(config.seed)
+    apply_settings(effective_seed, cpu_threads=deterministic.cpu_threads)
 
     # ------------------------------------------------------------------
     # Refuse to resume a closed (DONE) experiment.
@@ -1734,7 +2476,9 @@ def run_one_candidate(
 
     initial_state = _clone_state_dict_to_cpu(model)
 
-    checkpoint_dir = output_dir / "checkpoints" / candidate_name
+    if checkpoint_dir is None:
+        checkpoint_dir = output_dir / "checkpoints" / candidate_name
+    checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     last_path = checkpoint_dir / "last.pt"
     best_path = checkpoint_dir / "best.pt"
@@ -1913,7 +2657,7 @@ def run_one_candidate(
             model=model,
             optimizer=optimizer,
             epoch=epoch,
-            seed=config.seed,
+            seed=effective_seed,
             model_config=model_config,
             class_weight_summary=class_weight_result.as_dict(),
             metrics={
@@ -2377,6 +3121,21 @@ def run_mini(
 ) -> MiniRunResult:
     """Run the B04 Mini end-to-end across all frozen candidates.
 
+    Protocol contract: this function is the B04 single-seed
+    orchestrator.  It accepts only ``config.protocol == "B04"`` and
+    fail-closes on a B04A config.  The B04A orchestrator is
+    :func:`run_mini_b04a`; the CLI dispatch in
+    :mod:`scripts.run_slp8_region_mini` routes B04A configs to
+    that function based on ``config.protocol``.
+    """
+    if getattr(config, "protocol", None) != B04_PROTOCOL_NAME:
+        raise MiniProtocolError(
+            f"run_mini requires protocol {B04_PROTOCOL_NAME!r}; "
+            f"got config.protocol={getattr(config, 'protocol', None)!r}.  "
+            "Use run_mini_b04a for the B04A protocol."
+        )
+    """Run the B04 Mini end-to-end across all frozen candidates.
+
     The orchestrator wires the resource budget, the checkpoint
     identity, the determinism settings, and the (optional) per-
     candidate resume path into the per-candidate runner.  After every
@@ -2540,6 +3299,1514 @@ def run_mini(
         resource_budget=budget,
         b01_contract_report=b01_contract_report,
     )
+
+
+# ---------------------------------------------------------------------------
+# B04A protocol orchestrator (multi-seed, all_seeds_must_succeed)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class B04ACandidateAggregate:
+    """Aggregated result for one B04A candidate across all three seeds.
+
+    The B04A protocol runs each of the three registered seeds for the
+    same candidate and combines the per-seed results.  The
+    ``macro_iou_mean`` is only computed when **all** registered seeds
+    pass every hard fail-closed gate (per-seed FAILED, STOPPED,
+    non-finite, class collapse, worst-subject floor, per-region floor).
+    It is forbidden to compute ``macro_iou_mean`` over only the
+    surviving seeds.
+    """
+
+    candidate: str
+    model_version: str
+    parameter_count: int
+    seeds: tuple[int, ...]
+    per_seed: dict[int, CandidateResult]
+    n_seeds_total: int
+    n_seeds_feasible: int
+    n_seeds_infeasible: int
+    n_seeds_failed: int
+    n_seeds_stopped: int
+    feasibility: str  # "FEASIBLE" | "INFEASIBLE" | "FAILED" | "STOPPED"
+    reason: str
+    macro_iou_mean: float | None
+    worst_subject_iou: float | None
+    per_region_iou: dict[int, float]
+    elapsed_seconds_total: float
+    budget_status: str  # "ok" | per-candidate wall / total wall / cuda peak
+    n_test_samples: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "candidate": self.candidate,
+            "model_version": self.model_version,
+            "parameter_count": int(self.parameter_count),
+            "seeds": list(self.seeds),
+            "n_seeds_total": int(self.n_seeds_total),
+            "n_seeds_feasible": int(self.n_seeds_feasible),
+            "n_seeds_infeasible": int(self.n_seeds_infeasible),
+            "n_seeds_failed": int(self.n_seeds_failed),
+            "n_seeds_stopped": int(self.n_seeds_stopped),
+            "feasibility": self.feasibility,
+            "reason": self.reason,
+            "macro_iou_mean": (
+                float(self.macro_iou_mean) if self.macro_iou_mean is not None else None
+            ),
+            "worst_subject_iou": (
+                float(self.worst_subject_iou)
+                if self.worst_subject_iou is not None else None
+            ),
+            "per_region_iou": {int(k): float(v) for k, v in self.per_region_iou.items()},
+            "elapsed_seconds_total": float(self.elapsed_seconds_total),
+            "budget_status": str(self.budget_status),
+            "n_test_samples": int(self.n_test_samples),
+        }
+
+
+@dataclass
+class B04ARunResult:
+    """The B04A orchestrator's return value.
+
+    A separate result type is used so the B04A candidate-level
+    semantics (0/1/2 feasible + near-tie tiebreak + all_seeds_must_succeed)
+    do not pollute the B04 ``MiniRunResult`` contract.  The two
+    result types share the same ``terminal_state`` set
+    (``DONE``/``FAILED``/``STOPPED``) so the CLI can use a single
+    status-file writer.
+    """
+
+    config: MiniConfig
+    dataset_manifest: dict[str, Any]
+    environment: dict[str, Any]
+    class_weight_result: ClassWeightResult
+    candidate_results: dict[str, B04ACandidateAggregate]
+    n_candidates_feasible: int
+    n_candidates_not_feasible: int
+    n_candidates_failed: int
+    n_candidates_stopped: int
+    overall_decision: str
+    advanced: tuple[str, ...]
+    near_tie_applied: bool
+    near_tie_margin: float
+    advance_decision: B04AAdvanceDecision
+    terminal_state: str
+    started_at_utc: str
+    ended_at_utc: str
+    wall_clock_seconds: float
+    input_hashes: dict[str, Any]
+    train_class_stats_source: str
+    synthetic: bool
+    determinism: DeterminismSettings
+    resource_budget: ResourceBudget
+    b01_contract_report: dict[str, Any] | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.config.task_id,
+            "config_version": self.config.config_version,
+            "protocol": self.config.protocol,
+            "seeds": list(self.config.seeds),
+            "n_candidates_feasible": int(self.n_candidates_feasible),
+            "n_candidates_not_feasible": int(self.n_candidates_not_feasible),
+            "n_candidates_failed": int(self.n_candidates_failed),
+            "n_candidates_stopped": int(self.n_candidates_stopped),
+            "overall_decision": self.overall_decision,
+            "advanced": list(self.advanced),
+            "near_tie_applied": bool(self.near_tie_applied),
+            "near_tie_margin": float(self.near_tie_margin),
+            "advance_decision": self.advance_decision.as_dict(),
+            "terminal_state": self.terminal_state,
+            "started_at_utc": self.started_at_utc,
+            "ended_at_utc": self.ended_at_utc,
+            "wall_clock_seconds": float(self.wall_clock_seconds),
+            "environment": self.environment,
+            "input_hashes": self.input_hashes,
+            "train_class_stats_source": self.train_class_stats_source,
+            "synthetic": bool(self.synthetic),
+            "determinism": self.determinism.as_dict(),
+            "resource_budget": self.resource_budget.as_dict(),
+            "b01_contract_report": self.b01_contract_report,
+        }
+
+
+# B04A hard gates (frozen; mirrors the B04A protocol guards).
+B04A_WORST_SUBJECT_FLOOR: float = 0.20
+B04A_PER_REGION_FLOOR: float = 0.05
+
+
+def _b04a_seed_class_collapse(cand: CandidateResult) -> bool:
+    """Return True if the candidate's predictions have a class collapse.
+
+    Class collapse: any foreground class ID (1..8) has zero predicted
+    pixels in the candidate's VAL predictions.  This is a per-seed
+    fail-closed gate; the B04A protocol applies it to each seed of
+    each candidate.
+    """
+
+    if not cand.val_predictions:
+        return True
+    for cid in FOREGROUND_CLASS_IDS:
+        total = 0
+        for arr in cand.val_predictions:
+            if arr is None:
+                continue
+            total += int((arr == cid).sum())
+        if total == 0:
+            return True
+    return False
+
+
+def _b04a_worst_subject_pass(cand: CandidateResult) -> tuple[bool, float | None]:
+    """Return (pass, worst_subject_iou) for the worst-subject floor."""
+
+    if cand.metrics is None or cand.metrics.worst_subject is None:
+        return False, None
+    worst = cand.metrics.worst_subject
+    iou = worst.get("fixed_foreground_macro_iou")
+    if iou is None or not math.isfinite(float(iou)):
+        return False, None
+    return float(iou) >= B04A_WORST_SUBJECT_FLOOR, float(iou)
+
+
+def _b04a_per_region_pass(
+    cand: CandidateResult,
+) -> tuple[bool, dict[int, float]]:
+    """Return (pass, per_region_iou) for the per-region floor."""
+
+    if cand.metrics is None:
+        return False, {}
+    per_region_iou: dict[int, float] = {}
+    for row in cand.metrics.per_region:
+        cid = int(row.get("class_id", -1))
+        iou = float(row.get("iou", 0.0))
+        if cid in FOREGROUND_CLASS_IDS:
+            per_region_iou[cid] = iou
+    if not per_region_iou:
+        return False, per_region_iou
+    min_iou = min(per_region_iou.values())
+    return min_iou >= B04A_PER_REGION_FLOOR, per_region_iou
+
+
+def _b04a_aggregate_candidate(
+    candidate_name: str,
+    per_seed: dict[int, CandidateResult],
+    seeds: tuple[int, ...],
+) -> B04ACandidateAggregate:
+    """Aggregate per-seed ``CandidateResult``s into a candidate decision.
+
+    Enforces ``all_seeds_must_succeed``: any per-seed FAILED, STOPPED,
+    non-finite metric, class collapse, or floor violation flips the
+    entire candidate to INFEASIBLE.  The macro_iou_mean is only
+    computed when all registered seeds pass all hard gates.
+    """
+
+    builder = get_model_builder(candidate_name)
+    param_count = int(B04A_EXACT_PARAMETER_COUNTS.get(candidate_name, 0))
+    n_total = len(seeds)
+    n_feasible = 0
+    n_infeasible = 0
+    n_failed = 0
+    n_stopped = 0
+    seed_macro_ious: list[float] = []
+    worst_subject_ious: list[float] = []
+    per_region_min_by_class: dict[int, float] = {}
+    elapsed_total = 0.0
+    budget_status = "ok"
+    feasibility = "FEASIBLE"
+    reason = "all_seeds_succeeded"
+    worst_subject_iou_value: float | None = None
+    per_region_iou_value: dict[int, float] = {}
+
+    for s_idx, seed in enumerate(seeds):
+        cand = per_seed.get(seed)
+        if cand is None:
+            n_failed += 1
+            feasibility = "INFEASIBLE"
+            reason = f"seed={seed} did not produce a CandidateResult; failing all_seeds_must_succeed"
+            break
+        elapsed_total += float(cand.elapsed_seconds)
+        if cand.budget_status and cand.budget_status != "ok":
+            budget_status = cand.budget_status
+        if cand.feasibility == "FAILED":
+            n_failed += 1
+            feasibility = "INFEASIBLE"
+            reason = (
+                f"seed={seed} FAILED; "
+                f"all_seeds_must_succeed=true; "
+                f"per-seed reason={cand.reason}"
+            )
+            break
+        if cand.feasibility == "STOPPED":
+            n_stopped += 1
+            feasibility = "INFEASIBLE"
+            reason = (
+                f"seed={seed} STOPPED; "
+                f"all_seeds_must_succeed=true; "
+                f"per-seed reason={cand.reason}"
+            )
+            break
+        if cand.metrics is None:
+            n_failed += 1
+            feasibility = "INFEASIBLE"
+            reason = (
+                f"seed={seed} has no metrics; "
+                f"all_seeds_must_succeed=true"
+            )
+            break
+        if not math.isfinite(cand.metrics.fixed_foreground_macro_iou):
+            n_failed += 1
+            feasibility = "INFEASIBLE"
+            reason = (
+                f"seed={seed} non-finite macro IoU; "
+                f"all_seeds_must_succeed=true"
+            )
+            break
+        # Class collapse (per-seed hard gate)
+        if _b04a_seed_class_collapse(cand):
+            n_infeasible += 1
+            feasibility = "INFEASIBLE"
+            reason = (
+                f"seed={seed} class collapse (zero predicted pixels for "
+                "at least one foreground class); all_seeds_must_succeed=true"
+            )
+            break
+        # Worst-subject floor
+        ws_pass, ws_iou = _b04a_worst_subject_pass(cand)
+        if not ws_pass:
+            n_infeasible += 1
+            feasibility = "INFEASIBLE"
+            reason = (
+                f"seed={seed} worst-subject IoU {ws_iou} < floor "
+                f"{B04A_WORST_SUBJECT_FLOOR}; all_seeds_must_succeed=true"
+            )
+            break
+        # Per-region floor
+        pr_pass, pr_iou = _b04a_per_region_pass(cand)
+        if not pr_pass:
+            n_infeasible += 1
+            feasibility = "INFEASIBLE"
+            reason = (
+                f"seed={seed} per-region IoU below floor "
+                f"{B04A_PER_REGION_FLOOR}; all_seeds_must_succeed=true"
+            )
+            break
+        # Seed passes
+        n_feasible += 1
+        seed_macro_ious.append(float(cand.metrics.fixed_foreground_macro_iou))
+        if ws_iou is not None:
+            worst_subject_ious.append(ws_iou)
+        for cid, iou in pr_iou.items():
+            per_region_min_by_class[cid] = min(
+                per_region_min_by_class.get(cid, float("inf")), float(iou)
+            )
+        # Track the last worst_subject and per_region snapshots for the
+        # aggregated record (these are useful for the audit trail; the
+        # strict comparison above is the binding contract).
+        worst_subject_iou_value = ws_iou
+        per_region_iou_value = pr_iou
+        if s_idx == n_total - 1:
+            # Reached the last seed; no failure so far.
+            reason = (
+                f"all {n_total} registered seeds passed all hard gates; "
+                f"macro_iou_mean is the arithmetic mean of the 3 seeds"
+            )
+
+    if feasibility == "FEASIBLE":
+        # macro_iou_mean is the mean of the 3 seeds (only when all passed).
+        if len(seed_macro_ious) == n_total and n_total > 0:
+            macro_iou_mean = float(sum(seed_macro_ious) / float(n_total))
+        else:
+            macro_iou_mean = None
+        feasibility = "FEASIBLE"
+    else:
+        macro_iou_mean = None
+        n_infeasible = max(n_infeasible, n_total - n_feasible)
+        # Sanity bookkeeping: a candidate that was FAILED/STOPPED at the
+        # per-seed level is reported as INFEASIBLE at the candidate
+        # level; the n_failed/n_stopped counts track which per-seed
+        # outcome triggered the failure.
+
+    return B04ACandidateAggregate(
+        candidate=candidate_name,
+        model_version=builder.version,
+        parameter_count=param_count,
+        seeds=seeds,
+        per_seed=per_seed,
+        n_seeds_total=n_total,
+        n_seeds_feasible=n_feasible,
+        n_seeds_infeasible=n_infeasible,
+        n_seeds_failed=n_failed,
+        n_seeds_stopped=n_stopped,
+        feasibility=feasibility,
+        reason=reason,
+        macro_iou_mean=macro_iou_mean,
+        worst_subject_iou=worst_subject_iou_value,
+        per_region_iou=per_region_iou_value,
+        elapsed_seconds_total=elapsed_total,
+        budget_status=budget_status,
+        n_test_samples=0,
+    )
+
+
+@dataclass
+class B04AAdvanceTiebreak:
+    """Audit-trail record of a single near-tie boundary in B04A advance.
+
+    Frozen-contract fields (each is reported in the run-level
+    ``candidate_decision.json`` so a Reviewer can reconstruct the
+    decision):
+
+    * ``pair`` -- the two candidate names that were compared, in
+      pre-tiebreak order ``(higher_macro_iou, lower_macro_iou)``.
+    * ``macro_iou_difference`` -- absolute difference of
+      ``macro_iou_mean`` between the two candidates.
+    * ``parameter_difference_ratio`` -- ``|p1 - p2| / min(p1, p2)``.
+      When both parameter counts are equal the value is 0.0.
+    * ``tiebreak_basis`` -- one of:
+        - ``"none"``: the pair was outside the near-tie margin
+          (``|Δiou| >= B04A_NEAR_TIE_MARGIN``) and the higher
+          ``macro_iou_mean`` candidate was kept unchanged;
+        - ``"parameter_count"``: parameter diff > 10%; the
+          candidate with fewer parameters was kept;
+        - ``"worst_subject_iou"``: parameter diff <= 10%; the
+          candidate with the higher ``worst_subject_iou`` was
+          kept; when both ties on this metric, the lower
+          parameter count wins (and the basis becomes
+          ``"worst_subject_iou_then_param"``);
+        - ``"failed_no_worst_subject"``: a near-tie was detected
+          but at least one of the two candidates has no
+          usable ``worst_subject_iou``; the decision failed
+          closed (the candidate is dropped, the error is
+          recorded, and the run's terminal state becomes
+          ``FAILED``).
+    * ``selected`` -- the candidate kept at this boundary
+      (``None`` when ``tiebreak_basis == "failed_no_worst_subject"``).
+    * ``rejected`` -- the candidate dropped at this boundary.
+    """
+
+    pair: tuple[str, str]
+    macro_iou_difference: float
+    parameter_difference_ratio: float
+    tiebreak_basis: str
+    selected: str | None
+    rejected: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "pair": [str(self.pair[0]), str(self.pair[1])],
+            "macro_iou_difference": float(self.macro_iou_difference),
+            "parameter_difference_ratio": float(
+                self.parameter_difference_ratio
+            ),
+            "tiebreak_basis": str(self.tiebreak_basis),
+            "selected": (
+                str(self.selected) if self.selected is not None else None
+            ),
+            "rejected": (
+                str(self.rejected) if self.rejected is not None else None
+            ),
+        }
+
+
+@dataclass
+class B04AAdvanceDecision:
+    """The full 3-feasible advance decision for B04A.
+
+    The output is what the B04A orchestrator puts in the
+    run-level ``candidate_decision.json`` and what the
+    ``B04ARunResult.advanced`` tuple reflects.
+    """
+
+    advanced: tuple[str, ...]
+    near_tie_applied: bool
+    near_tie_margin: float
+    tiebreaks: list[B04AAdvanceTiebreak]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "advanced": list(self.advanced),
+            "near_tie_applied": bool(self.near_tie_applied),
+            "near_tie_margin": float(self.near_tie_margin),
+            "tiebreaks": [tb.as_dict() for tb in self.tiebreaks],
+        }
+
+
+# B04A near-tie parameter-count differential threshold.  When the
+# relative parameter-count difference between two candidates is
+# above this margin (10%), the tiebreak prefers the simpler (lower
+# parameter count) model.  Below this margin the tiebreak falls
+# through to the worst-subject IoU comparison.
+B04A_NEAR_TIE_PARAM_RATIO: float = 0.10
+
+
+def _b04a_pair_tiebreak(
+    *,
+    higher: tuple[str, "B04ACandidateAggregate"],
+    lower: tuple[str, "B04ACandidateAggregate"],
+) -> B04AAdvanceTiebreak:
+    """Resolve a single Top-2 boundary near-tie.
+
+    Inputs are ``(candidate_name, aggregate)`` pairs in
+    pre-tiebreak order: ``higher`` has the larger
+    ``macro_iou_mean``; ``lower`` has the smaller.  The function
+    MUST be deterministic: identical inputs always produce
+    identical outputs (including the recorded tiebreak_basis).
+
+    Decision rules (frozen B04A R03):
+
+    1. If ``|Δmacro_iou| >= B04A_NEAR_TIE_MARGIN`` the boundary
+       is NOT a near-tie.  ``higher`` is kept unchanged; the
+       returned tiebreak_basis is ``"none"``.
+    2. Otherwise (near-tie), compute the relative parameter-count
+       difference: ``|p_h - p_l| / min(p_h, p_l)``.  When
+       ``ratio > B04A_NEAR_TIE_PARAM_RATIO`` (10%), prefer the
+       candidate with fewer parameters; basis is
+       ``"parameter_count"``.
+    3. When ``ratio <= B04A_NEAR_TIE_PARAM_RATIO``, compare
+       ``worst_subject_iou``: the higher one wins; basis is
+       ``"worst_subject_iou"``.  If both candidates tie on
+       ``worst_subject_iou`` (within 1e-9), the lower parameter
+       count wins and the basis becomes
+       ``"worst_subject_iou_then_param"``.
+    4. If the boundary IS a near-tie and EITHER candidate is
+       missing a usable ``worst_subject_iou`` (None or
+       non-finite), the decision fails closed: basis
+       ``"failed_no_worst_subject"``; both ``selected`` and
+       ``rejected`` are ``None`` to signal the failure to the
+       orchestrator, which records a non-finite advance and
+       promotes the run's terminal state to ``FAILED``.
+    """
+
+    name_h, agg_h = higher
+    name_l, agg_l = lower
+    if agg_h.macro_iou_mean is None or agg_l.macro_iou_mean is None:
+        # The aggregator already rejected a missing macro_iou_mean
+        # in the FEASIBLE branch; this is defensive.
+        return B04AAdvanceTiebreak(
+            pair=(name_h, name_l),
+            macro_iou_difference=0.0,
+            parameter_difference_ratio=0.0,
+            tiebreak_basis="failed_no_worst_subject",
+            selected=None,
+            rejected=None,
+        )
+    diff = float(agg_h.macro_iou_mean - agg_l.macro_iou_mean)
+    p_h = int(agg_h.parameter_count)
+    p_l = int(agg_l.parameter_count)
+    p_min = min(p_h, p_l)
+    p_ratio = (abs(p_h - p_l) / float(p_min)) if p_min > 0 else 0.0
+    if abs(diff) >= B04A_NEAR_TIE_MARGIN:
+        return B04AAdvanceTiebreak(
+            pair=(name_h, name_l),
+            macro_iou_difference=float(abs(diff)),
+            parameter_difference_ratio=float(p_ratio),
+            tiebreak_basis="none",
+            selected=name_h,
+            rejected=name_l,
+        )
+    # Near-tie branch.
+    if p_ratio > B04A_NEAR_TIE_PARAM_RATIO:
+        if p_h <= p_l:
+            return B04AAdvanceTiebreak(
+                pair=(name_h, name_l),
+                macro_iou_difference=float(abs(diff)),
+                parameter_difference_ratio=float(p_ratio),
+                tiebreak_basis="parameter_count",
+                selected=name_h,
+                rejected=name_l,
+            )
+        else:
+            return B04AAdvanceTiebreak(
+                pair=(name_h, name_l),
+                macro_iou_difference=float(abs(diff)),
+                parameter_difference_ratio=float(p_ratio),
+                tiebreak_basis="parameter_count",
+                selected=name_l,
+                rejected=name_h,
+            )
+    # Parameter diff <= 10% -> worst_subject_iou tiebreak.
+    ws_h = agg_h.worst_subject_iou
+    ws_l = agg_l.worst_subject_iou
+    ws_h_ok = ws_h is not None and math.isfinite(float(ws_h))
+    ws_l_ok = ws_l is not None and math.isfinite(float(ws_l))
+    if not (ws_h_ok and ws_l_ok):
+        return B04AAdvanceTiebreak(
+            pair=(name_h, name_l),
+            macro_iou_difference=float(abs(diff)),
+            parameter_difference_ratio=float(p_ratio),
+            tiebreak_basis="failed_no_worst_subject",
+            selected=None,
+            rejected=None,
+        )
+    if abs(float(ws_h) - float(ws_l)) > 1e-9:
+        if float(ws_h) > float(ws_l):
+            return B04AAdvanceTiebreak(
+                pair=(name_h, name_l),
+                macro_iou_difference=float(abs(diff)),
+                parameter_difference_ratio=float(p_ratio),
+                tiebreak_basis="worst_subject_iou",
+                selected=name_h,
+                rejected=name_l,
+            )
+        return B04AAdvanceTiebreak(
+            pair=(name_h, name_l),
+            macro_iou_difference=float(abs(diff)),
+            parameter_difference_ratio=float(p_ratio),
+            tiebreak_basis="worst_subject_iou",
+            selected=name_l,
+            rejected=name_h,
+        )
+    # Both candidates tie on worst_subject_iou within 1e-9; fall
+    # back to lower parameter count.
+    basis = "worst_subject_iou_then_param"
+    if p_h <= p_l:
+        return B04AAdvanceTiebreak(
+            pair=(name_h, name_l),
+            macro_iou_difference=float(abs(diff)),
+            parameter_difference_ratio=float(p_ratio),
+            tiebreak_basis=basis,
+            selected=name_h,
+            rejected=name_l,
+        )
+    return B04AAdvanceTiebreak(
+        pair=(name_h, name_l),
+        macro_iou_difference=float(abs(diff)),
+        parameter_difference_ratio=float(p_ratio),
+        tiebreak_basis=basis,
+        selected=name_l,
+        rejected=name_h,
+    )
+
+
+def _b04a_advance_decision(
+    aggregates: dict[str, B04ACandidateAggregate],
+) -> B04AAdvanceDecision:
+    """Compute the 0/1/2/3-feasible advance decision for B04A.
+
+    Frozen-contract rules (Codex R03 ITERATE clarification):
+
+    * 0 feasible: ``advanced = ()`` (MINI_NOT_FEASIBLE).
+    * 1 feasible: ``advanced = (only_feasible,)``.
+    * 2 feasible: both advance; B04A does not pick a champion.
+    * 3 feasible: top 2 by ``macro_iou_mean`` (descending), with
+      near-tie tiebreaks applied at **two successive boundaries**:
+        1. **(top1, top2) boundary** -- the winner takes the
+           first advanced slot; the loser becomes the
+           "first_loser" and is the higher candidate in the
+           second boundary.
+        2. **(first_loser, top3) boundary** -- the winner takes
+           the second advanced slot.  The 1st-round winner does
+           **not** appear in the second boundary; the second
+           boundary always reuses the rejected candidate from
+           the first round, never the surviving top1/top2.
+      The tiebreak rules are implemented by
+      :func:`_b04a_pair_tiebreak`.
+
+    The first_loser-vs-top3 rule means the second boundary is
+    driven by the first round's outcome, not by the surviving
+    top1/top2.  When the 1st boundary has ``tiebreak_basis="none"``
+    the first_loser is whichever of top1 / top2 has the lower
+    ``macro_iou_mean``; the second boundary then compares that
+    losing candidate with top3.
+
+    The function is deterministic: identical input produces
+    identical ``B04AAdvanceDecision``.  Sorting uses Python's
+    stable sort on ``(macro_iou_mean DESC, name ASC)`` so the
+    final order is independent of the input dict order.
+
+    A near-tie that fails closed (missing or non-finite
+    ``worst_subject_iou``) yields a tiebreak record with
+    ``selected = None`` / ``rejected = None`` and
+    ``tiebreak_basis = "failed_no_worst_subject"``.  The
+    orchestrator inspects these records and promotes the run's
+    terminal state to ``FAILED``.
+    """
+
+    feasible = [
+        (name, agg)
+        for name, agg in aggregates.items()
+        if agg.feasibility == "FEASIBLE" and agg.macro_iou_mean is not None
+    ]
+    if len(feasible) == 0:
+        return B04AAdvanceDecision(
+            advanced=(),
+            near_tie_applied=False,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=[],
+        )
+    if len(feasible) == 1:
+        return B04AAdvanceDecision(
+            advanced=(feasible[0][0],),
+            near_tie_applied=False,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=[],
+        )
+    if len(feasible) == 2:
+        # Both advance; B04A does not pick a champion.  No tiebreak.
+        return B04AAdvanceDecision(
+            advanced=(feasible[0][0], feasible[1][0]),
+            near_tie_applied=False,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=[],
+        )
+    # 3 feasible: stable sort by (macro_iou_mean DESC, name ASC).
+    feasible.sort(
+        key=lambda kv: (-float(kv[1].macro_iou_mean), str(kv[0])),
+    )
+    top1, top2, top3 = feasible[0], feasible[1], feasible[2]
+    tiebreaks: list[B04AAdvanceTiebreak] = []
+    near_tie_applied = False
+    # ------------------------------------------------------------------
+    # 1st boundary: top1 vs top2.
+    # ------------------------------------------------------------------
+    tb12 = _b04a_pair_tiebreak(higher=top1, lower=top2)
+    tiebreaks.append(tb12)
+    if tb12.tiebreak_basis == "failed_no_worst_subject":
+        return B04AAdvanceDecision(
+            advanced=(),
+            near_tie_applied=True,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=tiebreaks,
+        )
+    if tb12.tiebreak_basis != "none":
+        near_tie_applied = True
+    first_winner = tb12.selected
+    first_loser = tb12.rejected
+    if first_winner is None or first_loser is None:
+        return B04AAdvanceDecision(
+            advanced=(),
+            near_tie_applied=True,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=tiebreaks,
+        )
+    # ------------------------------------------------------------------
+    # 2nd boundary: first_loser (the 1st-round REJECTED candidate)
+    # vs top3.  The 1st-round winner does NOT participate in the
+    # 2nd boundary; the rejected candidate is the only one that
+    # can displace top3.
+    # ------------------------------------------------------------------
+    first_loser_pair = next(
+        (kv for kv in feasible if kv[0] == first_loser),
+        None,
+    )
+    if first_loser_pair is None:
+        return B04AAdvanceDecision(
+            advanced=(),
+            near_tie_applied=True,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=tiebreaks,
+        )
+    tb23 = _b04a_pair_tiebreak(
+        higher=first_loser_pair,
+        lower=top3,
+    )
+    tiebreaks.append(tb23)
+    if tb23.tiebreak_basis == "failed_no_worst_subject":
+        return B04AAdvanceDecision(
+            advanced=(),
+            near_tie_applied=True,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=tiebreaks,
+        )
+    if tb23.tiebreak_basis != "none":
+        near_tie_applied = True
+    second_winner = tb23.selected
+    if second_winner is None:
+        return B04AAdvanceDecision(
+            advanced=(),
+            near_tie_applied=True,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=tiebreaks,
+        )
+    # ------------------------------------------------------------------
+    # Materialize the Top-2 set in slot order (1st winner, 2nd winner).
+    # Both must be distinct by construction (the 2nd boundary's higher
+    # candidate is the rejected candidate from the 1st boundary, not
+    # the 1st winner), so no dedup is required.
+    # ------------------------------------------------------------------
+    if first_winner == second_winner:
+        # Defensive: the 2nd boundary is fed the 1st-round REJECTED
+        # candidate, so this can only happen via a contract violation
+        # (e.g. macro_iou_mean collision in the sort).  Treat it as
+        # fail-closed rather than silently duplicating.
+        return B04AAdvanceDecision(
+            advanced=(),
+            near_tie_applied=True,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            tiebreaks=tiebreaks,
+        )
+    return B04AAdvanceDecision(
+        advanced=(first_winner, second_winner),
+        near_tie_applied=bool(near_tie_applied),
+        near_tie_margin=B04A_NEAR_TIE_MARGIN,
+        tiebreaks=tiebreaks,
+    )
+
+
+def run_mini_b04a(
+    *,
+    config: MiniConfig,
+    train_dataset: Dataset,
+    val_dataset: Dataset,
+    dataset_manifest: dict[str, Any],
+    class_weight_result: ClassWeightResult,
+    output_dir: Path,
+    device: torch.device,
+    input_hashes: dict[str, Any],
+    train_class_stats_source: str,
+    synthetic: bool,
+    budget: ResourceBudget | None = None,
+    b01_contract_report: dict[str, Any] | None = None,
+    resume_from_per_candidate_seed: dict[str, dict[int, Path]] | None = None,
+) -> B04ARunResult:
+    """Run the B04A Mini end-to-end across the three registered seeds.
+
+    The orchestrator iterates ``candidates × seeds`` and aggregates the
+    per-seed results into per-candidate decisions.  The
+    ``all_seeds_must_succeed`` rule is enforced inside
+    :func:`_b04a_aggregate_candidate`: any per-seed failure
+    (FAILED, STOPPED, non-finite, class collapse, worst-subject floor
+    violation, per-region floor violation) flips the entire
+    candidate to INFEASIBLE.  ``macro_iou_mean`` is only computed when
+    all three registered seeds pass every hard gate.
+
+    The 0/1/2/3-feasible advance rules are applied by
+    :func:`_b04a_advance_decision`.  The terminal state follows the
+    B04 contract (``FAILED`` > ``STOPPED`` > ``DONE``).
+    """
+
+    if config.protocol != B04A_PROTOCOL_NAME:
+        raise MiniProtocolError(
+            f"run_mini_b04a requires protocol={B04A_PROTOCOL_NAME!r}; "
+            f"got {config.protocol!r}"
+        )
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    assert_class_weight_invariants(class_weight_result)
+
+    # Apply the determinism configuration once for the whole run.
+    determinism = apply_settings(config.seed, cpu_threads=1)
+
+    if budget is None:
+        budget = resource_budget_from_config(
+            {
+                "max_wall_minutes_per_candidate": 45,
+                "max_total_wall_minutes": 135,
+                "max_peak_cuda_mb": 8192,
+            }
+        )
+    budget_state = ResourceBudgetState(budget)
+
+    config_path_str = getattr(config, "config_path", "") or ""
+    if not config_path_str:
+        raise MiniProtocolError(
+            "MiniConfig.config_path is empty; refusing to emit a "
+            "checkpoint with an empty identity SHA.  Build MiniConfig "
+            "via build_mini_config(..., config_path=<absolute path>)."
+        )
+    config_sha = file_sha256(Path(config_path_str))
+
+    candidate_aggregates: dict[str, B04ACandidateAggregate] = {}
+    input_manifest_hashes_for_payload: dict[str, Any] = dict(input_hashes)
+
+    for candidate_name in config.candidates:
+        per_seed: dict[int, CandidateResult] = {}
+        candidate_checkpoints_dir = output_dir / "checkpoints" / candidate_name
+        for seed in config.seeds:
+            seed_dir = candidate_checkpoints_dir / f"seed_{seed:04d}"
+            for name in ("last.pt", "best.pt"):
+                if (seed_dir / name).exists() and (
+                    resume_from_per_candidate_seed is None
+                    or candidate_name not in resume_from_per_candidate_seed
+                    or seed not in resume_from_per_candidate_seed.get(
+                        candidate_name, {}
+                    )
+                ):
+                    raise OutputCollisionError(
+                        f"checkpoint {seed_dir / name} already exists; "
+                        "refusing to overwrite"
+                    )
+            identity = CheckpointIdentity(
+                task_id=config.task_id,
+                candidate=candidate_name,
+                model_version=get_model_builder(candidate_name).version,
+                seed=int(seed),
+                n_classes=int(N_CLASSES),
+                image_shape=tuple(PRESSURE_SHAPE),
+                config_sha256=config_sha,
+                a06_split_sha256=str(config.b01_a06_split_sha256_expected),
+                freeze_manifest_sha256=str(
+                    input_hashes.get("freeze_manifest_sha256", "")
+                ),
+                train_class_stats_sha256=str(
+                    input_hashes.get("train_class_stats_sha256", "")
+                ),
+                class_weight_sha256=class_weight_sha256(
+                    class_weight_result.as_dict()
+                ),
+                input_manifest_hashes_sha256=input_manifest_hashes_sha256(
+                    input_manifest_hashes_for_payload
+                ),
+            )
+            resume_path: Path | None = None
+            if (
+                resume_from_per_candidate_seed
+                and candidate_name in resume_from_per_candidate_seed
+                and seed in resume_from_per_candidate_seed[candidate_name]
+            ):
+                resume_path = Path(
+                    resume_from_per_candidate_seed[candidate_name][seed]
+                )
+            seed_result = run_one_candidate(
+                candidate_name=candidate_name,
+                config=config,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                class_weight_result=class_weight_result,
+                output_dir=output_dir,
+                device=device,
+                budget_state=budget_state,
+                identity=identity,
+                input_manifest_hashes=input_manifest_hashes_for_payload,
+                deterministic=determinism,
+                resume_from=resume_path,
+                seed=seed,
+                checkpoint_dir=seed_dir,
+            )
+            per_seed[seed] = seed_result
+        candidate_aggregates[candidate_name] = _b04a_aggregate_candidate(
+            candidate_name, per_seed, config.seeds
+        )
+
+    ended_at = datetime.now(timezone.utc).isoformat()
+
+    n_feasible = sum(
+        1 for agg in candidate_aggregates.values() if agg.feasibility == "FEASIBLE"
+    )
+    n_not_feasible = sum(
+        1
+        for agg in candidate_aggregates.values()
+        if agg.feasibility == "INFEASIBLE"
+    )
+    n_failed = sum(
+        1 for agg in candidate_aggregates.values() if agg.n_seeds_failed > 0
+    )
+    n_stopped = sum(
+        1
+        for agg in candidate_aggregates.values()
+        if agg.n_seeds_stopped > 0 and agg.n_seeds_failed == 0
+    )
+
+    advance_decision = _b04a_advance_decision(candidate_aggregates)
+    advanced = advance_decision.advanced
+    near_tie_applied = advance_decision.near_tie_applied
+    if n_feasible == 0:
+        overall_decision = "MINI_NOT_FEASIBLE"
+    else:
+        overall_decision = "MINI_HAS_FEASIBLE_CANDIDATE"
+
+    # If the near-tie advance decision failed closed (a candidate
+    # was missing a usable ``worst_subject_iou``), promote the
+    # terminal state to ``FAILED`` and leave ``advanced`` empty.
+    # The runner's contract is: a fail-closed tiebreak is a
+    # failed Mini.
+    advance_failed_closed = any(
+        tb.tiebreak_basis == "failed_no_worst_subject"
+        for tb in advance_decision.tiebreaks
+    )
+    if advance_failed_closed:
+        advanced = ()
+        n_failed = max(n_failed, 1)
+
+    if n_failed > 0:
+        terminal_state = "FAILED"
+    elif n_stopped > 0:
+        terminal_state = "STOPPED"
+    else:
+        terminal_state = "DONE"
+
+    return B04ARunResult(
+        config=config,
+        dataset_manifest=dataset_manifest,
+        environment=_gather_environment(),
+        class_weight_result=class_weight_result,
+        candidate_results=candidate_aggregates,
+        n_candidates_feasible=n_feasible,
+        n_candidates_not_feasible=n_not_feasible,
+        n_candidates_failed=n_failed,
+        n_candidates_stopped=n_stopped,
+        overall_decision=overall_decision,
+        advanced=advanced,
+        near_tie_applied=near_tie_applied,
+        near_tie_margin=B04A_NEAR_TIE_MARGIN,
+        advance_decision=advance_decision,
+        terminal_state=terminal_state,
+        started_at_utc=started_at,
+        ended_at_utc=ended_at,
+        wall_clock_seconds=0.0,  # populated by the CLI
+        input_hashes=input_hashes,
+        train_class_stats_source=train_class_stats_source,
+        synthetic=synthetic,
+        determinism=determinism,
+        resource_budget=budget,
+        b01_contract_report=b01_contract_report,
+    )
+
+
+# ---------------------------------------------------------------------------
+# B04A artifact writing
+# ---------------------------------------------------------------------------
+
+
+def _resolve_git_identity() -> tuple[str, bool]:
+    """Return (git_commit, git_dirty) for the artifact identity block.
+
+    Falls back to a sentinel string when the commit cannot be
+    resolved (e.g. shallow clone or non-git environment).  The
+    sentinel is explicitly NOT a valid commit SHA so a Reviewer can
+    tell at a glance that the identity is unresolvable.
+    """
+
+    try:
+        import subprocess
+
+        project_root = Path(__file__).resolve().parents[3]
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(project_root),
+        ).stdout.strip()
+        dirty_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(project_root),
+        )
+        dirty = bool(dirty_proc.stdout.strip())
+        return commit, dirty
+    except Exception:
+        return "unresolvable_git_commit", True
+
+
+def _b04a_identity_block(
+    *,
+    config: MiniConfig,
+    config_sha256: str,
+    candidate: str | None = None,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Build a B04A identity block.
+
+    The block always includes the seven identity fields required by
+    ``configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json``
+    ``identity_hard_gate.required_fields``.  ``candidate`` and
+    ``seed`` are added when known; per-seed artifacts carry them.
+    """
+
+    git_commit, git_dirty = _resolve_git_identity()
+    block: dict[str, Any] = {
+        "experiment_id": (
+            f"{config.task_id}::{candidate or '<run>'}"
+            f"::seed={seed if seed is not None else '-'}"
+        ),
+        "task_id": config.task_id,
+        "git_commit": git_commit,
+        "git_dirty": git_dirty,
+        "config_sha256": config_sha256,
+        "data_manifest_sha256": str(
+            (getattr(config, "_data_manifest_sha256", None) or "")
+        )
+        or config_sha256,
+        "split_sha256": str(config.b01_a06_split_sha256_expected),
+        "model_version": (
+            get_model_builder(candidate).version
+            if candidate is not None
+            else ""
+        ),
+    }
+    if candidate is not None:
+        block["candidate"] = candidate
+    if seed is not None:
+        block["seed"] = int(seed)
+    return block
+
+
+def _write_b04a_seed_artifacts(
+    *,
+    output_dir: Path,
+    candidate: str,
+    seed: int,
+    seed_result: CandidateResult,
+    config: MiniConfig,
+    config_sha256: str,
+) -> None:
+    """Write the per-seed B04A artifacts for one (candidate, seed)."""
+
+    seed_dir = output_dir / "checkpoints" / candidate / f"seed_{seed:04d}"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+
+    identity = _b04a_identity_block(
+        config=config,
+        config_sha256=config_sha256,
+        candidate=candidate,
+        seed=seed,
+    )
+    identity_payload = {"identity": identity}
+
+    # epoch_metrics.csv (per seed)
+    epoch_csv = seed_dir / "epoch_metrics.csv"
+    with open(epoch_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "candidate",
+                "seed",
+                "epoch",
+                "train_loss",
+                "val_loss",
+                "is_best",
+                "elapsed_seconds",
+            ],
+        )
+        writer.writeheader()
+        for row in seed_result.epoch_metrics:
+            writer.writerow(
+                {
+                    "candidate": row.candidate,
+                    "seed": seed,
+                    "epoch": row.epoch,
+                    "train_loss": row.train_loss,
+                    "val_loss": row.val_loss,
+                    "is_best": bool(row.is_best),
+                    "elapsed_seconds": row.elapsed_seconds,
+                }
+            )
+    # Sibling identity JSON file (B04A identity_hard_gate contract).
+    write_json(epoch_csv.with_suffix(epoch_csv.suffix + ".identity.json"),
+               identity_payload)
+
+    # metrics_summary.json (per seed) with identity fields at the top level
+    metrics_summary: dict[str, Any] = dict(identity)
+    metrics_summary.update(
+        {
+            "candidate": candidate,
+            "seed": int(seed),
+            "feasibility": seed_result.feasibility,
+            "reason": seed_result.reason,
+            "best_epoch": seed_result.best_epoch,
+            "best_val_loss": seed_result.best_val_loss,
+            "elapsed_seconds": float(seed_result.elapsed_seconds),
+            "budget_status": seed_result.budget_status,
+            "budget_report": dict(seed_result.budget_report),
+            "model_version": seed_result.model_version,
+            "parameter_count": int(seed_result.parameter_count),
+            "reload_consistent": bool(seed_result.reload_consistent),
+            "reload_max_abs_diff": (
+                float(seed_result.reload_max_abs_diff)
+                if seed_result.reload_max_abs_diff is not None
+                else None
+            ),
+            "n_test_samples": int(seed_result.n_test_samples),
+        }
+    )
+    if seed_result.metrics is not None:
+        metrics_summary["metrics"] = seed_result.metrics.as_dict()
+    write_json(seed_dir / "metrics_summary.json", metrics_summary)
+
+    # reload_consistency.json (per seed)
+    write_json(
+        seed_dir / "reload_consistency.json",
+        {
+            **identity,
+            "reload_consistent": bool(seed_result.reload_consistent),
+            "max_abs_diff": (
+                float(seed_result.reload_max_abs_diff)
+                if seed_result.reload_max_abs_diff is not None
+                else None
+            ),
+            "best_prediction_hash": seed_result.best_prediction_hash,
+            "in_process_prediction_hash": seed_result.in_process_prediction_hash,
+            "hash_match": bool(
+                seed_result.best_prediction_hash is not None
+                and seed_result.in_process_prediction_hash is not None
+                and seed_result.best_prediction_hash
+                == seed_result.in_process_prediction_hash
+            ),
+        },
+    )
+
+    # worst_subject.json (per seed)
+    worst_subject_payload: dict[str, Any] = dict(identity)
+    worst_subject_payload["candidate"] = candidate
+    worst_subject_payload["seed"] = int(seed)
+    worst_subject_payload["worst_subject"] = (
+        seed_result.metrics.worst_subject if seed_result.metrics else None
+    )
+    write_json(seed_dir / "worst_subject.json", worst_subject_payload)
+
+    # predictions_manifest.csv (per seed) + identity sibling
+    pred_csv = seed_dir / "predictions_manifest.csv"
+    with open(pred_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "candidate",
+                "seed",
+                "split",
+                "sample_id",
+                "subject_id",
+                "posture",
+                "label_sha256",
+                "prediction_sha256",
+                "label_shape",
+                "prediction_shape",
+                "failure_reason",
+            ],
+        )
+        writer.writeheader()
+        for rec in seed_result.train_records + seed_result.val_records:
+            writer.writerow(
+                {
+                    "candidate": rec.candidate,
+                    "seed": seed,
+                    "split": rec.split,
+                    "sample_id": rec.sample_id,
+                    "subject_id": rec.subject_id,
+                    "posture": rec.posture,
+                    "label_sha256": rec.label_sha256,
+                    "prediction_sha256": rec.prediction_sha256,
+                    "label_shape": rec.label_shape,
+                    "prediction_shape": rec.prediction_shape,
+                    "failure_reason": rec.failure_reason,
+                }
+            )
+    write_json(
+        pred_csv.with_suffix(pred_csv.suffix + ".identity.json"),
+        identity_payload,
+    )
+
+    # logs/<candidate>/seed_<seed>.log with identity as the first JSON line
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    seed_log = log_dir / f"{candidate}_seed_{seed:04d}.log"
+    first_line = json.dumps(identity, sort_keys=True, ensure_ascii=False)
+    seed_log.write_text(
+        first_line + "\n"
+        + f"[{datetime.now(timezone.utc).isoformat()}] "
+        + f"candidate={candidate} seed={seed} "
+        + f"feasibility={seed_result.feasibility} "
+        + f"elapsed={seed_result.elapsed_seconds:.4f}s "
+        + f"reason={seed_result.reason}\n",
+        encoding="utf-8",
+    )
+
+
+def _write_b04a_candidate_aggregate(
+    *,
+    output_dir: Path,
+    candidate: str,
+    aggregate: B04ACandidateAggregate,
+    config: MiniConfig,
+    config_sha256: str,
+) -> Path:
+    """Write the per-candidate aggregate decision file."""
+
+    candidate_dir = output_dir / "checkpoints" / candidate
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = dict(
+        _b04a_identity_block(
+            config=config,
+            config_sha256=config_sha256,
+            candidate=candidate,
+        )
+    )
+    payload.update(aggregate.as_dict())
+    payload["per_seed"] = {
+        int(seed): {
+            "feasibility": aggregate.per_seed[int(seed)].feasibility,
+            "reason": aggregate.per_seed[int(seed)].reason,
+            "best_epoch": aggregate.per_seed[int(seed)].best_epoch,
+            "best_val_loss": aggregate.per_seed[int(seed)].best_val_loss,
+            "elapsed_seconds": float(aggregate.per_seed[int(seed)].elapsed_seconds),
+            "budget_status": aggregate.per_seed[int(seed)].budget_status,
+            "n_test_samples": int(aggregate.per_seed[int(seed)].n_test_samples),
+        }
+        for seed in aggregate.seeds
+        if int(seed) in aggregate.per_seed
+    }
+    out_path = candidate_dir / "aggregate_decision.json"
+    write_json(out_path, payload)
+    return out_path
+
+
+def _write_b04a_run_bundle(
+    *,
+    output_dir: Path,
+    result: B04ARunResult,
+    config_sha256: str,
+) -> None:
+    """Write the run-level B04A bundle (manifest, status, decision, logs).
+
+    Companion to :func:`_write_b04a_seed_artifacts` and
+    :func:`_write_b04a_candidate_aggregate`.  Writes one manifest,
+    one resolved_config, one input_manifest_hashes, one environment,
+    one status.json, one terminal file (DONE/FAILED/STOPPED), one
+    candidate_decision.json, one budget_report.json, and a run.log
+    whose first line is the identity JSON.
+    """
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    identity = _b04a_identity_block(
+        config=result.config,
+        config_sha256=config_sha256,
+    )
+
+    # manifest.json
+    manifest: dict[str, Any] = dict(identity)
+    manifest.update(
+        {
+            "task_id": result.config.task_id,
+            "config_version": result.config.config_version,
+            "protocol": result.config.protocol,
+            "stage": "S2_B04A",
+            "seeds": list(result.config.seeds),
+            "candidates": list(result.config.candidates),
+            "mode": "synthetic-cpu-smoke" if result.synthetic else "real-b01",
+            "dataset_manifest": result.dataset_manifest,
+            "train_class_stats_source": result.train_class_stats_source,
+            "started_at_utc": result.started_at_utc,
+            "ended_at_utc": result.ended_at_utc,
+            "wall_clock_seconds": float(result.wall_clock_seconds),
+            "class_weight_summary": result.class_weight_result.as_dict(),
+            "registered_candidates": list(result.config.candidates),
+            "checkpoint_version": CHECKPOINT_VERSION,
+            "b04a_feasibility_threshold": B04A_FEASIBILITY_THRESHOLD,
+            "b04a_resource_budget": {
+                "max_wall_minutes_per_candidate": int(
+                    result.resource_budget.max_wall_seconds_per_candidate // 60
+                ),
+                "max_total_wall_minutes": int(
+                    result.resource_budget.max_wall_seconds_total // 60
+                ),
+                "max_peak_cuda_mb": float(
+                    result.resource_budget.max_peak_cuda_mb
+                ),
+            },
+            "candidate_feasibility": {
+                cand: {
+                    "feasibility": agg.feasibility,
+                    "reason": agg.reason,
+                    "macro_iou_mean": agg.macro_iou_mean,
+                }
+                for cand, agg in result.candidate_results.items()
+            },
+            "terminal_state": result.terminal_state,
+            "overall_decision": result.overall_decision,
+            "advanced": list(result.advanced),
+            "near_tie_applied": bool(result.near_tie_applied),
+            "near_tie_margin": float(result.near_tie_margin),
+        }
+    )
+    write_json(output_dir / "manifest.json", manifest)
+
+    # resolved_config.json
+    resolved: dict[str, Any] = dict(identity)
+    resolved.update(
+        {
+            "task_id": result.config.task_id,
+            "config_version": result.config.config_version,
+            "protocol": result.config.protocol,
+            "mode": "synthetic-cpu-smoke" if result.synthetic else "real-b01",
+            **{
+                k: v
+                for k, v in result.config.as_dict().items()
+                if k not in {"config_path", "data_root", "b01_freeze_dir"}
+            },
+        }
+    )
+    write_json(output_dir / "resolved_config.json", resolved)
+
+    # input_manifest_hashes.json
+    write_json(
+        output_dir / "input_manifest_hashes.json",
+        {
+            **identity,
+            "config_path": str(result.config.config_path),
+            "config_sha256": config_sha256,
+            "a06_split_sha256_expected": str(
+                result.config.b01_a06_split_sha256_expected
+            ),
+            "synthetic": bool(result.synthetic),
+            "input_hashes": dict(result.input_hashes),
+        },
+    )
+
+    # environment.json
+    env = dict(identity)
+    env.update(dict(result.environment))
+    write_json(output_dir / "environment.json", env)
+
+    # status.json
+    write_json(
+        output_dir / "status.json",
+        {
+            **identity,
+            "task_id": result.config.task_id,
+            "config_version": result.config.config_version,
+            "protocol": result.config.protocol,
+            "status": result.terminal_state,
+            "mode": "synthetic-cpu-smoke" if result.synthetic else "real-b01",
+            "terminal_state": result.terminal_state,
+            "started_at_utc": result.started_at_utc,
+            "ended_at_utc": result.ended_at_utc,
+            "wall_clock_seconds": float(result.wall_clock_seconds),
+            "overall_decision": result.overall_decision,
+            "advanced": list(result.advanced),
+            "near_tie_applied": bool(result.near_tie_applied),
+            "n_candidates_feasible": int(result.n_candidates_feasible),
+            "n_candidates_not_feasible": int(result.n_candidates_not_feasible),
+            "n_candidates_failed": int(result.n_candidates_failed),
+            "n_candidates_stopped": int(result.n_candidates_stopped),
+        },
+    )
+
+    # candidate_decision.json (run-level)
+    decision_payload: dict[str, Any] = dict(identity)
+    decision_payload.update(
+        {
+            "task_id": result.config.task_id,
+            "config_version": result.config.config_version,
+            "protocol": result.config.protocol,
+            "seeds": list(result.config.seeds),
+            "val_feasibility_threshold": B04A_FEASIBILITY_THRESHOLD,
+            "terminal_state": result.terminal_state,
+            "all_seeds_must_succeed": True,
+            "decision_rules": {
+                "0_feasible": "MINI_NOT_FEASIBLE (no candidate advances)",
+                "1_feasible": "advance the single feasible candidate",
+                "2_feasible": "advance both feasible candidates; "
+                "B04A does not pick a champion",
+                "3_feasible": "advance the top 2 candidates by macro_iou_mean "
+                "(descending), with near-tie tiebreak (prefer simpler when "
+                "|diff| < 0.02)",
+            },
+            "candidates": {
+                cand: {
+                    "feasibility": agg.feasibility,
+                    "reason": agg.reason,
+                    "macro_iou_mean": agg.macro_iou_mean,
+                    "worst_subject_iou": agg.worst_subject_iou,
+                    "per_region_iou": agg.per_region_iou,
+                    "n_seeds_total": agg.n_seeds_total,
+                    "n_seeds_feasible": agg.n_seeds_feasible,
+                    "n_seeds_infeasible": agg.n_seeds_infeasible,
+                    "n_seeds_failed": agg.n_seeds_failed,
+                    "n_seeds_stopped": agg.n_seeds_stopped,
+                    "elapsed_seconds_total": float(agg.elapsed_seconds_total),
+                    "budget_status": agg.budget_status,
+                }
+                for cand, agg in result.candidate_results.items()
+            },
+            "n_feasible": int(result.n_candidates_feasible),
+            "n_not_feasible": int(result.n_candidates_not_feasible),
+            "n_failed": int(result.n_candidates_failed),
+            "n_stopped": int(result.n_candidates_stopped),
+            "overall_decision": result.overall_decision,
+            "advanced": list(result.advanced),
+            "near_tie_applied": bool(result.near_tie_applied),
+            "near_tie_margin": float(result.near_tie_margin),
+            "advance_decision": result.advance_decision.as_dict(),
+        }
+    )
+    write_json(output_dir / "candidate_decision.json", decision_payload)
+
+    # budget_report.json
+    budget_payload: dict[str, Any] = {
+        **identity,
+        "thresholds": result.resource_budget.as_dict(),
+        "elapsed_total_seconds": float(
+            result.resource_budget.max_wall_seconds_total  # placeholder
+        ),
+        "peak_cuda_mb": 0.0,
+        "candidates": {
+            cand: {
+                "elapsed_seconds_total": float(agg.elapsed_seconds_total),
+                "budget_status": agg.budget_status,
+                "n_seeds_total": agg.n_seeds_total,
+                "n_seeds_feasible": agg.n_seeds_feasible,
+                "n_seeds_failed": agg.n_seeds_failed,
+                "n_seeds_stopped": agg.n_seeds_stopped,
+            }
+            for cand, agg in result.candidate_results.items()
+        },
+        "terminal_state": result.terminal_state,
+        "determinism": result.determinism.as_dict(),
+    }
+    write_json(output_dir / "budget_report.json", budget_payload)
+
+    # Per-candidate aggregate decision files
+    for cand, agg in result.candidate_results.items():
+        _write_b04a_candidate_aggregate(
+            output_dir=output_dir,
+            candidate=cand,
+            aggregate=agg,
+            config=result.config,
+            config_sha256=config_sha256,
+        )
+
+    # Per-seed artifacts
+    for cand, agg in result.candidate_results.items():
+        for seed in agg.seeds:
+            seed_result = agg.per_seed.get(int(seed))
+            if seed_result is None:
+                continue
+            _write_b04a_seed_artifacts(
+                output_dir=output_dir,
+                candidate=cand,
+                seed=int(seed),
+                seed_result=seed_result,
+                config=result.config,
+                config_sha256=config_sha256,
+            )
+
+    # logs/run.log with identity as the first JSON line
+    first_line = json.dumps(identity, sort_keys=True, ensure_ascii=False)
+    log_lines = [
+        first_line,
+        f"[{datetime.now(timezone.utc).isoformat()}] task_id={result.config.task_id}",
+        f"[{datetime.now(timezone.utc).isoformat()}] protocol={result.config.protocol}",
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"started_at_utc={result.started_at_utc}",
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"terminal_state={result.terminal_state}",
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"overall_decision={result.overall_decision}",
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"advanced={list(result.advanced)}",
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"near_tie_applied={bool(result.near_tie_applied)}",
+    ]
+    for cand, agg in result.candidate_results.items():
+        log_lines.append(
+            f"[{datetime.now(timezone.utc).isoformat()}] "
+            f"candidate={cand} feasibility={agg.feasibility} "
+            f"macro_iou_mean={agg.macro_iou_mean} "
+            f"elapsed={agg.elapsed_seconds_total:.4f}s "
+            f"reason={agg.reason}"
+        )
+    (log_dir / "run.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
