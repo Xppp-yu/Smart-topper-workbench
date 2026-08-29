@@ -18,7 +18,7 @@
 
 | Property | Frozen / expected | Independently re-computed | Match |
 |---|---|---|---|
-| Archive path | `C:\Users\23939\AppData\Local\Temp\smarttopper-autodl\EXP-P7-FULL-20260820-R02.tar.gz` | unchanged | ✅ |
+| Historical archive path at 2026-08-21 re-verification | `C:\Users\23939\AppData\Local\Temp\smarttopper-autodl\EXP-P7-FULL-20260820-R02.tar.gz` | matched at verification time | ✅ |
 | Archive SHA-256 | `cbaffa74878b149e546a42826ae373442c62683af890362684f80963e7fddda1` | `cbaffa74878b149e546a42826ae373442c62683af890362684f80963e7fddda1` | ✅ |
 | Archive size (bytes) | 672,702,773 | 672,702,773 | ✅ |
 | File count | 2163 | 2163 | ✅ |
@@ -31,11 +31,26 @@
 | `condition_comparison.json` strict parse (no NaN/Infinity) | clean | clean (`parse_failures=[]`) | ✅ |
 | Manifest SHA-256 of every file (2100+45+15+3) | declared | recomputed (full per-file map in `evidence_manifest.json`) | ✅ |
 
-**Integrity posture:** the original `EXP-P7-FULL-20260820-R02.tar.gz` was never opened in write mode or modified; SHA was recomputed over the on-disk bytes after the run and matched the frozen value.
+**Historical integrity posture:** during the 2026-08-21 re-verification, the original `EXP-P7-FULL-20260820-R02.tar.gz` was never opened in write mode or modified; SHA was recomputed over the then-present bytes and matched the frozen value. The historical result remains valid, but the temporary-path original archive is no longer present as of 2026-08-29.
 
 **Provenance note (discrepancy, not a defect).** The Reviewer-facing summary (`P7_POPU_SOFTWARE_ROBUSTNESS_RESULTS_v0.1.md`) records the freeze-time Git commit as `6f1d540`. The analysis-time HEAD recorded above (`18ea22e`) is a worktree snapshot at the moment this Full re-verification was produced; subsequent commits may change the working-tree HEAD but do not retroactively alter this report. The commit `18ea22e` is an internal-team governance change (`feat: establish governed SLP two-phase development workflow`) layered on top of `6f1d540` and does not alter the evidence-pack contents. All eight reviewer-pinned anchors below were re-derived directly from the archive's OOF CSVs without relying on the prior stage report.
 
-### 1.1 Pinned rule block (P6 / P6.1, Reviewer Round 2)
+### 1.1 Current evidence custody after original temporary archive removal
+
+On 2026-08-29, the previously verified extracted tree was repackaged for evidence custody under the symbolic local evidence root:
+
+`<LOCAL_EVIDENCE_ROOT>/popu/EXP-P7-FULL-20260820-R02-recovered-extract-20260829.tar.gz`
+
+| Property | Recovery value |
+|---|---|
+| Source | Previously verified extracted `EXP-P7-FULL-20260820-R02` tree |
+| Source/archive file count | `2163 / 2163` |
+| Recovery archive size | `672,497,970` bytes |
+| Recovery archive SHA-256 | `19e03e5665aa7af559b4b15e21b7e989e3e947654de686a60fd2cede4c1a4f8b` |
+
+This is a **recovery archive**, not the original tar. Repacking changes tar metadata/compression bytes, so its SHA-256 and size differ from the frozen original (`cbaffa...`, 672,702,773 bytes). It must not replace the original hash in historical manifests, tests, or claims. No P7 analysis, model inference, metrics, anchors, or conclusions were rerun or changed during recovery registration.
+
+### 1.2 Pinned rule block (P6 / P6.1, Reviewer Round 2)
 
 Per Round 2 the P6 / P6.1 rule parameters are **loaded from the archive's pinned rule block** inside `condition_comparison.json`, not from CLI flags or hard-coded overrides. The block is verified fail-closed before any analysis runs:
 
@@ -332,6 +347,9 @@ overnight-sleep safety, and control-system safety are not established and remain
   8 Reviewer-pinned anchors (§8). The same anchor values were independently
   re-derived against the on-disk CLI-produced artifacts (the run that wrote
   `EXP-P7-FULL-ANALYSIS-20260821-R01/`) and match to better than 1e-6.
+  As of 2026-08-29 that historical temporary-path archive is absent, so this
+  opt-in integration test skips. The recovery archive has a new custody hash
+  and must not be accepted by weakening the frozen original-archive hash gate.
 - Hardware-fault validation, product PASS, overnight-sleep PASS, control-system PASS are
   not verified anywhere in this report and are not implied.
 - Per-subject thresholds are not designed and are not recommended (§13.6).
