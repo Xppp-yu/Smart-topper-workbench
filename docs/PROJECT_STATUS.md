@@ -46,6 +46,12 @@ PoPu P5.2-C 已接受 `small_resnet` 为固定睡姿五分类总体研究候选�
 | S4 | 身体区域伪标签 Pilot 与人工复核 | HOLD / OPTIONAL_FUTURE / SUPERSEDED_FOR_CURRENT_SLP8_GT | A09R 已将 SLP8 GT 设为默认训练合同；原 A10–A17 OpenCV/人工复核路线已改 HOLD | 不再以 A17 R2/R3 为前置；SLP8 区域训练使用已冻结 GT |
 | S5–S6 | 遮盖压力测试、有限融合 | HOLD / DIFFERENT_TRACK | 尚未开始；cover GT 和独立融合合同未满足 | 不阻塞 PM-only B04A；不得把 uncover 结果外推到 cover |
 
+## 自研传感器初步证据
+
+| 阶段 | 目标 | 状态 | 已有证据 | 下一步门槛 |
+|---|---|---|---|---|
+| H0 | 32×32 传感器导出链路与基础响应阶段性测试 | EVIDENCE_SNAPSHOT_WITH_LIMITATIONS | [H0 阶段报告](stage_reports/H0_SELF_COLLECTED_SENSOR_STAGE_TEST_v0.1.md)；空载、重复放置、空间位置和 540 秒恒定载荷的小规模摘要已脱敏入库；原始 CSV 保持本地只读 | 供应商解释 20 Hz / 26 fps / 300 ms / 空时间戳关系，并提供 mapped ADC 到物理单位的标定合同；随后另立正式硬件测量协议与独立复算任务 |
+
 ## 当前数据使用边界
 
 - 固定姿态有标签集：`5,100` 条 JSON 记录；其中四类卧姿各 `1,260` 条，空床 `60` 条。
@@ -54,6 +60,7 @@ PoPu P5.2-C 已接受 `small_resnet` 为固定睡姿五分类总体研究候选�
 - **SLP 10-region polygon 路线**（`slp_region_annotation_v0.1`，R0–R3 tier）：历史内部治理合同，**不再是当前训练合同**，不得与 8-region 数据混用。
 - PoPu 与 PMD 是独立公开数据集，不能逐行配对。
 - 所有公开数据结果仅证明研究数据链路或算法候选，不证明自研传感器、气囊闭环、整夜稳定性、舒适性或产品效果。
+- H0 自采传感器摘要只证明当前采集软件下的数据导出与小规模基础响应；不是物理压力标定、精度、寿命、环境、人体、舒适性、控制安全或产品可靠性验证。
 
 ## 治理口径
 
