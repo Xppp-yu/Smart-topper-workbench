@@ -1,6 +1,6 @@
 # TASK-HW-H00-SENSOR-STAGE-TEST-EVIDENCE-PUBLISH-v0.1
 
-状态：`IMPLEMENTED / REVIEW_PENDING`
+状态：`ACCEPTED_WITH_LIMITATIONS`
 
 ## Objective
 
@@ -36,3 +36,11 @@
 - 原始数据和二进制生成物未暂存；
 - 证据边界和下一 Gate 清楚；
 - 本任务不改变 SLP B04A 的当前优先级和授权状态。
+
+## Reviewer result
+
+- 日期：2026-08-29；
+- verdict：`ACCEPT`；
+- 发布范围仅限脱敏 Markdown 与三份聚合 CSV；
+- 三份 CSV 与本地摘要逐行一致；
+- 原始数据独立复算仍为 `NOT RUN`，不提升本阶段证据等级。

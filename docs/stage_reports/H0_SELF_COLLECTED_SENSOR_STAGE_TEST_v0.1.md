@@ -112,6 +112,8 @@ timestamp,max_value,min_value,avg_value,touch_count,p0,p1,...,p1023
 
 当前只接受为：`DATA_EXPORT_AND_BASIC_RESPONSE_EVIDENCE_SNAPSHOT`。
 
+2026-08-29 Reviewer 已接受本次脱敏发布，接受对象是报告结构、聚合 CSV 一致性和证据边界，不是原始压力数据的独立复算，也不是硬件性能验收。
+
 下一 Gate 必须先获得：
 
 1. 供应商对 20 Hz、26 fps、300 ms 和空时间戳关系的书面解释；
