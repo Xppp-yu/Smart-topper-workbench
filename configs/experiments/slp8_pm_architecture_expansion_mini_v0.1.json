@@ -1,0 +1,804 @@
+{
+  "config_version": "slp8_pm_architecture_expansion_mini_v0.1",
+  "task_id": "TASK-SLP-B04A-PROTOCOL-FREEZE-v0.1",
+  "stage": "S2_B04A",
+  "freeze_version": "slp8_training_tables_v0.1",
+  "b01_task_id": "TASK-SLP-B01-SLP8-TRAINING-TABLE-FREEZE-v0.1",
+  "b02_task_id": "TASK-SLP-B02-SLP8-NON-LEARNING-REGION-BASELINE-v0.1",
+  "b04_task_id": "TASK-SLP-B04-PM-ONLY-REGION-MINI-PROTOCOL-AND-RUNNER-v0.1",
+  "b04_exp_id": "EXP-SLP-B04-PM-REGION-MINI-20260828-AUTODL-R05",
+  "b04_result": {
+    "slp8_small_unet_v0.1": {
+      "val_fixed_foreground_macro_iou": 0.439625,
+      "decision": "FEASIBLE"
+    },
+    "slp8_tiny_fcn_v0.1": {
+      "val_fixed_foreground_macro_iou": 0.051631,
+      "decision": "NOT_FEASIBLE"
+    }
+  },
+  "b01_a06_split_sha256_expected": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+  "b01_freeze_manifest_core_sha256_expected": "3c78999551580fc46ce15229e053798b5e4c9464a5bab27e05130cb319090b1e",
+  "b01_structural_test": {
+    "sample_count": 495,
+    "subject_count": 11
+  },
+  "expected_split_counts": {
+    "train": 3645,
+    "val": 450,
+    "test": 0
+  },
+  "expected_subjects": {
+    "train": 81,
+    "val": 10,
+    "test": 0
+  },
+  "expected_provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+  "expected_source_review_status": "NOT_REVIEWED",
+  "expected_setting": "danaLab",
+  "expected_cover": "uncover",
+  "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+  "raw_semantics": "raw_pmarray_response",
+  "source_review_status": "NOT_REVIEWED",
+  "prohibited_conclusions": [
+    "Not human pixel-level semantic masks",
+    "Not medical, skin-interface stress, or product ground truth",
+    "Not kPa; pressure values are raw PMarray response semantics",
+    "danaLab only, uncover only",
+    "Mini metrics do NOT announce a final champion",
+    "B02 0.205644 is a feasibility threshold, not a claim of 'model beats B02'",
+    "No Mini result shall be extrapolated to product, hardware, comfort, or overnight stability",
+    "SegFormer-B0 is DEFERRED in this protocol; its inclusion requires a fairness contract frozen before implementation"
+  ],
+
+  "candidates": [
+    {
+      "name": "slp8_small_unet_v0.1",
+      "version": "slp8_small_unet_v0.1",
+      "architecture_hypothesis": "classic_encoder_decoder_skip_connection",
+      "role": "incumbent",
+      "description": "B04 incumbent. Small encoder-decoder with explicit bilinear spatial recovery. Architecture frozen by B04 v0.1. R05 result: VAL macro IoU 0.439625 (FEASIBLE). Parameter count 118,121.",
+      "source": "B04 protocol / slp8_region_models.py / slp8_region_mini.py",
+      "max_parameters": 150000,
+      "exact_parameter_count": 118121,
+      "expected_parameters_approx": 118121,
+      "pretrained": false,
+      "augmentation_policy": "none",
+      "augmentation": {
+        "policy": "none",
+        "description": "Identical to all other B04A candidates: no augmentation. The architecture variable is isolated by keeping augmentation off.",
+        "train": null,
+        "val": null
+      },
+      "architecture_freeze": {
+        "source": "B04 v0.1 / slp8_region_models.Slp8SmallUnet",
+        "input_shape": [192, 84],
+        "n_classes": 9,
+        "normalization": "none",
+        "activation": "ReLU",
+        "upsampling": "bilinear_with_explicit_target_size",
+        "output_spatial_recovery": "explicit_bilinear_to_INPUT_SHAPE_192x84",
+        "total_downsample_factor": 4,
+        "skip_connections": "concat_in_decoder",
+        "residual_projection": "n/a (no residual blocks)",
+        "forward_plan": [
+          {
+            "name": "enc1",
+            "type": "sequential",
+            "input": {"shape": [192, 84], "channels": 1},
+            "ops": [
+              {"op": "Conv2d", "in_channels": 1, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [192, 84], "channels": 16},
+            "skip_role": "skip1 (16 ch)"
+          },
+          {
+            "name": "pool1",
+            "type": "pool",
+            "op": "MaxPool2d",
+            "kernel_size": 2,
+            "stride": 2,
+            "input": {"shape": [192, 84], "channels": 16},
+            "output": {"shape": [96, 42], "channels": 16}
+          },
+          {
+            "name": "enc2",
+            "type": "sequential",
+            "input": {"shape": [96, 42], "channels": 16},
+            "ops": [
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 32, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [96, 42], "channels": 32},
+            "skip_role": "skip2 (32 ch)"
+          },
+          {
+            "name": "pool2",
+            "type": "pool",
+            "op": "MaxPool2d",
+            "kernel_size": 2,
+            "stride": 2,
+            "input": {"shape": [96, 42], "channels": 32},
+            "output": {"shape": [48, 21], "channels": 32}
+          },
+          {
+            "name": "bottleneck",
+            "type": "sequential",
+            "input": {"shape": [48, 21], "channels": 32},
+            "ops": [
+              {"op": "Conv2d", "in_channels": 32, "out_channels": 64, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 64, "out_channels": 64, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [48, 21], "channels": 64}
+          },
+          {
+            "name": "dec1",
+            "type": "decoder_block",
+            "input": {"shape": [48, 21], "channels": 64},
+            "ops": [
+              {"op": "BilinearInterpolate", "target_size": [96, 42], "align_corners": false},
+              {"op": "Concat", "with_skip_role": "skip2", "with_channels": 32, "result_channels": 96},
+              {"op": "Conv2d", "in_channels": 96, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 32, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [96, 42], "channels": 32}
+          },
+          {
+            "name": "dec2",
+            "type": "decoder_block",
+            "input": {"shape": [96, 42], "channels": 32},
+            "ops": [
+              {"op": "BilinearInterpolate", "target_size": [192, 84], "align_corners": false},
+              {"op": "Concat", "with_skip_role": "skip1", "with_channels": 16, "result_channels": 48},
+              {"op": "Conv2d", "in_channels": 48, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [192, 84], "channels": 16}
+          },
+          {
+            "name": "final",
+            "type": "single_conv",
+            "op": "Conv2d",
+            "in_channels": 16,
+            "out_channels": 9,
+            "kernel_size": 1,
+            "stride": 1,
+            "padding": 0,
+            "bias": true,
+            "input": {"shape": [192, 84], "channels": 16},
+            "output": {"shape": [192, 84], "channels": 9}
+          }
+        ]
+      }
+    },
+    {
+      "name": "slp8_resunet_lite_v0.1",
+      "version": "slp8_resunet_lite_v0.1",
+      "architecture_hypothesis": "residual_cnn_improved_gradient_flow",
+      "role": "new_candidate",
+      "description": "New candidate. U-Net-style encoder-decoder with residual (identity) skip connections in each encoder block. Hypothesis: residual shortcuts help gradient flow in deeper networks. Identical input shape, optimizer, scheduler, augmentation, and training budget to other B04A candidates — only the architecture differs. The first residual block (enc1, input channels=1, output channels=16) uses an explicit 1x1 Conv2d shortcut for channel-dimension projection; this is the ONLY kind of shortcut used.",
+      "source": "B04A protocol / NOT_IMPLEMENTED",
+      "max_parameters": 300000,
+      "exact_parameter_count": 120809,
+      "expected_parameters_approx": 120809,
+      "pretrained": false,
+      "augmentation_policy": "none",
+      "augmentation": {
+        "policy": "none",
+        "description": "Identical to all other B04A candidates: no augmentation. The architecture variable is isolated by keeping augmentation off.",
+        "train": null,
+        "val": null
+      },
+      "architecture_freeze": {
+        "source": "B04A protocol v0.1 (R03)",
+        "input_shape": [192, 84],
+        "n_classes": 9,
+        "normalization": "none",
+        "activation": "ReLU",
+        "skip_connections": "residual_add_in_encoder_blocks_plus_concat_in_decoder",
+        "residual_projection": "1x1_Conv2d_only",
+        "upsampling": "bilinear_with_explicit_target_size",
+        "output_spatial_recovery": "explicit_bilinear_to_INPUT_SHAPE_192x84",
+        "total_downsample_factor": 4,
+        "forward_plan": [
+          {
+            "name": "enc1_resblock",
+            "type": "residual_block",
+            "input": {"shape": [192, 84], "channels": 1},
+            "main_path": [
+              {"op": "Conv2d", "in_channels": 1, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true}
+            ],
+            "main_output_channels": 16,
+            "main_output_shape": [192, 84],
+            "shortcut": {"op": "Conv2d", "in_channels": 1, "out_channels": 16, "kernel_size": 1, "stride": 1, "padding": 0, "bias": true, "kind": "1x1_channel_projection"},
+            "shortcut_output_channels": 16,
+            "shortcut_output_shape": [192, 84],
+            "add_constraint": {"op": "Add", "lhs": "main_output", "rhs": "shortcut_output", "lhs_channels_must_equal_rhs_channels": true, "lhs_shape_must_equal_rhs_shape": true},
+            "post_add": [
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [192, 84], "channels": 16},
+            "skip_role": "skip1 (16 ch)"
+          },
+          {
+            "name": "pool1",
+            "type": "pool",
+            "op": "MaxPool2d",
+            "kernel_size": 2,
+            "stride": 2,
+            "input": {"shape": [192, 84], "channels": 16},
+            "output": {"shape": [96, 42], "channels": 16}
+          },
+          {
+            "name": "enc2_resblock",
+            "type": "residual_block",
+            "input": {"shape": [96, 42], "channels": 16},
+            "main_path": [
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 32, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true}
+            ],
+            "main_output_channels": 32,
+            "main_output_shape": [96, 42],
+            "shortcut": {"op": "Conv2d", "in_channels": 16, "out_channels": 32, "kernel_size": 1, "stride": 1, "padding": 0, "bias": true, "kind": "1x1_channel_projection"},
+            "shortcut_output_channels": 32,
+            "shortcut_output_shape": [96, 42],
+            "add_constraint": {"op": "Add", "lhs": "main_output", "rhs": "shortcut_output", "lhs_channels_must_equal_rhs_channels": true, "lhs_shape_must_equal_rhs_shape": true},
+            "post_add": [
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [96, 42], "channels": 32},
+            "skip_role": "skip2 (32 ch)"
+          },
+          {
+            "name": "pool2",
+            "type": "pool",
+            "op": "MaxPool2d",
+            "kernel_size": 2,
+            "stride": 2,
+            "input": {"shape": [96, 42], "channels": 32},
+            "output": {"shape": [48, 21], "channels": 32}
+          },
+          {
+            "name": "bottleneck_resblock",
+            "type": "residual_block",
+            "input": {"shape": [48, 21], "channels": 32},
+            "main_path": [
+              {"op": "Conv2d", "in_channels": 32, "out_channels": 64, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 64, "out_channels": 64, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true}
+            ],
+            "main_output_channels": 64,
+            "main_output_shape": [48, 21],
+            "shortcut": {"op": "Conv2d", "in_channels": 32, "out_channels": 64, "kernel_size": 1, "stride": 1, "padding": 0, "bias": true, "kind": "1x1_channel_projection"},
+            "shortcut_output_channels": 64,
+            "shortcut_output_shape": [48, 21],
+            "add_constraint": {"op": "Add", "lhs": "main_output", "rhs": "shortcut_output", "lhs_channels_must_equal_rhs_channels": true, "lhs_shape_must_equal_rhs_shape": true},
+            "post_add": [
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [48, 21], "channels": 64}
+          },
+          {
+            "name": "dec1",
+            "type": "decoder_block",
+            "input": {"shape": [48, 21], "channels": 64},
+            "ops": [
+              {"op": "BilinearInterpolate", "target_size": [96, 42], "align_corners": false},
+              {"op": "Concat", "with_skip_role": "skip2", "with_channels": 32, "result_channels": 96},
+              {"op": "Conv2d", "in_channels": 96, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 32, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [96, 42], "channels": 32}
+          },
+          {
+            "name": "dec2",
+            "type": "decoder_block",
+            "input": {"shape": [96, 42], "channels": 32},
+            "ops": [
+              {"op": "BilinearInterpolate", "target_size": [192, 84], "align_corners": false},
+              {"op": "Concat", "with_skip_role": "skip1", "with_channels": 16, "result_channels": 48},
+              {"op": "Conv2d", "in_channels": 48, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [192, 84], "channels": 16}
+          },
+          {
+            "name": "final",
+            "type": "single_conv",
+            "op": "Conv2d",
+            "in_channels": 16,
+            "out_channels": 9,
+            "kernel_size": 1,
+            "stride": 1,
+            "padding": 0,
+            "bias": true,
+            "input": {"shape": [192, 84], "channels": 16},
+            "output": {"shape": [192, 84], "channels": 9}
+          }
+        ]
+      }
+    },
+    {
+      "name": "slp8_deeplabv3plus_lite_v0.1",
+      "version": "slp8_deeplabv3plus_lite_v0.1",
+      "architecture_hypothesis": "atrous_multi_scale_context",
+      "role": "new_candidate",
+      "description": "New candidate. R03 selected Option A: plain (non-depthwise-separable) atrous Conv2d. Lightweight DeepLabV3+ with a small stem, one stride-2 downsample, an Atrous Spatial Pyramid Pooling (ASPP) module with 5 atrous branches + 1 global-average-pool branch, and a low-level-features decoder. Hypothesis: atrous multi-scale context captures both fine-grained body-region boundaries and global pressure distribution. Identical input shape, optimizer, scheduler, augmentation, and training budget to other B04A candidates — only the architecture differs. No Xception, no depthwise-separable, no extra convolutions on the shortcut path.",
+      "source": "B04A protocol / NOT_IMPLEMENTED",
+      "max_parameters": 300000,
+      "exact_parameter_count": 53449,
+      "expected_parameters_approx": 53449,
+      "pretrained": false,
+      "augmentation_policy": "none",
+      "augmentation": {
+        "policy": "none",
+        "description": "Identical to all other B04A candidates: no augmentation. The architecture variable is isolated by keeping augmentation off.",
+        "train": null,
+        "val": null
+      },
+      "architecture_freeze": {
+        "source": "B04A protocol v0.1 (R03)",
+        "variant": "option_A_plain_atrous_Conv2d",
+        "input_shape": [192, 84],
+        "n_classes": 9,
+        "normalization": "none",
+        "activation": "ReLU",
+        "skip_connections": "low_level_features_in_decoder",
+        "residual_projection": "n/a (no residual blocks)",
+        "upsampling": "bilinear_with_explicit_target_size",
+        "output_spatial_recovery": "explicit_bilinear_to_INPUT_SHAPE_192x84_via_decoder_fusion",
+        "total_downsample_factor": 2,
+        "forward_plan": [
+          {
+            "name": "stem",
+            "type": "sequential",
+            "input": {"shape": [192, 84], "channels": 1},
+            "ops": [
+              {"op": "Conv2d", "in_channels": 1, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [192, 84], "channels": 16},
+            "skip_role": "low_level_features (16 ch)"
+          },
+          {
+            "name": "down1",
+            "type": "sequential",
+            "input": {"shape": [192, 84], "channels": 16},
+            "ops": [
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 32, "kernel_size": 3, "stride": 2, "padding": 1, "bias": true},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [96, 42], "channels": 32}
+          },
+          {
+            "name": "aspp",
+            "type": "aspp",
+            "input": {"shape": [96, 42], "channels": 32},
+            "aspp_settings": {
+              "input_channels": 32,
+              "atrous_rates": [3, 6, 9, 12],
+              "n_atrous_branches": 4,
+              "include_1x1_pointwise_branch": true,
+              "include_gap_branch": true,
+              "output_channels_per_branch": 16,
+              "expected_post_concat_input_channels": 96,
+              "post_concat_input_channels_formula": "(n_atrous_branches + (1 if include_1x1_pointwise_branch else 0) + (1 if include_gap_branch else 0)) * output_channels_per_branch = (4 + 1 + 1) * 16 = 96"
+            },
+            "branches": [
+              {
+                "branch_id": 0,
+                "kind": "1x1_pointwise",
+                "ops": [
+                  {"op": "Conv2d", "in_channels": 32, "out_channels": 16, "kernel_size": 1, "stride": 1, "padding": 0, "bias": true, "groups": 1}
+                ],
+                "output_channels": 16,
+                "output_shape": [96, 42]
+              },
+              {
+                "branch_id": 1,
+                "kind": "atrous_3x3",
+                "atrous_rate": 3,
+                "ops": [
+                  {"op": "Conv2d", "in_channels": 32, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 3, "dilation": 3, "bias": true, "groups": 1}
+                ],
+                "output_channels": 16,
+                "output_shape": [96, 42]
+              },
+              {
+                "branch_id": 2,
+                "kind": "atrous_3x3",
+                "atrous_rate": 6,
+                "ops": [
+                  {"op": "Conv2d", "in_channels": 32, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 6, "dilation": 6, "bias": true, "groups": 1}
+                ],
+                "output_channels": 16,
+                "output_shape": [96, 42]
+              },
+              {
+                "branch_id": 3,
+                "kind": "atrous_3x3",
+                "atrous_rate": 9,
+                "ops": [
+                  {"op": "Conv2d", "in_channels": 32, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 9, "dilation": 9, "bias": true, "groups": 1}
+                ],
+                "output_channels": 16,
+                "output_shape": [96, 42]
+              },
+              {
+                "branch_id": 4,
+                "kind": "atrous_3x3",
+                "atrous_rate": 12,
+                "ops": [
+                  {"op": "Conv2d", "in_channels": 32, "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 12, "dilation": 12, "bias": true, "groups": 1}
+                ],
+                "output_channels": 16,
+                "output_shape": [96, 42]
+              },
+              {
+                "branch_id": 5,
+                "kind": "global_avg_pool",
+                "ops": [
+                  {"op": "AdaptiveAvgPool2d", "output_size": [1, 1]},
+                  {"op": "Conv2d", "in_channels": 32, "out_channels": 16, "kernel_size": 1, "stride": 1, "padding": 0, "bias": true, "groups": 1},
+                  {"op": "BilinearInterpolate", "target_size": [96, 42], "align_corners": false}
+                ],
+                "output_channels": 16,
+                "output_shape": [96, 42]
+              }
+            ],
+            "concat": {
+              "op": "Concat",
+              "with_branch_ids": [0, 1, 2, 3, 4, 5],
+              "result_channels": 96,
+              "result_channels_formula": "sum(branch.output_channels) = 16 * 6 = 96"
+            },
+            "post_concat": [
+              {"op": "Conv2d", "in_channels": 96, "out_channels": 32, "kernel_size": 1, "stride": 1, "padding": 0, "bias": true, "groups": 1},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [96, 42], "channels": 32}
+          },
+          {
+            "name": "low_level_proj",
+            "type": "decoder_block",
+            "input": {"shape": [192, 84], "channels": 16},
+            "ops": [
+              {"op": "Conv2d", "in_channels": 16, "out_channels": 16, "kernel_size": 1, "stride": 1, "padding": 0, "bias": true, "groups": 1},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [192, 84], "channels": 16}
+          },
+          {
+            "name": "decoder_fusion",
+            "type": "decoder_block",
+            "input": {"shape": [96, 42], "channels": 32},
+            "ops": [
+              {"op": "BilinearInterpolate", "target_size": [192, 84], "align_corners": false},
+              {"op": "Concat", "with_skip_role": "low_level_features", "with_channels": 16, "result_channels": 48},
+              {"op": "Conv2d", "in_channels": 48, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true, "groups": 1},
+              {"op": "ReLU", "inplace": true},
+              {"op": "Conv2d", "in_channels": 32, "out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": true, "groups": 1},
+              {"op": "ReLU", "inplace": true}
+            ],
+            "output": {"shape": [192, 84], "channels": 32}
+          },
+          {
+            "name": "final",
+            "type": "single_conv",
+            "op": "Conv2d",
+            "in_channels": 32,
+            "out_channels": 9,
+            "kernel_size": 1,
+            "stride": 1,
+            "padding": 0,
+            "bias": true,
+            "groups": 1,
+            "input": {"shape": [192, 84], "channels": 32},
+            "output": {"shape": [192, 84], "channels": 9}
+          }
+        ]
+      }
+    },
+    {
+      "name": "slp8_segformer_b0_v0.1",
+      "version": "slp8_segformer_b0_v0.1",
+      "architecture_hypothesis": "transformer_global_attention",
+      "role": "DEFERRED",
+      "description": "DEFERRED. SegFormer-B0 requires pretrained ImageNet weights by default. Inclusion in this protocol requires pre-freezing all fairness items before implementation (see segformer_fairness_deferred_items). CNN candidates train from scratch; SegFormer must not claim advantage from external pretraining without equivalent treatment. This candidate will NOT be added after seeing B04A Mini results.",
+      "source": "B04A protocol / NOT_IMPLEMENTED",
+      "max_parameters": null,
+      "exact_parameter_count": null,
+      "expected_parameters_approx": 3700000,
+      "pretrained": null,
+      "augmentation_policy": "n/a",
+      "deferred_reason": "Pretrained weight asymmetry creates unfair comparison with CNN candidates that train from scratch. All fairness items must be resolved before implementation. Strictly DEFERRED — not eligible for inclusion after Mini results are observed.",
+      "segformer_fairness_deferred_items": [
+        "single_channel (1-ch) input adaptation: convert 1-ch to 3-ch by replication or learned projection; must not silently assume RGB",
+        "input resize / padding policy: SegFormer's native resolution may not match [192, 84]; the resize method (bilinear vs. bicubic) and whether padding vs. cropping is used must be explicitly frozen",
+        "pretrained weight usage: either (a) strip pretrained weights and train from scratch, or (b) use pretrained weights but provide equivalent external knowledge to CNN candidates (e.g., supervised pretraining on SLP or related pressure data); the asymmetry must be documented and justified",
+        "augmentation parity: SegFormer augmentation policy must be identical to CNN candidates for a fair architecture comparison",
+        "optimizer and learning rate: SegFormer's typical lr (e.g., 6e-5 with layer-wise decay) differs from B04A CNN lr (0.001); the lr policy must be frozen as part of the candidate definition, not tuned post-hoc",
+        "parameter / memory / wall-time tier: SegFormer-B0 at ~3.7M params exceeds CNN candidates by ~25x; peak CUDA memory and wall-time budget must be separately specified; the comparison must remain within the same GPU tier",
+        "augmentation compatibility: SegFormer's pretrained augmentation (e.g., AutoAugment, RandAugment) must not be silently applied; augmentation policy must be frozen consistently across all candidates"
+      ],
+      "augmentation": null,
+      "architecture_freeze": null
+    }
+  ],
+
+  "dataset": {
+    "image_shape": [192, 84],
+    "n_classes": 9,
+    "pressure_storage_dtype": "float64",
+    "label_storage_dtype": "int64",
+    "model_input_dtype": "float32",
+    "dtype_conversion_policy": {
+      "rule": "Data loader reads pressure values as float64 from B01 freeze tables; converts to float32 at the moment the tensor is moved to the model input device (i.e., on `__getitem__` return, after normalization). Conversion site: `to(dtype=torch.float32)` immediately after the `raw_passthrough_with_minmax_reference` normalization step and before any augmentation.",
+      "input_storage_dtype": "float64",
+      "model_input_dtype": "float32",
+      "intermediate_dtype_in_normalization": "float64",
+      "augmentation_input_dtype": "float32",
+      "model_forward_input_dtype": "float32"
+    },
+    "raw_passthrough": {
+      "method": "raw_passthrough_with_minmax_reference",
+      "fit_split": "train",
+      "epsilon": 1e-12,
+      "raw_semantics": "raw_pmarray_response"
+    },
+    "test_access_policy": {
+      "load_test_default": false,
+      "load_test_in_mini": false,
+      "test_access_in_mini": "denied"
+    },
+    "class_weight_formula": {
+      "version": "slp8_class_weights_v0.1",
+      "source_split": "train",
+      "raw_weight": "1 / sqrt(pixel_ratio[c])",
+      "normalization": "weight[c] = raw_weight[c] / mean(raw_weight over foreground classes 1..8)",
+      "background_excluded_from_mean": true,
+      "foreground_class_ids": [1, 2, 3, 4, 5, 6, 7, 8],
+      "background_class_id": 0,
+      "background_weight": 1.0,
+      "clip": [0.25, 4.0]
+    }
+  },
+
+  "training": {
+    "seeds": [42, 123, 2026],
+    "device": "cuda",
+    "batch_size": 16,
+    "max_epochs": 30,
+    "min_epochs": 5,
+    "early_stopping": {
+      "monitor": "val_loss",
+      "mode": "min",
+      "patience": 4,
+      "min_delta": 0.0
+    },
+    "optimizer": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "scheduler": "none",
+    "num_workers": 0,
+    "gradient_clip_norm": null,
+    "amp_enabled": false,
+    "augmentation_policy_per_candidate": {
+      "rule": "ALL three B04A candidates use augmentation_policy='none'. Augmentation is a controlled variable and must be held constant across candidates to isolate the architecture hypothesis.",
+      "slp8_small_unet_v0.1": "none",
+      "slp8_resunet_lite_v0.1": "none",
+      "slp8_deeplabv3plus_lite_v0.1": "none"
+    }
+  },
+
+  "determinism": {
+    "cpu_threads": 1,
+    "use_deterministic_algorithms": true,
+    "cudnn_deterministic": true,
+    "cudnn_benchmark": false,
+    "omp_num_threads": 1,
+    "mkl_num_threads": 1,
+    "numpy_bit_generator": "PCG64"
+  },
+
+  "metrics": {
+    "primary_metrics": {
+      "scope": "fixed_foreground_only",
+      "fixed_foreground_class_ids": [1, 2, 3, 4, 5, 6, 7, 8],
+      "background_included_in_macro_average": false,
+      "rationale": "B04 contract. Background (class 0) is reported separately but NOT included in the macro IoU/Dice/precision/recall primary metrics. This matches B04 R05 and keeps the comparison consistent.",
+      "macro_iou_does_not_skip_empty_classes": true
+    },
+    "secondary_metrics": {
+      "background_iou": "reported separately in metrics_by_region.csv row for class 0",
+      "background_dice": "reported separately in metrics_by_region.csv row for class 0",
+      "pixel_accuracy": "reported as a secondary scalar in metrics_summary.json"
+    },
+    "compute_per_region": true,
+    "compute_per_posture": true,
+    "compute_per_subject": true,
+    "compute_centroid_error": true,
+    "centroid_normalization": "diagonal",
+    "centroid_max_when_gt_present_pred_missing": 1.0,
+    "compute_confusion_matrix": true,
+    "comparison_operator": {
+      "feasibility_threshold": "macro_iou >= 0.355644 (greater-than-or-equal)",
+      "worst_subject_floor": "worst_subject_macro_iou >= 0.20 (greater-than-or-equal)",
+      "per_region_floor": "per_region_iou[c] >= 0.05 (greater-than-or-equal) for every c in [1..8]"
+    }
+  },
+
+  "resource_budget": {
+    "per_candidate_wall_minutes": 45,
+    "per_candidate_wall_minutes_semantics": "Per-candidate wall time is the cumulative wall time of all 3 registered seeds for that candidate (cumulative seconds per candidate, not per-seed). Resume restores the cumulative accumulator and does not double-count.",
+    "total_wall_minutes": 135,
+    "total_wall_minutes_semantics": "Total wall time is the cumulative wall time across all 3 candidates in the serial run. This is 3 * 45 = 135 minutes. Resume restores the total accumulator.",
+    "max_peak_cuda_mb": 8192,
+    "candidates_serial": true,
+    "seeds_serial_within_candidate": true,
+    "checkpoint_resume_keeps_accumulators": {
+      "candidate_level": "BudgetAccumulatorState.candidate_seconds_consumed is saved per candidate in checkpoint payload and restored on resume; double-counting time after restart is forbidden.",
+      "total_level": "BudgetAccumulatorState.total_seconds_consumed is saved per candidate in checkpoint payload and restored on resume; double-counting total wall time after restart is forbidden."
+    }
+  },
+
+  "feasibility_gate": {
+    "b02_reference_val_fixed_iou": 0.205644,
+    "absolute_margin": 0.15,
+    "effective_threshold": 0.355644,
+    "threshold_formula": "b02_reference + absolute_margin",
+    "threshold_comparison_operator": ">=",
+    "min_candidates_feasible": 0,
+    "all_seeds_must_succeed": true,
+    "all_seeds_must_succeed_rationale": "If any registered seed of a candidate triggers a hard fail-closed gate (class collapse, worst-subject floor, per-region floor, NaN, OOM, etc.), the entire candidate is marked INFEASIBLE. macro_iou_mean is computed only when ALL registered seeds of a candidate pass all hard gates. It is forbidden to compute macro_iou_mean over only the remaining successful seeds (e.g., 2 of 3) and treat the candidate as feasible.",
+    "decision_rules": {
+      "0_feasible": "MINI_NOT_FEASIBLE (no candidate advances)",
+      "1_feasible": "advance the single feasible candidate",
+      "2_feasible": "advance both feasible candidates; B04A does not pick a champion",
+      "3_feasible": "advance the top 2 candidates by macro_iou_mean (descending), with near-tie tiebreak (prefer simpler when |diff| < 0.02)"
+    }
+  },
+
+  "class_collapse_guard": {
+    "definition": "A candidate is in class collapse when, across the entire VAL set, predictions for at least one foreground class (IDs 1-8) are absent (zero pixels predicted as that class). Specifically: if sum(predictions == class_id) == 0 for any class_id in [1..8] over the full VAL set, then class_collapse=true for that seed.",
+    "threshold": "zero predictions for any foreground class in the full VAL set",
+    "scope": "per_seed",
+    "candidate_level_effect": "If class_collapse=true for ANY registered seed, the entire candidate is marked INFEASIBLE (all_seeds_must_succeed=true).",
+    "fail_closed_action": "seed marked INFEASIBLE; propagates to candidate INFEASIBLE; candidate is not eligible for advancement."
+  },
+
+  "worst_subject_guardrail": {
+    "metric": "val_fixed_foreground_macro_iou_per_subject",
+    "threshold": 0.20,
+    "threshold_comparison_operator": ">=",
+    "scope": "per_seed",
+    "candidate_level_effect": "If worst_subject_macro_iou < 0.20 for ANY registered seed, the entire candidate is marked INFEASIBLE.",
+    "fail_closed_action": "seed marked INFEASIBLE; propagates to candidate INFEASIBLE.",
+    "policy_note": "The 0.20 threshold is a forward-looking policy floor selected to detect catastrophic per-subject failure (e.g., a candidate that fails to generalize to the hardest subject). It is NOT derived from the B02 baseline, NOT a percentage of any existing value, and NOT calibrated against B04 R05 results. The exact value is a project-policy decision that may be revisited in B07 with empirical evidence."
+  },
+
+  "per_region_guardrail": {
+    "metric": "val_fixed_iou_per_region",
+    "threshold": 0.05,
+    "threshold_comparison_operator": ">=",
+    "scope": "per_seed",
+    "candidate_level_effect": "If per_region_iou[c] < 0.05 for any c in [1..8] for ANY registered seed, the entire candidate is marked INFEASIBLE.",
+    "fail_closed_action": "seed marked INFEASIBLE; propagates to candidate INFEASIBLE."
+  },
+
+  "near_tie_margin": {
+    "metric": "macro_iou_mean_across_seeds",
+    "margin": 0.02,
+    "description": "If two feasible candidates differ by less than 0.02 in macro_iou_mean_across_seeds, the simpler model (lower parameter count) is preferred. If parameter counts are within 10%, tiebreak by worst-subject IoU.",
+    "prefer": "simpler_architecture_when_within_margin"
+  },
+
+  "max_candidates_to_advance": 2,
+
+  "candidate_decision_aggregation": {
+    "per_seed_decision": "feasible_or_infeasible_per_seed",
+    "candidate_feasibility_rule": "candidate_feasible = (all registered seeds pass all hard gates). If any seed fails, candidate INFEASIBLE.",
+    "macro_iou_mean_formula": "macro_iou_mean = mean(macro_iou[seed=42], macro_iou[seed=123], macro_iou[seed=2026]) computed only when all 3 seeds are feasible. Forbidden: computing mean over only 2 of 3 or 1 of 3 seeds.",
+    "final_decision_metric": "macro_iou_mean_across_seeds",
+    "description": "Per-seed feasibility is evaluated independently. If ANY registered seed fails any hard gate, the entire candidate is INFEASIBLE. If all 3 seeds are feasible, macro_iou_mean is the arithmetic mean over all 3. Near-tie and simplicity tiebreaks apply at the cross-seed level."
+  },
+
+  "segformer_deferred_decision": {
+    "candidate": "slp8_segformer_b0_v0.1",
+    "status": "DEFERRED",
+    "reason": "Pretrained weight asymmetry creates unfair comparison with CNN candidates that train from scratch. All fairness items must be resolved before implementation begins, not after Mini results are observed.",
+    "inclusion_requirements": "A separate protocol amendment approved by Owner before implementation begins. All items in segformer_fairness_deferred_items must be explicitly frozen with documented rationale. This candidate is NOT eligible for inclusion based on post-hoc Mini comparisons."
+  },
+
+  "lifecycle": {
+    "valid_terminal_states": ["DONE", "FAILED", "STOPPED"],
+    "exclusive_terminal_files": ["DONE.json", "FAILED.json", "STOPPED.json"]
+  },
+
+  "test_access_policy": {
+    "load_test_default": false,
+    "this_run_loads_test": false,
+    "test_access_in_this_run": "denied"
+  },
+
+  "expected_artifacts": [
+    "status.json",
+    "manifest.json",
+    "resolved_config.json",
+    "input_manifest_hashes.json",
+    "environment.json",
+    "epoch_metrics.csv",
+    "metrics_summary.json",
+    "metrics_by_region.csv",
+    "metrics_by_subject.csv",
+    "metrics_by_posture.csv",
+    "centroid_errors.csv",
+    "worst_subject.json",
+    "confusion_matrix.csv",
+    "predictions_manifest.csv",
+    "candidate_decision.json",
+    "reload_consistency.json",
+    "budget_report.json",
+    "logs/run.log",
+    "checkpoints/<candidate>/<seed>/best.pt",
+    "checkpoints/<candidate>/<seed>/last.pt",
+    "DONE.json or FAILED.json or STOPPED.json"
+  ],
+
+  "identity_hard_gate": {
+    "required_fields": [
+      "experiment_id",
+      "git_commit",
+      "git_dirty",
+      "config_sha256",
+      "data_manifest_sha256",
+      "split_sha256",
+      "model_version"
+    ],
+    "fail_closed_on_missing": true,
+    "carrier_format_by_file_type": {
+      "json_files": {
+        "rule": "Top-level fields with the exact required_fields names. No aliasing. Example: manifest.json has keys 'experiment_id','git_commit','git_dirty','config_sha256','data_manifest_sha256','split_sha256','model_version' as immediate children of the top-level object.",
+        "examples": ["manifest.json", "resolved_config.json", "metrics_summary.json", "worst_subject.json", "candidate_decision.json", "reload_consistency.json", "budget_report.json", "environment.json", "input_manifest_hashes.json", "status.json", "DONE.json", "FAILED.json", "STOPPED.json"]
+      },
+      "csv_files": {
+        "rule": "Sibling identity file with the same basename + '.identity.json'. The CSV itself is data only. Example: epoch_metrics.csv is paired with epoch_metrics.csv.identity.json containing the required_fields. Resolved paths: <output_dir>/epoch_metrics.csv and <output_dir>/epoch_metrics.csv.identity.json.",
+        "examples": ["epoch_metrics.csv", "metrics_by_region.csv", "metrics_by_subject.csv", "metrics_by_posture.csv", "centroid_errors.csv", "predictions_manifest.csv", "confusion_matrix.csv"]
+      },
+      "checkpoint_files": {
+        "rule": "Inside the checkpoint payload (torch.save dict) there is a key 'identity' whose value is a dict with the required_fields. Example: torch.load(best.pt)['identity'] contains {'experiment_id': ..., 'git_commit': ..., 'git_dirty': ..., 'config_sha256': ..., 'data_manifest_sha256': ..., 'split_sha256': ..., 'model_version': ...}.",
+        "examples": ["checkpoints/<candidate>/<seed>/best.pt", "checkpoints/<candidate>/<seed>/last.pt"]
+      },
+      "log_files": {
+        "rule": "First line of every log file MUST be a single JSON object with the required_fields, terminated by a newline. Subsequent lines are free-form log records. Example: '{\"experiment_id\":\"EXP-...\",\"git_commit\":\"...\",...}\\n[2026-08-29 16:00:00] starting seed 42\\n...'.",
+        "examples": ["logs/run.log"]
+      }
+    }
+  },
+
+  "real_run_authorization": {
+    "required_flag": "--run-authorized",
+    "default_behavior": "refuse to read B01 freeze tables without --run-authorized",
+    "note": "GPU Mini requires separate Owner authorization after protocol review"
+  }
+}
