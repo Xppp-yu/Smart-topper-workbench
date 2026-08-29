@@ -2,7 +2,7 @@
 
 TASK-ID：`TASK-REPO-SLP-STATUS-AND-ROUTE-RECONCILIATION-v0.1`
 
-状态：`DOCUMENTATION_IMPLEMENTED / REVIEW_PENDING`
+状态：`DOCUMENTATION_ACCEPTED`
 
 ## Objective
 
@@ -70,6 +70,16 @@ B04 historical Mini (complete)
 - SegFormer-B0 是否进入本轮取决于单通道输入和预训练公平性合同；
 - SLP8 标签仍为 `NOT_REVIEWED` 自动接受参考，不是人工像素级或产品 GT。
 
+## Reviewer acceptance
+
+- 日期：2026-08-29；
+- 基线：`origin/main @ acf57c1`；
+- 范围：14 份 Markdown 文档，无代码、数据或实验产物；
+- `git diff --check`：PASS；
+- 本地 Markdown 相对链接检查：PASS；
+- GitHub PR 评论、Review Thread 和阻塞检查：无；
+- Reviewer verdict：`ACCEPT`，仅接受本次状态收敛与 B04A 路线文档，不接受任何尚未执行的协议、实现或实验。
+
 ## Next gate
 
-Reviewer 先验收本次文档一致性；之后只允许启动 B04A 协议冻结任务。协议获接受前不得实现候选，真实 GPU Mini 仍需 Owner 另行授权。
+本次文档一致性已通过 Reviewer 验收。下一允许任务是独立的 B04A 协议冻结；该协议获 Reviewer 接受前不得实现候选，真实 GPU Mini 仍需 Owner 另行授权。

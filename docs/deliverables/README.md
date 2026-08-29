@@ -10,7 +10,7 @@
 | S2-B02 | TASK-SLP-B02-... | Non-Learning Region Baseline | DONE | [B02 Stage Report](../stage_reports/S2_B02_SLP8_NON_LEARNING_REGION_BASELINE_v0.2.md) |
 | S2-B03 | TASK-SLP-B03-... | PM-only Region Smoke | DONE | [B03 交付说明](SLP/B03_PM_ONLY_REGION_SMOKE_v0.1.md) |
 | S2-B04 | TASK-SLP-B04-... | PM-only Region Mini | DONE_WITH_LIMITATIONS | [B04 Protocol/Runner](SLP/B04_PM_ONLY_REGION_MINI_PROTOCOL_v0.1.md)；[B04 R05 Results](SLP/B04_PM_ONLY_REGION_MINI_RESULTS_v0.1.md) |
-| S2-B04A | TASK-SLP-B04A-... | PM-only Architecture Expansion Mini | DOCUMENTATION_REVIEW_PENDING | [B04A 任务合同](../tasks/TASK_SLP_B04A_PM_ARCHITECTURE_EXPANSION_MINI_v0.1.md) |
+| S2-B04A | TASK-SLP-B04A-... | PM-only Architecture Expansion Mini | ROUTE_DOCUMENTATION_ACCEPTED / PROTOCOL_NOT_STARTED | [B04A 任务合同](../tasks/TASK_SLP_B04A_PM_ARCHITECTURE_EXPANSION_MINI_v0.1.md) |
 
 ## 最新 Stage Report
 

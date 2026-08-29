@@ -225,7 +225,7 @@ Reviewer checklist:
 
 ### TASK-SLP-B04A：PM-only Architecture Expansion Mini
 
-- 状态：`DOCUMENTATION_REVIEW_PENDING / IMPLEMENTATION_NOT_STARTED`。
+- 状态：`ROUTE_DOCUMENTATION_ACCEPTED / PROTOCOL_NOT_STARTED / IMPLEMENTATION_NOT_STARTED`。
 - 目标：在不改写 B04 历史的前提下，以 SmallUNet 为 incumbent，受控比较 residual CNN、atrous/multi-scale CNN 和可选 transformer 三类不同架构假设，最多保留 1–2 个进入 B07。
 - 当前候选范围：`slp8_small_unet_v0.1`、待实现的 ResUNet-lite、待实现的 DeepLabV3+-lite；SegFormer-B0 仅在单通道输入、预训练权重、增强和资源公平性可预先冻结时纳入，否则记录为 `DEFERRED`。
 - 增强 Gate：Macro IoU 必须超过 B02 baseline 加预注册 margin；不得发生 class collapse；必须报告全部 8 区、worst subject 和 posture；checkpoint reload 必须一致；资源预算必须通过；TRAIN/VAL subject overlap=0；TEST=0。
