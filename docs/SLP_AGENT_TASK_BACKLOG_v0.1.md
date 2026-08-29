@@ -225,14 +225,16 @@ Reviewer checklist:
 
 ### TASK-SLP-B04A：PM-only Architecture Expansion Mini
 
-- 状态：`ROUTE_DOCUMENTATION_ACCEPTED / PROTOCOL_NOT_STARTED / IMPLEMENTATION_NOT_STARTED`。
+- 状态：`PROTOCOL_ACCEPTED / IMPLEMENTATION_NOT_STARTED`（R03，2026-08-29；Codex Reviewer 已独立验收）。
 - 目标：在不改写 B04 历史的前提下，以 SmallUNet 为 incumbent，受控比较 residual CNN、atrous/multi-scale CNN 和可选 transformer 三类不同架构假设，最多保留 1–2 个进入 B07。
-- 当前候选范围：`slp8_small_unet_v0.1`、待实现的 ResUNet-lite、待实现的 DeepLabV3+-lite；SegFormer-B0 仅在单通道输入、预训练权重、增强和资源公平性可预先冻结时纳入，否则记录为 `DEFERRED`。
-- 增强 Gate：Macro IoU 必须超过 B02 baseline 加预注册 margin；不得发生 class collapse；必须报告全部 8 区、worst subject 和 posture；checkpoint reload 必须一致；资源预算必须通过；TRAIN/VAL subject overlap=0；TEST=0。
+- 已冻结候选：`slp8_small_unet_v0.1`（incumbent, 118,121 params）、`slp8_resunet_lite_v0.1`（new, 120,809 params, 1x1 Conv2d shortcut）、`slp8_deeplabv3plus_lite_v0.1`（new, 53,449 params, Option A plain atrous）；SegFormer-B0 `DEFERRED`（7 项公平性前置项目未解决）。
+- 已冻结协议：`configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json`；阈值=0.355644（B02 0.205644 + margin 0.15）；seeds=[42,123,2026]；3 候选 aug=none；ResUNet shortcut 显式 1x1 Conv2d（无 Identity / extra conv）；DeepLab 选 Option A（无 Xception / depthwise-separable）；参数上限 300,000；class collapse/worst-subject/per-region guardrails；`all_seeds_must_succeed=true`。
+- exact_parameter_count 字段：3 候选均加入，验证器递归计算 Conv2d 参数并匹配（118,121 / 120,809 / 53,449）。
+- 验证器：`scripts/validate_b04a_protocol.py` + `tests/test_b04a_protocol_validator.py`（50 个测试：27 R02 + 23 R03）+ `scripts/check_markdown_links.py` + `tests/test_check_markdown_links.py`（6 个）；合计 56 个测试，全部通过。
 - 分阶段：先协议 Reviewer，再实现与 CPU/最小 CUDA Smoke，再由 Owner 单独授权真实 GPU Mini，最后由 Codex Reviewer 验收。任何前序完成不得冒充后序完成。
 - 输出：版本化协议/配置、候选注册与测试、不可覆盖的 EXP-ID 产物、逐候选决策和阶段报告。
 - 禁止：在本任务的文档阶段写模型或运行研究计算；在看到新候选结果后修改 Gate；把 Mini 称为最终排名；读取 TEST；外推到产品或硬件。
-- 入口：`docs/tasks/TASK_SLP_B04A_PM_ARCHITECTURE_EXPANSION_MINI_v0.1.md`。
+- 入口：`tasks/TASK_SLP_B04A_PROTOCOL_FREEZE_v0.1.md`；[阶段报告](stage_reports/S2_B04A_SLP8_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)；[交付说明](deliverables/SLP/B04A_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 
