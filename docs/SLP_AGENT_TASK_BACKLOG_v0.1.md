@@ -225,16 +225,19 @@ Reviewer checklist:
 
 ### TASK-SLP-B04A：PM-only Architecture Expansion Mini
 
-- 状态：`PROTOCOL_ACCEPTED / IMPLEMENTATION_NOT_STARTED`（R03，2026-08-29；Codex Reviewer 已独立验收）。
+- 状态：`PROTOCOL_ACCEPTED / IMPLEMENTATION_SMOKE_ACCEPTED / RUNNER_INTEGRATION_NOT_STARTED`（R03 协议冻结 + Implementation+Smoke，2026-08-29；Codex Reviewer 独立复跑通过）。
 - 目标：在不改写 B04 历史的前提下，以 SmallUNet 为 incumbent，受控比较 residual CNN、atrous/multi-scale CNN 和可选 transformer 三类不同架构假设，最多保留 1–2 个进入 B07。
-- 已冻结候选：`slp8_small_unet_v0.1`（incumbent, 118,121 params）、`slp8_resunet_lite_v0.1`（new, 120,809 params, 1x1 Conv2d shortcut）、`slp8_deeplabv3plus_lite_v0.1`（new, 53,449 params, Option A plain atrous）；SegFormer-B0 `DEFERRED`（7 项公平性前置项目未解决）。
+- 已冻结候选：`slp8_small_unet_v0.1`（incumbent, 118,121 params）、`slp8_resunet_lite_v0.1`（new, 120,809 params, 1x1 Conv2d shortcut；shortcut 精确分解 `enc1=32 + enc2=544 + bottleneck=2112 = 2,688 = ResUNet - SmallUNet`）、`slp8_deeplabv3plus_lite_v0.1`（new, 53,449 params, Option A plain atrous）；SegFormer-B0 `DEFERRED`（7 项公平性前置项目未解决）。
 - 已冻结协议：`configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json`；阈值=0.355644（B02 0.205644 + margin 0.15）；seeds=[42,123,2026]；3 候选 aug=none；ResUNet shortcut 显式 1x1 Conv2d（无 Identity / extra conv）；DeepLab 选 Option A（无 Xception / depthwise-separable）；参数上限 300,000；class collapse/worst-subject/per-region guardrails；`all_seeds_must_succeed=true`。
 - exact_parameter_count 字段：3 候选均加入，验证器递归计算 Conv2d 参数并匹配（118,121 / 120,809 / 53,449）。
-- 验证器：`scripts/validate_b04a_protocol.py` + `tests/test_b04a_protocol_validator.py`（50 个测试：27 R02 + 23 R03）+ `scripts/check_markdown_links.py` + `tests/test_check_markdown_links.py`（6 个）；合计 56 个测试，全部通过。
-- 分阶段：先协议 Reviewer，再实现与 CPU/最小 CUDA Smoke，再由 Owner 单独授权真实 GPU Mini，最后由 Codex Reviewer 验收。任何前序完成不得冒充后序完成。
-- 输出：版本化协议/配置、候选注册与测试、不可覆盖的 EXP-ID 产物、逐候选决策和阶段报告。
-- 禁止：在本任务的文档阶段写模型或运行研究计算；在看到新候选结果后修改 Gate；把 Mini 称为最终排名；读取 TEST；外推到产品或硬件。
-- 入口：`tasks/TASK_SLP_B04A_PROTOCOL_FREEZE_v0.1.md`；[阶段报告](stage_reports/S2_B04A_SLP8_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)；[交付说明](deliverables/SLP/B04A_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)。
+- 实现：`src/topper_perception/neural/slp8_region_models.py` 追加 `_ResidualBlock` / `Slp8ResUnetLite` / `_AsppModule` / `Slp8DeepLabV3PlusLite` 与对应工厂 / registry 条目；`Slp8SmallUnet` 行为未变（38 + 15 个 B04 回归测试全通过）。
+- 验证器：`scripts/validate_b04a_protocol.py`（30 OKs / 0 errors）+ `tests/test_b04a_protocol_validator.py`（27 R02 + 23 R03）+ `tests/test_check_markdown_links.py`（6）+ `tests/test_b04a_implementation.py`（79 聚焦实现测试）= 135 项全部通过；B04A 涉及 markdown 相对链接检查 0 errors。
+- Smoke：`scripts/smoke_b04a_implementation.py` 在 CPU 上对三候选完成 forward + backward + checkpoint roundtrip + same-seed determinism；支持 `--output` / `--force` / `--no-write`；默认拒绝覆盖已存在输出；`test_access.kind = "declarative_policy"`（非运行时计数）；CUDA Smoke 显式 `NOT_RUN`（本机 `torch==2.13.0+cpu` CPU-only build）。
+- **现有 B04 runner 拒绝 B04A config**（实测 `ConfigValidationError`：`B04_CANDIDATE_NAMES` 不含 B04A 候选名 + `task_id` 不匹配）——B04A runner integration **未完成**，属于下一个独立 TASK。
+- Codex Reviewer 独立验收：核心套件 **173 / 173**、B04 相关回归 **15 / 15**、协议验证 **30 OKs / 0 errors**、链接检查、编译、CPU no-write smoke 与 `git diff --check` 均通过；TEST = 0。
+- 阶段名 = `IMPLEMENTATION_SMOKE_ACCEPTED`；这仅接受实现与合成 Smoke，**不得**声明 `RUNNER_INTEGRATION_COMPLETE` / `GPU_MINI_AUTHORIZED` / `MINI_COMPLETE` / `B07_READY`。
+- 入口：`tasks/TASK_SLP_B04A_PROTOCOL_FREEZE_v0.1.md`（协议）；`tasks/TASK_SLP_B04A_IMPLEMENTATION_SMOKE_v0.1.md`（实现+Smoke）；[B04A Protocol 阶段报告](stage_reports/S2_B04A_SLP8_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)；[B04A Implementation+Smoke 阶段报告](stage_reports/S2_B04A_IMPLEMENTATION_SMOKE_v0.1.md)；[B04A 交付说明](deliverables/SLP/B04A_PM_ARCHITECTURE_EXPANSION_MINI_PROTOCOL_v0.1.md)。
+- 下一 Gate：**`TASK-SLP-B04A-RUNNER-INTEGRATION-SMOKE-v0.1`**（扩展 `B04_CANDIDATE_NAMES` / `task_id` / 配置 schema，让 B04 runner 接受 B04A config 并跑 runner-integration smoke；**不得**跳到 B04A-MINI-RUN）；B04A-MINI-RUN 仍 `BLOCKED`，需 Owner 单独授权 + 真实 GPU；B07 仍 `BLOCKED_BY_B04A`。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 
