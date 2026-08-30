@@ -14,6 +14,18 @@ This script is the B04 entry point.  It enforces the B04 governance:
   read any real B01 path when ``--run-authorized`` is missing.  The
   current task never exercises the real B01 path.
 
+Experiment identity carrier (TASK-SLP-B04A-EXPERIMENT-IDENTITY-
+CARRIER-FIX-v0.1):
+
+* ``--experiment-id EXP-...`` is an explicit Owner-supplied EXP-ID.
+  A real B01 run with ``--run-authorized`` requires a non-empty
+  Owner-supplied ``--experiment-id``; missing/blank/malformed EXP-ID
+  fails closed before any B01 data is read and before the requested
+  output directory is created.
+* The synthetic CPU smoke modes use a fixed sentinel EXP-ID and a
+  deterministic synthetic data-manifest hash; both are explicit and
+  cannot be confused with a real B01 identity.
+
 Usage (default = --validate-config)::
 
     uv run python scripts/run_slp8_region_mini.py \\
@@ -34,7 +46,8 @@ Real run (NOT executed by B04 v0.1; requires explicit --run-authorized)::
         --output-dir outputs/experiments/EXP-SLP-B04-PM-REGION-MINI-20260827-R01 \\
         --b01-freeze-dir <B01_FREEZE_DIR> \\
         --dataset-root <SLP8_DATASET_ROOT> \\
-        --run-authorized
+        --run-authorized \\
+        --experiment-id EXP-SLP-B04-PM-REGION-MINI-20260827-R01
 """
 
 from __future__ import annotations
@@ -97,14 +110,19 @@ from topper_perception.neural.slp8_region_mini import (
     B04A_SEEDS,
     B04A_TASK_ID,
     CHECKPOINT_VERSION,
+    ExperimentIdentityError,
     MINI_VERSION,
     SYNTHETIC_DEFAULTS,
     SYNTHETIC_DEFAULTS_B04A,
+    SYNTHETIC_EXP_ID,
     TASK_ID,
     MiniConfig,
     MiniProtocolError,
     OutputCollisionError,
     ResourceBudget,
+    RunAuthorizationError,
+    _b04a_identity_block,
+    _compute_synthetic_manifest_sha256,
     _gather_environment,
     _protocol_of_config,
     _write_b04a_run_bundle,
@@ -125,6 +143,7 @@ from topper_perception.neural.slp8_region_models import (
     B04A_EXACT_PARAMETER_COUNTS,
     B04A_MAX_PARAMETERS,
     DEEPLABV3PLUS_LITE_VERSION,
+    MODEL_REGISTRY,
     MODEL_VERSION,
     RESUNET_LITE_VERSION,
     SMALL_UNET_VERSION,
@@ -177,6 +196,128 @@ def _json_default(obj: Any) -> Any:
     if isinstance(obj, Path):
         return str(obj)
     return str(obj)
+
+
+# ---------------------------------------------------------------------------
+# Post-validation identity construction (R03 ITERATE)
+# ---------------------------------------------------------------------------
+
+
+def _build_post_validation_identity(
+    args: argparse.Namespace,
+    *,
+    frozen_git_commit: str,
+    frozen_git_dirty: bool,
+) -> dict[str, Any]:
+    """Construct the run-level identity block for a post-validation FAILED artifact.
+
+    The CLI's main ``except`` block calls this helper before
+    writing ``FAILED.json`` / ``status.json`` so the terminal
+    JSON always carries the seven required identity fields.  The
+    helper is fail-closed: if any of the seven required fields
+    cannot be safely determined (e.g. ``args.config`` is missing
+    or unreadable, ``args.b01_freeze_dir`` is missing on a real
+    B01 path), it raises :class:`MiniProtocolError` so the
+    main ``except`` block can return 2 instead of writing a
+    half-baked FAILED.json.  Pre-validation rejections continue
+    to use the no-write ``non_mutating`` path; this helper is
+    only invoked on the post-validation path (TASK-SLP-B04A-
+    EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1 R03 ITERATE).
+
+    R04 ITERATE: the helper does NOT re-resolve Git identity.  The
+    caller MUST supply the ``frozen_git_commit`` /
+    ``frozen_git_dirty`` values captured at CLI dispatch time
+    (R04 ITERATE: single run identity source).  Re-resolving
+    during exception handling would let a "current state" Git
+    HEAD drift into the post-validation FAILED artifact, which
+    would silently break the contract that all carriers in one
+    run share the run-start identity.
+    """
+
+    from topper_perception.neural.slp8_region_mini import (
+        _b04a_identity_block,
+        _build_run_level_model_version,
+        _compute_synthetic_manifest_sha256,
+        build_mini_config,
+        validate_mini_config,
+    )
+
+    config_path = getattr(args, "config", None)
+    if config_path is None or not Path(config_path).is_file():
+        raise MiniProtocolError(
+            "_build_post_validation_identity: args.config is missing "
+            "or not a file; cannot construct config_sha256 or split_sha256"
+        )
+    config_sha256 = file_sha256(Path(config_path))
+    raw = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    validate_mini_config(raw)
+    config = build_mini_config(
+        raw,
+        b01_freeze_dir="<POST_VALIDATION>",
+        data_root="<POST_VALIDATION>",
+        config_path=str(config_path),
+    )
+    split_sha256 = str(config.b01_a06_split_sha256_expected)
+    if config.protocol == B04A_PROTOCOL_NAME:
+        model_version = _build_run_level_model_version(list(config.candidates))
+    else:
+        # B04 protocol: the historical multi_candidate equivalent
+        # is just the ordered active candidate set.
+        model_version = _build_run_level_model_version(
+            [c for c in B04_CANDIDATE_NAMES if c in MODEL_REGISTRY]
+        )
+    is_synthetic = bool(
+        getattr(args, "synthetic_cpu_smoke", False)
+        or getattr(args, "synthetic_cpu_smoke_b04a", False)
+    )
+    is_real_b01 = bool(
+        getattr(args, "b01_freeze_dir", None) is not None
+        or getattr(args, "dataset_root", None) is not None
+    )
+    if is_real_b01 and getattr(args, "experiment_id", None):
+        experiment_id = str(args.experiment_id).strip()
+        if not experiment_id:
+            raise MiniProtocolError(
+                "_build_post_validation_identity: real B01 path "
+                "but --experiment-id is empty after strip"
+            )
+        if experiment_id == SYNTHETIC_EXP_ID:
+            raise MiniProtocolError(
+                "_build_post_validation_identity: real B01 path "
+                "but --experiment-id is the synthetic sentinel"
+            )
+        b01_freeze_dir = Path(getattr(args, "b01_freeze_dir"))
+        freeze_manifest_path = b01_freeze_dir / "freeze_manifest.json"
+        if not freeze_manifest_path.is_file():
+            raise MiniProtocolError(
+                "_build_post_validation_identity: real B01 path but "
+                f"freeze_manifest.json is missing at {freeze_manifest_path}"
+            )
+        data_manifest_sha256 = sha256_file(freeze_manifest_path)
+    else:
+        experiment_id = SYNTHETIC_EXP_ID
+        data_manifest_sha256 = _compute_synthetic_manifest_sha256()
+
+    # R04 ITERATE: use the frozen git identity captured at CLI
+    # dispatch time.  Do NOT re-resolve here, because exception
+    # handling must not re-read Git state — that would break the
+    # R03 single run identity source contract.
+    git_commit = frozen_git_commit
+    git_dirty = frozen_git_dirty
+
+    block = _b04a_identity_block(
+        config=config,
+        config_sha256=config_sha256,
+        experiment_id=experiment_id,
+        data_manifest_sha256=data_manifest_sha256,
+        git_commit=git_commit,
+        git_dirty=git_dirty,
+    )
+    # The helper does not know whether the run is candidate-level or
+    # run-level; the post-validation FAILED is a run-level artifact,
+    # so ``model_version`` already holds the multi_candidate[...]
+    # string and no ``candidate`` / ``seed`` keys are added.
+    return block
 
 
 # ---------------------------------------------------------------------------
@@ -488,8 +629,18 @@ def _run_synthetic_cpu_smoke(
     output_dir: Path,
     *,
     resume_from: Path | None = None,
+    frozen_git_commit: str,
+    frozen_git_dirty: bool,
 ) -> int:
-    """Run the B04 Mini end-to-end on synthetic data with CPU only."""
+    """Run the B04 Mini end-to-end on synthetic data with CPU only.
+
+    R04 ITERATE: ``frozen_git_commit`` / ``frozen_git_dirty`` are
+    captured at CLI dispatch time and used verbatim by every
+    carrier in this run.  The handler MUST NOT re-resolve Git
+    identity; if the original dispatch already froze the
+    context, exception paths in the synthetic branch reuse the
+    same values via the dispatcher's frozen context.
+    """
 
     output_dir = Path(output_dir).resolve()
     check_output_dir_safety(output_dir)
@@ -769,6 +920,8 @@ def _run_synthetic_cpu_smoke_b04a(
     *,
     resume_from: Path | None = None,
     no_write: bool = False,
+    frozen_git_commit: str,
+    frozen_git_dirty: bool,
 ) -> int:
     """Run the B04A Mini on synthetic CPU data.
 
@@ -785,6 +938,13 @@ def _run_synthetic_cpu_smoke_b04a(
     The output policy is identical to the B04 smoke:
     ``--no-write`` exits 0 without writing any artifact; otherwise
     the existing output directory is refused (collision rule).
+
+    R04 ITERATE: ``frozen_git_commit`` / ``frozen_git_dirty`` are
+    captured at CLI dispatch time and threaded into the
+    orchestrator entry point.  The handler MUST NOT re-resolve
+    Git identity; the orchestrator passes them into
+    ``run_mini_b04a`` so every (candidate, seed) CheckpointIdentity
+    in this run records the run-start SHA.
     """
 
     output_dir = Path(output_dir).resolve()
@@ -908,6 +1068,14 @@ def _run_synthetic_cpu_smoke_b04a(
     assert_class_weight_invariants(class_weight_result)
 
     t_start = time.perf_counter()
+    # Pass the synthetic EXP-ID and the deterministic synthetic
+    # data-manifest hash to the B04A orchestrator.  Without this
+    # the per-seed ``CheckpointIdentity`` in ``best.pt`` /
+    # ``last.pt`` would carry empty strings for these two fields;
+    # the R02 ITERATE Reviewer flagged this defect.
+    synthetic_data_manifest_sha256 = _compute_synthetic_manifest_sha256()
+    # R05 ITERATE: pass the CLI dispatch-time frozen Git identity.
+    # run_mini_b04a() does NOT re-resolve; every carrier uses these.
     result = run_mini_b04a(
         config=config,
         train_dataset=train_dataset,
@@ -924,6 +1092,10 @@ def _run_synthetic_cpu_smoke_b04a(
         train_class_stats_source="synthetic_train_class_stats",
         synthetic=True,
         budget=budget,
+        experiment_id=SYNTHETIC_EXP_ID,
+        data_manifest_sha256=synthetic_data_manifest_sha256,
+        git_commit=frozen_git_commit,
+        git_dirty=frozen_git_dirty,
     )
     t_end = time.perf_counter()
     result.wall_clock_seconds = float(t_end - t_start)
@@ -963,6 +1135,11 @@ def _run_synthetic_cpu_smoke_b04a(
         return 0
 
     config_sha256 = file_sha256(config_path)
+    # The synthetic CPU smoke uses a fixed sentinel EXP-ID and a
+    # deterministic synthetic data-manifest hash.  Both are explicit
+    # and cannot be confused with a real B01 identity; every carrier
+    # also marks ``synthetic=True``.
+    synthetic_manifest_sha256 = _compute_synthetic_manifest_sha256()
     _write_b04a_run_bundle(
         output_dir=output_dir,
         result=result,
@@ -970,9 +1147,26 @@ def _run_synthetic_cpu_smoke_b04a(
     )
 
     # Terminal file (DONE/FAILED/STOPPED) — mutually exclusive.
+    # The seven required identity fields are merged at the top
+    # level of the terminal JSON so a Reviewer can audit
+    # DONE/FAILED/STOPPED with the same identity contract used
+    # everywhere else in the B04A bundle.  Git identity comes
+    # from the run-level ``B04ARunResult`` so the terminal JSON
+    # cannot disagree with the rest of the bundle (R03 ITERATE:
+    # single run identity source).
+    config_sha256 = file_sha256(config_path)
+    terminal_identity = _b04a_identity_block(
+        config=result.config,
+        config_sha256=config_sha256,
+        experiment_id=result.experiment_id,
+        data_manifest_sha256=result.data_manifest_sha256,
+        git_commit=result.git_commit,
+        git_dirty=result.git_dirty,
+    )
     write_status_files(
         output_dir,
         status=result.terminal_state,
+        identity=terminal_identity,
         extra={
             "task_id": result.config.task_id,
             "protocol": result.config.protocol,
@@ -1178,12 +1372,22 @@ def _run_real_b01_b04(
     config: "MiniConfig",
     b01: dict[str, Any],
     log_path: Path,
+    experiment_id: str,
+    frozen_git_commit: str,
+    frozen_git_dirty: bool,
 ) -> int:
     """Run the B04 (single-seed) real B01 path.
 
     Pulled out of ``_run_real_b01`` so the protocol dispatch is
     trivially testable and the B04A real path can be implemented
     symmetrically without falling through the wrong orchestrator.
+    The CLI-supplied Owner ``experiment_id`` and the on-disk
+    ``freeze_manifest.json`` file SHA-256 (``fm_file_sha``) are
+    propagated to every CheckpointIdentity.
+
+    R04 ITERATE: ``frozen_git_commit`` / ``frozen_git_dirty`` are
+    captured at CLI dispatch time and propagated to
+    ``run_mini``; the handler MUST NOT re-resolve.
     """
 
     def _log(msg: str) -> None:
@@ -1290,6 +1494,8 @@ def _run_real_b01_b04(
         synthetic=False,
         b01_contract_report=b01["b01_contract_report"],
         resume_from_per_candidate=resume_from_per_candidate,
+        experiment_id=experiment_id,
+        data_manifest_sha256=str(b01["fm_file_sha"]),
     )
     t_end = time.perf_counter()
     result.wall_clock_seconds = float(t_end - t_start)
@@ -1302,6 +1508,12 @@ def _run_real_b01_b04(
     write_status_files(
         output_dir,
         status=result.terminal_state,
+        identity={
+            "experiment_id": experiment_id,
+            "data_manifest_sha256": str(b01["fm_file_sha"]),
+            "data_manifest_source": "freeze_manifest_file_sha256",
+            "synthetic": False,
+        },
         extra={
             "task_id": TASK_ID,
             "protocol": config.protocol,
@@ -1346,6 +1558,9 @@ def _run_real_b01_b04a(
     config: "MiniConfig",
     b01: dict[str, Any],
     log_path: Path,
+    experiment_id: str,
+    frozen_git_commit: str,
+    frozen_git_dirty: bool,
 ) -> int:
     """Run the B04A (three-seed) real B01 path.
 
@@ -1357,7 +1572,10 @@ def _run_real_b01_b04a(
     3. Calls :func:`run_mini_b04a`, which iterates
        ``candidates × seeds`` with per-seed identity, per-seed
        budget accumulator, ``all_seeds_must_succeed``, and the
-       B04A candidate-level decision rules.
+       B04A candidate-level decision rules.  The CLI-supplied
+       Owner ``experiment_id`` and the on-disk
+       ``freeze_manifest.json`` file SHA-256 (``fm_file_sha``)
+       propagate to every per-seed CheckpointIdentity.
     4. Auto-detects per-(candidate, seed) resume mapping from
        ``checkpoints/<candidate>/seed_<seed>/last.pt``.
     5. Writes B04A artifacts (manifest, candidate_decision with
@@ -1366,8 +1584,10 @@ def _run_real_b01_b04a(
        mutually-exclusive terminal file.
 
     No real data is loaded by this task; the dispatch is
-    unit-tested via mocks/stubs.  ``--run-authorized`` is still
-    required (B04 and B04A both gate on it).
+    unit-tested via mocks/stubs.  ``--run-authorized`` and
+    ``--experiment-id`` are both required (B04 and B04A both gate
+    on them) and are validated by :func:`main` BEFORE this
+    function is called.
     """
 
     def _log(msg: str) -> None:
@@ -1458,6 +1678,8 @@ def _run_real_b01_b04a(
     _write_json(
         output_dir / "input_manifest_hashes.json",
         {
+            "experiment_id": experiment_id,
+            "data_manifest_source": "freeze_manifest_file_sha256",
             "config_sha256": config_sha256,
             "freeze_manifest_file_sha256": b01["fm_file_sha"],
             "freeze_manifest_core_sha256": (
@@ -1473,6 +1695,12 @@ def _run_real_b01_b04a(
     _write_json(output_dir / "environment.json", _gather_environment())
 
     t_start = time.perf_counter()
+    # Real B01 runs use the on-disk ``freeze_manifest.json`` file
+    # SHA-256 (``b01["fm_file_sha"]``) as the data-manifest identity.
+    # The CLI has already verified that ``experiment_id`` is non-empty
+    # before reaching this point, so no fallback is needed here.
+    # R05 ITERATE: pass the CLI dispatch-time frozen Git identity.
+    # run_mini_b04a() does NOT re-resolve; every carrier uses these.
     result = run_mini_b04a(
         config=config,
         train_dataset=train_dataset,
@@ -1495,6 +1723,10 @@ def _run_real_b01_b04a(
         budget=budget,
         b01_contract_report=b01["b01_contract_report"],
         resume_from_per_candidate_seed=resume_per_candidate_seed,
+        experiment_id=experiment_id,
+        data_manifest_sha256=str(b01["fm_file_sha"]),
+        git_commit=frozen_git_commit,
+        git_dirty=frozen_git_dirty,
     )
     t_end = time.perf_counter()
     result.wall_clock_seconds = float(t_end - t_start)
@@ -1511,9 +1743,25 @@ def _run_real_b01_b04a(
         result=result,
         config_sha256=config_sha256,
     )
+    # The seven required identity fields are merged at the top
+    # level of the terminal JSON.  We rebuild the identity block
+    # from the frozen values held by the B04A result so the
+    # terminal file cannot disagree with the run-level bundle.
+    # Git identity comes from the run-level ``B04ARunResult`` so
+    # the terminal JSON cannot disagree with the rest of the
+    # bundle (R03 ITERATE: single run identity source).
+    terminal_identity = _b04a_identity_block(
+        config=config,
+        config_sha256=config_sha256,
+        experiment_id=result.experiment_id,
+        data_manifest_sha256=result.data_manifest_sha256,
+        git_commit=result.git_commit,
+        git_dirty=result.git_dirty,
+    )
     write_status_files(
         output_dir,
         status=result.terminal_state,
+        identity=terminal_identity,
         extra={
             "task_id": config.task_id,
             "protocol": config.protocol,
@@ -1540,6 +1788,9 @@ def _run_real_b01(
     dataset_root: Path,
     *,
     resume_from: Path | None = None,
+    experiment_id: str = "",
+    frozen_git_commit: str,
+    frozen_git_dirty: bool,
 ) -> int:
     """Run the B04 / B04A Mini on real B01 freeze tables.  Requires ``--run-authorized``.
 
@@ -1585,7 +1836,8 @@ def _run_real_b01(
         with open(_log_path, "a", encoding="utf-8") as f:
             f.write(
                 f"[{_now_iso()}] task_id={TASK_ID} config_path={config_path} "
-                f"protocol={B04_PROTOCOL_NAME} mode=real-b01-dispatch\n"
+                f"protocol={B04_PROTOCOL_NAME} mode=real-b01-dispatch "
+                f"experiment_id={experiment_id}\n"
             )
         b01 = _load_b01_freeze_and_contract(
             raw, b01_freeze_dir, dataset_root
@@ -1596,7 +1848,9 @@ def _run_real_b01(
                 f"train={b01['snapshot'].train_count} "
                 f"val={b01['snapshot'].val_count} "
                 f"test={b01['snapshot'].structural_test.sample_count} "
-                f"a06={b01['snapshot'].a06_split_sha256[:12]}…\n"
+                f"a06={b01['snapshot'].a06_split_sha256[:12]}… "
+                f"freeze_manifest_file_sha256="
+                f"{str(b01.get('fm_file_sha', ''))[:12] or '-'}…\n"
             )
         return _run_real_b01_b04(
             config_path=config_path,
@@ -1607,6 +1861,9 @@ def _run_real_b01(
             config=config,
             b01=b01,
             log_path=_log_path,
+            experiment_id=experiment_id,
+            frozen_git_commit=frozen_git_commit,
+            frozen_git_dirty=frozen_git_dirty,
         )
 
     if config.protocol == B04A_PROTOCOL_NAME:
@@ -1614,7 +1871,8 @@ def _run_real_b01(
         with open(_log_path, "a", encoding="utf-8") as f:
             f.write(
                 f"[{_now_iso()}] task_id={config.task_id} config_path={config_path} "
-                f"protocol={B04A_PROTOCOL_NAME} mode=real-b01-dispatch\n"
+                f"protocol={B04A_PROTOCOL_NAME} mode=real-b01-dispatch "
+                f"experiment_id={experiment_id}\n"
             )
         b01 = _load_b01_freeze_and_contract(
             raw, b01_freeze_dir, dataset_root
@@ -1625,7 +1883,9 @@ def _run_real_b01(
                 f"train={b01['snapshot'].train_count} "
                 f"val={b01['snapshot'].val_count} "
                 f"test={b01['snapshot'].structural_test.sample_count} "
-                f"a06={b01['snapshot'].a06_split_sha256[:12]}…\n"
+                f"a06={b01['snapshot'].a06_split_sha256[:12]}… "
+                f"freeze_manifest_file_sha256="
+                f"{str(b01.get('fm_file_sha', ''))[:12] or '-'}…\n"
             )
         return _run_real_b01_b04a(
             config_path=config_path,
@@ -1636,6 +1896,9 @@ def _run_real_b01(
             config=config,
             b01=b01,
             log_path=_log_path,
+            experiment_id=experiment_id,
+            frozen_git_commit=frozen_git_commit,
+            frozen_git_dirty=frozen_git_dirty,
         )
 
     raise MiniProtocolError(
@@ -1772,8 +2035,53 @@ def main(argv: list[str] | None = None) -> int:
             "checkpoints/<candidate>/last.pt and continues training."
         ),
     )
+    parser.add_argument(
+        "--experiment-id", dest="experiment_id", type=str, default=None,
+        help=(
+            "Owner-authorized EXP-ID for this run.  REQUIRED for any real "
+            "B01 run with --run-authorized.  The CLI fail-closes when the "
+            "value is missing, blank, or contains whitespace.  Synthetic "
+            "smoke modes ignore this flag (they use a fixed sentinel "
+            "EXP-ID) so a synthetic identity can never be confused with "
+            "a real B01 identity.  See "
+            "TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1."
+        ),
+    )
 
     args = parser.parse_args(argv)
+
+    # R04 ITERATE: freeze the run identity context BEFORE
+    # dispatching any handler.  The frozen values are the single
+    # source of truth for the entire bundle, including the
+    # post-validation FAILED path.  The handler must not re-resolve
+    # Git identity at exception time because that would silently
+    # let a "current state" Git HEAD drift into the FAILED artifact.
+    #
+    # If the resolver fails before any handler runs, the exception
+    # is a pre-validation failure (the run cannot even establish
+    # its identity context).  We let the dispatcher's exception
+    # path handle it: if it bubbles up before we have a frozen
+    # context, we cannot write a FAILED with the correct run-start
+    # Git SHA, so we return 2 (no-write / fail-closed) rather
+    # than write a partial FAILED.json.
+    try:
+        from topper_perception.neural.slp8_region_mini import (
+            _resolve_git_identity,
+        )
+
+        frozen_git_commit, frozen_git_dirty = _resolve_git_identity()
+    except Exception as resolve_exc:
+        # No identity context can be safely established.  Fail
+        # closed: do not write any file in the output directory,
+        # and do not invent a sentinel identity.
+        print(
+            f"REJECTED: unable to establish a frozen run identity "
+            f"context at CLI dispatch; refusing to start a run "
+            f"whose identity cannot be recorded.  resolver_error="
+            f"{resolve_exc!r}",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         # Mutual-exclusion: --validate-config and --synthetic-cpu-smoke
@@ -1794,7 +2102,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.synthetic_cpu_smoke:
             return _run_synthetic_cpu_smoke(
-                args.config, args.output_dir, resume_from=args.resume_from
+                args.config,
+                args.output_dir,
+                resume_from=args.resume_from,
+                frozen_git_commit=frozen_git_commit,
+                frozen_git_dirty=frozen_git_dirty,
             )
 
         if args.synthetic_cpu_smoke_b04a:
@@ -1803,6 +2115,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.output_dir,
                 resume_from=args.resume_from,
                 no_write=bool(args.no_write),
+                frozen_git_commit=frozen_git_commit,
+                frozen_git_dirty=frozen_git_dirty,
             )
 
         if args.b01_freeze_dir is not None or args.dataset_root is not None:
@@ -1817,21 +2131,56 @@ def main(argv: list[str] | None = None) -> int:
                 raise MiniProtocolError(
                     "real B01 run requires both --b01-freeze-dir and --dataset-root"
                 )
+            # The Owner-supplied EXP-ID is REQUIRED for any real B01 run.
+            # Validate it BEFORE creating the output directory so a
+            # missing/blank/malformed EXP-ID cannot mutate the
+            # operator's request.  Whitespace, empty string, and
+            # the synthetic sentinel are all rejected on a real path.
+            exp_id_raw = args.experiment_id
+            exp_id = str(exp_id_raw or "").strip()
+            if not exp_id:
+                raise ExperimentIdentityError(
+                    "real B01 run requires a non-empty Owner-supplied "
+                    "--experiment-id.  A TASK-ID-derived fallback is "
+                    "explicitly forbidden (TASK-SLP-B04A-EXPERIMENT-"
+                    "IDENTITY-CARRIER-FIX-v0.1).  Re-run with "
+                    "--experiment-id EXP-... to proceed."
+                )
+            if any(ch.isspace() for ch in str(exp_id_raw)):
+                raise ExperimentIdentityError(
+                    f"--experiment-id {exp_id_raw!r} contains whitespace; "
+                    "refusing to use a malformed EXP-ID for a real B01 run."
+                )
+            if exp_id == SYNTHETIC_EXP_ID:
+                raise ExperimentIdentityError(
+                    f"--experiment-id={SYNTHETIC_EXP_ID!r} is reserved for "
+                    "synthetic CPU smoke and cannot be used on a real B01 "
+                    "run.  Re-run with an Owner-supplied EXP-ID."
+                )
+            # Refuse to even create the output directory if the
+            # operator's request is invalid.
             return _run_real_b01(
                 args.config, args.output_dir, args.b01_freeze_dir, args.dataset_root,
                 resume_from=args.resume_from,
+                experiment_id=exp_id,
+                frozen_git_commit=frozen_git_commit,
+                frozen_git_dirty=frozen_git_dirty,
             )
 
         # No explicit mode supplied — default to validate-config.
         return _run_validate_config(args.config, args.output_dir)
     except Exception as exc:
         # When the exception is an ``OutputCollisionError`` or an
-        # authorization-rejection ``MiniProtocolError`` we MUST NOT
-        # create any file in the output directory: doing so would
-        # silently mutate the directory the operator just asked us
-        # to leave alone.  Only other (post-validation) errors write
-        # ``FAILED.json`` / ``status.json`` so the directory is
-        # auditable.
+        # authorization-rejection ``MiniProtocolError`` /
+        # ``ExperimentIdentityError`` / ``RunAuthorizationError`` we
+        # MUST NOT create any file in the output directory: doing so
+        # would silently mutate the directory the operator just asked
+        # us to leave alone.  Only other (post-validation) errors
+        # write ``FAILED.json`` / ``status.json`` so the directory is
+        # auditable, and the terminal JSON MUST carry the seven
+        # required identity fields (R03 ITERATE: identity is the
+        # single source of truth for the entire bundle, including
+        # post-validation FAILED / STOPPED artifacts).
         from topper_perception.neural.slp8_region_mini import (
             OutputCollisionError,
         )
@@ -1840,43 +2189,72 @@ def main(argv: list[str] | None = None) -> int:
             isinstance(exc, OutputCollisionError)
             or "--run-authorized was NOT set" in str(exc)
             or "real B01 run requires both" in str(exc)
+            or "--experiment-id" in str(exc)
+            or isinstance(exc, ExperimentIdentityError)
+            or isinstance(exc, RunAuthorizationError)
         )
         if non_mutating:
             print(f"REJECTED: {exc}", file=sys.stderr)
             return 2
 
+        # Post-validation path: build the run-level identity from
+        # the available CLI arguments AND the frozen git context
+        # captured at dispatch time (R04 ITERATE: do NOT re-resolve
+        # here).  If the helper cannot safely determine every field
+        # (e.g. the config JSON is unreadable or the B01 freeze dir
+        # is missing), we fail closed instead of writing a
+        # half-baked FAILED.json without the seven required identity
+        # fields.
+        try:
+            failed_identity = _build_post_validation_identity(
+                args,
+                frozen_git_commit=frozen_git_commit,
+                frozen_git_dirty=frozen_git_dirty,
+            )
+        except Exception as id_exc:
+            print(
+                f"REJECTED: post-validation exception AND identity "
+                f"construction both failed; refusing to write a "
+                f"partial FAILED.json.  original={exc!r} "
+                f"identity_error={id_exc!r}",
+                file=sys.stderr,
+            )
+            return 2
+
         output_dir = Path(args.output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
-        failed = {
-            "status": "FAILED",
-            "task_id": TASK_ID,
-            "error": f"{type(exc).__name__}: {exc}",
-            "traceback": traceback.format_exc(),
-            "ended_at_utc": _now_iso(),
+        failed_extra: dict[str, Any] = {
+            "mode": "validate-config"
+            if args.validate_config
+            else (
+                "synthetic-cpu-smoke"
+                if args.synthetic_cpu_smoke
+                else (
+                    "synthetic-cpu-smoke-b04a"
+                    if args.synthetic_cpu_smoke_b04a
+                    else "real-b01"
+                )
+            ),
+            "error": str(exc),
         }
         try:
             write_status_files(
                 output_dir,
                 status="FAILED",
-                extra={
-                    "mode": "validate-config"
-                    if args.validate_config
-                    else (
-                        "synthetic-cpu-smoke"
-                        if args.synthetic_cpu_smoke
-                        else "real-b01"
-                    ),
-                    "error": str(exc),
-                },
+                identity=failed_identity,
+                extra=failed_extra,
             )
         except Exception:
             pass
-        _write_json(output_dir / "status.json", {
-            "task_id": TASK_ID,
-            "status": "FAILED",
-            "error": str(exc),
-            "traceback": traceback.format_exc(),
-        })
+        _write_json(
+            output_dir / "status.json",
+            {
+                **failed_identity,
+                "task_id": TASK_ID,
+                "status": "FAILED",
+                **failed_extra,
+            },
+        )
         print(f"FAILED: {exc}", file=sys.stderr)
         return 1
 

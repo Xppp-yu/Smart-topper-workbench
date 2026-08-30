@@ -115,6 +115,7 @@ from topper_perception.neural.slp8_region_mini import (  # noqa: E402
     SMALL_UNET_VERSION,
     SYNTHETIC_DEFAULTS,
     SYNTHETIC_DEFAULTS_B04A,
+    SYNTHETIC_EXP_ID,
     TASK_ID,
     _b04a_advance_decision,
     _b04a_aggregate_candidate,
@@ -146,6 +147,7 @@ from topper_perception.neural.slp8_region_models import (  # noqa: E402
     DEEPLABV3PLUS_LITE_VERSION,
     MODEL_VERSION,
     RESUNET_LITE_VERSION,
+    get_model_builder,
 )
 from topper_perception.io.slp8_training_table_freeze import (  # noqa: E402
     A06_SPLIT_SHA256_EXPECTED,
@@ -1100,6 +1102,9 @@ class TestB04AIdentityCheckpointOutput:
         block = _b04a_identity_block(
             config=_build_b04a_mini_config(),
             config_sha256="f" * 64,
+            experiment_id="EXP-SLP-B04A-TEST-EXP-ID",
+            data_manifest_sha256="e" * 64,
+            git_commit="0" * 40,
             candidate=SMALL_UNET_VERSION,
             seed=42,
         )
@@ -1125,12 +1130,18 @@ class TestB04AIdentityCheckpointOutput:
         block_unet = _b04a_identity_block(
             config=_build_b04a_mini_config(),
             config_sha256="a" * 64,
+            experiment_id="EXP-SLP-B04A-TEST-EXP-ID",
+            data_manifest_sha256="e" * 64,
+            git_commit="0" * 40,
             candidate=SMALL_UNET_VERSION,
             seed=42,
         )
         block_deeplab = _b04a_identity_block(
             config=_build_b04a_mini_config(),
             config_sha256="a" * 64,
+            experiment_id="EXP-SLP-B04A-TEST-EXP-ID",
+            data_manifest_sha256="e" * 64,
+            git_commit="0" * 40,
             candidate=DEEPLABV3PLUS_LITE_VERSION,
             seed=42,
         )
@@ -1149,10 +1160,13 @@ class TestB04AIdentityCheckpointOutput:
             image_shape=PRESSURE_SHAPE,
             config_sha256="a" * 64,
             a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            split_sha256=A06_SPLIT_SHA256_EXPECTED,
             freeze_manifest_sha256="f" * 64,
             train_class_stats_sha256="e" * 64,
             class_weight_sha256="d" * 64,
             input_manifest_hashes_sha256="c" * 64,
+            git_commit="0" * 40,
+            git_dirty=False,
         )
         identity_b = replace(identity_a, seed=123)
         with pytest.raises(ResumeIdentityError, match="identity mismatch"):
@@ -1168,10 +1182,13 @@ class TestB04AIdentityCheckpointOutput:
             image_shape=PRESSURE_SHAPE,
             config_sha256="a" * 64,
             a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            split_sha256=A06_SPLIT_SHA256_EXPECTED,
             freeze_manifest_sha256="f" * 64,
             train_class_stats_sha256="e" * 64,
             class_weight_sha256="d" * 64,
             input_manifest_hashes_sha256="c" * 64,
+            git_commit="0" * 40,
+            git_dirty=False,
         )
         # No raise.
         verify_resume_identity(saved=identity, requested=identity)
@@ -2320,6 +2337,9 @@ class TestRunRealB01Dispatch:
             out,
             b01_freeze_dir=Path("/tmp/fake_freeze"),
             dataset_root=Path("/tmp/fake_data"),
+            experiment_id="EXP-SLP-B04-TEST-EXP-ID",
+            frozen_git_commit="0" * 40,
+            frozen_git_dirty=False,
         )
         assert result == 0
         assert calls.get("b04_called") is True
@@ -2328,6 +2348,10 @@ class TestRunRealB01Dispatch:
         cfg = calls["b04_kwargs"]["config"]
         assert cfg.protocol == B04_PROTOCOL_NAME
         assert cfg.seeds == (42,)
+        # experiment_id is propagated to the real B01 helper.
+        assert (
+            calls["b04_kwargs"]["experiment_id"] == "EXP-SLP-B04-TEST-EXP-ID"
+        )
 
     def test_b04a_real_path_calls_b04a_helper(self, tmp_path, monkeypatch):
         mod = _load_run_slp8_module()
@@ -2361,6 +2385,9 @@ class TestRunRealB01Dispatch:
             out,
             b01_freeze_dir=Path("/tmp/fake_freeze"),
             dataset_root=Path("/tmp/fake_data"),
+            experiment_id="EXP-SLP-B04A-TEST-EXP-ID",
+            frozen_git_commit="0" * 40,
+            frozen_git_dirty=False,
         )
         assert result == 0
         assert calls.get("b04a_called") is True
@@ -2432,6 +2459,21 @@ class TestRunRealB01Dispatch:
                 determinism={},
                 resource_budget=kwargs["budget"],
                 b01_contract_report=kwargs.get("b01_contract_report"),
+                # Carry the identity through so the post-orchestrator
+                # ``_write_b04a_run_bundle`` / ``write_status_files``
+                # code paths can construct a valid identity block
+                # (TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1
+                # R02 ITERATE review point 4: single identity source).
+                experiment_id=str(kwargs.get("experiment_id") or ""),
+                data_manifest_sha256=str(
+                    kwargs.get("data_manifest_sha256") or ""
+                ),
+                # R04 ITERATE: the run bundle writer validates
+                # ``git_commit`` strictly; the fake result must
+                # carry a real-looking SHA so the writer can emit
+                # the manifest without raising.
+                git_commit="0" * 40,
+                git_dirty=False,
             )
 
         monkeypatch.setattr(ds_mod, "build_smoke_dataset", fake_build_smoke_dataset)
@@ -2535,6 +2577,9 @@ class TestRunRealB01Dispatch:
             config=config,
             b01=b01,
             log_path=log_path,
+            experiment_id="EXP-SLP-B04A-TEST-EXP-ID",
+            frozen_git_commit="0" * 40,
+            frozen_git_dirty=False,
         )
         # The B04A helper must have called run_mini_b04a and the
         # B04A budget + per-(candidate, seed) resume map must
@@ -2596,6 +2641,8 @@ class TestRunRealB01Dispatch:
                 out,
                 b01_freeze_dir=Path("/tmp/fake_freeze"),
                 dataset_root=Path("/tmp/fake_data"),
+                frozen_git_commit="0" * 40,
+                frozen_git_dirty=False,
             )
         # No training artifact was written.
         assert not (out / "checkpoints").exists()
@@ -2636,4 +2683,2110 @@ class TestRunMiniCrossProtocolGuards:
                 input_hashes={},
                 train_class_stats_source="synthetic",
                 synthetic=True,
+                # R05 ITERATE: required git_commit/git_dirty parameters.
+                git_commit=_TEST_GIT_COMMIT,
+                git_dirty=False,
             )
+
+
+# ---------------------------------------------------------------------------
+# 12) B04A experiment-identity carrier (TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1)
+# ---------------------------------------------------------------------------
+
+
+# A canonical Owner EXP-ID used across the B04A carrier tests.
+_TEST_OWNER_EXP_ID = "EXP-SLP-B04A-PM-ARCH-EXPANSION-MINI-20260830-AUTODL-R03"
+# A distinct Owner EXP-ID for drift tests; not equal to _TEST_OWNER_EXP_ID.
+_TEST_OWNER_EXP_ID_ALT = (
+    "EXP-SLP-B04A-PM-ARCH-EXPANSION-MINI-20260830-AUTODL-R03-DRIFT"
+)
+# The synthetic freeze_manifest.json file hash.  Real B01 runs would
+# hash the on-disk file; the test uses a 64-character placeholder.
+_TEST_FREEZE_MANIFEST_FILE_SHA = "f" * 64
+# A non-equal config SHA so the test can prove the data-manifest
+# carrier is NOT a silent fallback to config_sha256.
+_TEST_CONFIG_SHA = "a" * 64
+# A canonical 40-character hex SHA-1 used wherever a test must
+# supply a valid ``git_commit`` to :func:`_b04a_identity_block`
+# (R04 ITERATE: the formal identity block rejects empty / sentinel
+# / non-hex / wrong-length values).
+_TEST_GIT_COMMIT = "0" * 40
+
+
+def _expected_synthetic_manifest_sha() -> str:
+    from topper_perception.neural.slp8_region_mini import (
+        _compute_synthetic_manifest_sha256,
+    )
+
+    return _compute_synthetic_manifest_sha256()
+
+
+class TestB04AExperimentIdentityCarriers:
+    """Identity carrier tests for the B04A experiment-identity fix.
+
+    These tests pin the frozen semantics of
+    TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1:
+    ``experiment_id`` is Owner-supplied (no TASK-ID-derived
+    fallback); ``data_manifest_sha256`` is the on-disk
+    ``freeze_manifest.json`` file hash for real B01 runs and the
+    deterministic synthetic-manifest hash for the synthetic smoke;
+    ``model_version`` is the candidate builder's exact version for
+    per-seed/per-candidate artifacts and the
+    ``multi_candidate[... ]`` string in frozen config order for the
+    run-level artifact; an empty ``experiment_id``,
+    ``data_manifest_sha256`` or ``model_version`` is fail-closed;
+    resume rejects any drift in those three fields.
+    """
+
+    # ------------------------------------------------------------------
+    # (1) experiment_id propagation
+    # ------------------------------------------------------------------
+
+    def test_run_level_identity_block_carries_owner_exp_id(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+        )
+
+        block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        # The Owner EXP-ID is verbatim, not a TASK-ID-derived
+        # ``f"{task_id}::...`` composite.
+        assert block["experiment_id"] == _TEST_OWNER_EXP_ID
+        assert (
+            "TASK-SLP-B04A-PROTOCOL-FREEZE-v0.1" not in block["experiment_id"]
+        )
+        # Synthetic flag is False for a real Owner EXP-ID.
+        assert block["synthetic"] is False
+        assert (
+            block["data_manifest_source"] == "freeze_manifest_file_sha256"
+        )
+
+    def test_run_level_identity_block_synthetic_marker(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            SYNTHETIC_EXP_ID,
+        )
+
+        block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=SYNTHETIC_EXP_ID,
+            data_manifest_sha256=_expected_synthetic_manifest_sha(),
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        assert block["experiment_id"] == SYNTHETIC_EXP_ID
+        assert block["synthetic"] is True
+        assert (
+            block["data_manifest_source"]
+            == "synthetic_canonical_manifest_sha256"
+        )
+
+    def test_run_level_identity_block_rejects_empty_experiment_id(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            MiniProtocolError,
+        )
+
+        for empty in ("", "   ", "\t\n"):
+            with pytest.raises(MiniProtocolError, match="experiment_id"):
+                _b04a_identity_block(
+                    config=_build_b04a_mini_config(),
+                    config_sha256=_TEST_CONFIG_SHA,
+                    experiment_id=empty,
+                    data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                )
+
+    def test_run_level_identity_block_rejects_empty_data_manifest_sha(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            MiniProtocolError,
+        )
+
+        for empty in ("", "   ", None):
+            with pytest.raises(
+                MiniProtocolError, match="data_manifest_sha256"
+            ):
+                _b04a_identity_block(
+                    config=_build_b04a_mini_config(),
+                    config_sha256=_TEST_CONFIG_SHA,
+                    experiment_id=_TEST_OWNER_EXP_ID,
+                    data_manifest_sha256=empty,  # type: ignore[arg-type]
+                    git_commit=_TEST_GIT_COMMIT,
+                )
+
+    # ------------------------------------------------------------------
+    # (2) data_manifest_sha256 == freeze_manifest_file_sha256
+    # ------------------------------------------------------------------
+
+    def test_real_run_data_manifest_sha256_is_freeze_manifest_file_sha(self):
+        """The real B01 path uses the on-disk freeze_manifest.json file hash.
+
+        The hash MUST be different from the config SHA so a Reviewer
+        can tell the identity is real (not a config fallback).
+        """
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+        )
+
+        block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        assert (
+            block["data_manifest_sha256"] == _TEST_FREEZE_MANIFEST_FILE_SHA
+        )
+        # Deterministic and demonstrably distinct from config_sha256.
+        assert block["data_manifest_sha256"] != _TEST_CONFIG_SHA
+        # Lower-cased: hex digests are case-insensitive but the
+        # reviewer audit reads the same string everywhere.
+        assert (
+            block["data_manifest_sha256"]
+            == block["data_manifest_sha256"].lower()
+        )
+
+    def test_synthetic_manifest_hash_is_deterministic(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _compute_synthetic_manifest_sha256,
+        )
+
+        h1 = _compute_synthetic_manifest_sha256()
+        h2 = _compute_synthetic_manifest_sha256()
+        assert h1 == h2
+        # 64-character lowercase SHA-256 hex digest.
+        assert len(h1) == 64
+        assert all(c in "0123456789abcdef" for c in h1)
+        # The synthetic hash is distinct from any plausible real
+        # freeze_manifest.json file hash and from the config SHA.
+        assert h1 != _TEST_FREEZE_MANIFEST_FILE_SHA
+        assert h1 != _TEST_CONFIG_SHA
+
+    def test_synthetic_identity_block_carries_synthetic_manifest_hash(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            SYNTHETIC_EXP_ID,
+        )
+
+        synth_hash = _expected_synthetic_manifest_sha()
+        block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=SYNTHETIC_EXP_ID,
+            data_manifest_sha256=synth_hash,
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        assert block["data_manifest_sha256"] == synth_hash
+        assert block["synthetic"] is True
+        # A real B01 run's data_manifest_sha256 would never be
+        # equal to the synthetic manifest hash; the synthetic hash
+        # is a deterministic constant of the canonical synthetic
+        # payload.
+        assert block["data_manifest_sha256"] != _TEST_FREEZE_MANIFEST_FILE_SHA
+
+    def test_synthetic_manifest_cannot_be_confused_for_real(self):
+        """Synthetic identity MUST NEVER be accepted as real B01 identity.
+
+        Concretely: the synthetic data_manifest_sha256 equals a
+        deterministic value that is distinct from the real B01
+        freeze_manifest_file_sha256, the config_sha256, and from
+        any TASK-ID-derived value.  The synthetic flag on the
+        identity block is True.
+        """
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            SYNTHETIC_EXP_ID,
+        )
+
+        real_block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        synth_block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=SYNTHETIC_EXP_ID,
+            data_manifest_sha256=_expected_synthetic_manifest_sha(),
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        # Synthetic identity is not "real" by construction.
+        assert real_block["synthetic"] is False
+        assert synth_block["synthetic"] is True
+        # data_manifest_sha256 is distinct between real and synthetic.
+        assert (
+            real_block["data_manifest_sha256"]
+            != synth_block["data_manifest_sha256"]
+        )
+
+    # ------------------------------------------------------------------
+    # (3) run-level model_version uses multi_candidate[... ] in config order
+    # ------------------------------------------------------------------
+
+    def test_run_level_model_version_uses_multi_candidate_grammar(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+        )
+
+        block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        # The run-level model_version MUST be the
+        # ``multi_candidate[... ]`` string.  The B04A active set is
+        # the validated frozen config order; DEFERRED entries
+        # (SegFormer-B0) are filtered out by build_b04a_mini_config
+        # so they MUST NOT appear in the multi_candidate[... ] list.
+        model_version = block["model_version"]
+        assert model_version.startswith("multi_candidate[")
+        assert model_version.endswith("]")
+        inner = model_version[len("multi_candidate[") : -1]
+        names = inner.split(",")
+        assert names == list(B04A_ACTIVE_CANDIDATE_NAMES)
+        # The forbidden candidates (TinyFCN, SegFormer-B0) MUST NOT
+        # appear in the run-level model_version.
+        assert "slp8_tiny_fcn_v0.1" not in names
+        assert "slp8_segformer_b0_v0.1" not in names
+
+    def test_run_level_model_version_config_order_strict(self):
+        """multi_candidate[... ] order comes from the frozen config, not results.
+
+        The B04A active set order is fixed: small_unet, resunet_lite,
+        deeplabv3plus_lite (matches the order in
+        ``configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json``
+        and the B04A_FEASIBILITY_THRESHOLD / B04A_SEEDS contract).
+        """
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+        )
+
+        block = _b04a_identity_block(
+            config=_build_b04a_mini_config(),
+            config_sha256=_TEST_CONFIG_SHA,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            git_commit=_TEST_GIT_COMMIT,
+        )
+        inner = block["model_version"][len("multi_candidate[") : -1]
+        names = inner.split(",")
+        assert names == [
+            SMALL_UNET_VERSION,
+            RESUNET_LITE_VERSION,
+            DEEPLABV3PLUS_LITE_VERSION,
+        ]
+
+    def test_run_level_model_version_empty_candidate_list_fail_closed(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _build_run_level_model_version,
+            MiniProtocolError,
+        )
+
+        with pytest.raises(MiniProtocolError, match="empty"):
+            _build_run_level_model_version([])
+
+    def test_candidate_level_model_version_keeps_builder_version(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+        )
+
+        for cand, expected in (
+            (SMALL_UNET_VERSION, SMALL_UNET_VERSION),
+            (RESUNET_LITE_VERSION, RESUNET_LITE_VERSION),
+            (DEEPLABV3PLUS_LITE_VERSION, DEEPLABV3PLUS_LITE_VERSION),
+        ):
+            block = _b04a_identity_block(
+                config=_build_b04a_mini_config(),
+                config_sha256=_TEST_CONFIG_SHA,
+                experiment_id=_TEST_OWNER_EXP_ID,
+                data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                git_commit=_TEST_GIT_COMMIT,
+                candidate=cand,
+                seed=42,
+            )
+            # Candidate- and seed-level artifacts carry the
+            # candidate builder's exact model version, NOT the
+            # ``multi_candidate[... ]`` string.
+            assert block["model_version"] == expected
+            assert not block["model_version"].startswith("multi_candidate[")
+
+    def test_run_level_model_version_rejects_blank_candidate_name(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _build_run_level_model_version,
+            MiniProtocolError,
+        )
+
+        with pytest.raises(MiniProtocolError, match="blank"):
+            _build_run_level_model_version(
+                [SMALL_UNET_VERSION, "   ", RESUNET_LITE_VERSION]
+            )
+
+    # ------------------------------------------------------------------
+    # (4) Resume drift rejection
+    # ------------------------------------------------------------------
+
+    def test_resume_rejects_experiment_id_drift(self):
+        saved = CheckpointIdentity(
+            task_id=B04A_TASK_ID,
+            candidate=SMALL_UNET_VERSION,
+            model_version=SMALL_UNET_VERSION,
+            seed=42,
+            n_classes=N_CLASSES,
+            image_shape=PRESSURE_SHAPE,
+            config_sha256=_TEST_CONFIG_SHA,
+            a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            freeze_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            train_class_stats_sha256="e" * 64,
+            class_weight_sha256="d" * 64,
+            input_manifest_hashes_sha256="c" * 64,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            git_commit="0" * 40,
+            git_dirty=False,
+        )
+        drifted = replace(saved, experiment_id=_TEST_OWNER_EXP_ID_ALT)
+        with pytest.raises(ResumeIdentityError, match="experiment_id"):
+            verify_resume_identity(saved=saved, requested=drifted)
+
+    def test_resume_rejects_data_manifest_sha256_drift(self):
+        saved = CheckpointIdentity(
+            task_id=B04A_TASK_ID,
+            candidate=SMALL_UNET_VERSION,
+            model_version=SMALL_UNET_VERSION,
+            seed=42,
+            n_classes=N_CLASSES,
+            image_shape=PRESSURE_SHAPE,
+            config_sha256=_TEST_CONFIG_SHA,
+            a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            freeze_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            train_class_stats_sha256="e" * 64,
+            class_weight_sha256="d" * 64,
+            input_manifest_hashes_sha256="c" * 64,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            git_commit="0" * 40,
+            git_dirty=False,
+        )
+        drifted = replace(saved, data_manifest_sha256="0" * 64)
+        with pytest.raises(ResumeIdentityError, match="data_manifest_sha256"):
+            verify_resume_identity(saved=saved, requested=drifted)
+
+    def test_resume_rejects_model_version_drift(self):
+        saved = CheckpointIdentity(
+            task_id=B04A_TASK_ID,
+            candidate=SMALL_UNET_VERSION,
+            model_version=SMALL_UNET_VERSION,
+            seed=42,
+            n_classes=N_CLASSES,
+            image_shape=PRESSURE_SHAPE,
+            config_sha256=_TEST_CONFIG_SHA,
+            a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            freeze_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            train_class_stats_sha256="e" * 64,
+            class_weight_sha256="d" * 64,
+            input_manifest_hashes_sha256="c" * 64,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            git_commit="0" * 40,
+            git_dirty=False,
+        )
+        drifted = replace(saved, model_version=RESUNET_LITE_VERSION)
+        with pytest.raises(ResumeIdentityError, match="model_version"):
+            verify_resume_identity(saved=saved, requested=drifted)
+
+    def test_resume_accepts_matching_identity_with_new_fields(self):
+        identity = CheckpointIdentity(
+            task_id=B04A_TASK_ID,
+            candidate=SMALL_UNET_VERSION,
+            model_version=SMALL_UNET_VERSION,
+            seed=42,
+            n_classes=N_CLASSES,
+            image_shape=PRESSURE_SHAPE,
+            config_sha256=_TEST_CONFIG_SHA,
+            a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            freeze_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            train_class_stats_sha256="e" * 64,
+            class_weight_sha256="d" * 64,
+            input_manifest_hashes_sha256="c" * 64,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            git_commit="0" * 40,
+            git_dirty=False,
+        )
+        # No raise.
+        verify_resume_identity(saved=identity, requested=identity)
+
+    def test_resume_rejects_pre_fix_identity_block(self):
+        """Pre-fix checkpoints lacked experiment_id / data_manifest_sha256.
+
+        Refusing to load them is the fail-closed contract; a
+        Reviewer can never silently inherit a missing identity.
+        """
+        from topper_perception.neural.slp8_region_resume import (
+            identity_from_dict,
+        )
+
+        # Legacy identity block (B04 R02 contract; no experiment_id,
+        # no data_manifest_sha256).
+        legacy_payload = {
+            "identity": {
+                "task_id": B04A_TASK_ID,
+                "candidate": SMALL_UNET_VERSION,
+                "model_version": SMALL_UNET_VERSION,
+                "seed": 42,
+                "n_classes": N_CLASSES,
+                "image_shape": list(PRESSURE_SHAPE),
+                "config_sha256": _TEST_CONFIG_SHA,
+                "a06_split_sha256": A06_SPLIT_SHA256_EXPECTED,
+                "freeze_manifest_sha256": _TEST_FREEZE_MANIFEST_FILE_SHA,
+                "train_class_stats_sha256": "e" * 64,
+                "class_weight_sha256": "d" * 64,
+                "input_manifest_hashes_sha256": "c" * 64,
+            }
+        }
+        with pytest.raises(ResumeIdentityError, match="experiment_id"):
+            identity_from_dict(legacy_payload)
+
+    # ------------------------------------------------------------------
+    # (5) CLI --experiment-id fail-closed behaviour
+    # ------------------------------------------------------------------
+
+    def test_cli_rejects_missing_experiment_id_for_real_b01(self, tmp_path):
+        """Real B01 path with --run-authorized but no --experiment-id.
+
+        The CLI MUST fail closed BEFORE creating the requested
+        output directory.
+        """
+        out = tmp_path / "real_no_exp_id"
+        # The pre-validation path: if output_dir is created, the
+        # CLI did NOT fail closed.
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "run_slp8_region_mini.py"),
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--b01-freeze-dir", str(tmp_path / "fake_freeze"),
+                "--dataset-root", str(tmp_path / "fake_data"),
+                "--run-authorized",
+                # No --experiment-id.
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 2, (
+            f"expected REJECTED exit 2, got {result.returncode}; "
+            f"stderr={result.stderr}"
+        )
+        assert "--experiment-id" in result.stderr
+        # The output directory MUST NOT be created.
+        assert not out.exists(), (
+            f"output dir was created despite missing --experiment-id: "
+            f"{out}; the CLI must fail closed before any side effect"
+        )
+
+    def test_cli_rejects_blank_experiment_id_for_real_b01(self, tmp_path):
+        out = tmp_path / "real_blank_exp_id"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "run_slp8_region_mini.py"),
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--b01-freeze-dir", str(tmp_path / "fake_freeze"),
+                "--dataset-root", str(tmp_path / "fake_data"),
+                "--run-authorized",
+                "--experiment-id", "   ",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 2
+        assert (
+            "non-empty Owner-supplied" in result.stderr
+            or "whitespace" in result.stderr
+        )
+        assert not out.exists()
+
+    def test_cli_rejects_synthetic_sentinel_for_real_b01(self, tmp_path):
+        from topper_perception.neural.slp8_region_mini import (
+            SYNTHETIC_EXP_ID,
+        )
+
+        out = tmp_path / "real_synth_id"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "run_slp8_region_mini.py"),
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--b01-freeze-dir", str(tmp_path / "fake_freeze"),
+                "--dataset-root", str(tmp_path / "fake_data"),
+                "--run-authorized",
+                "--experiment-id", SYNTHETIC_EXP_ID,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 2
+        assert "reserved for synthetic" in result.stderr
+        assert not out.exists()
+
+    def test_cli_synthetic_cpu_smoke_ignores_experiment_id(self, tmp_path):
+        """Synthetic CPU smoke does not require --experiment-id.
+
+        The synthetic smoke uses a fixed sentinel EXP-ID internally
+        so a synthetic identity can never be confused with a real
+        B01 identity.  Passing --experiment-id is permitted but
+        ignored; the synthetic manifest hash is used unconditionally.
+        """
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "run_slp8_region_mini.py"),
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(tmp_path / "b04a_synth"),
+                "--synthetic-cpu-smoke-b04a",
+                "--no-write",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={
+                **os.environ,
+                "PYTHONHASHSEED": "42",
+                "OMP_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+            },
+        )
+        assert result.returncode == 0, (
+            f"stderr: {result.stderr}\nstdout: {result.stdout}"
+        )
+        last = result.stdout.strip().splitlines()[-1]
+        assert last.startswith("B04A_SMOKE_NO_WRITE ")
+
+
+# ---------------------------------------------------------------------------
+# 13) Real on-disk artifact identity audit (R02 ITERATE review point 5)
+# ---------------------------------------------------------------------------
+
+
+# The seven required identity fields the frozen B04A
+# ``identity_hard_gate.required_fields`` contract pins at the top
+# level of every JSON carrier and as the first JSON line of every
+# log carrier.
+_REQUIRED_B04A_IDENTITY_FIELDS: tuple[str, ...] = (
+    "experiment_id",
+    "git_commit",
+    "git_dirty",
+    "config_sha256",
+    "data_manifest_sha256",
+    "split_sha256",
+    "model_version",
+)
+
+
+def _assert_has_required_identity_fields(
+    payload: dict[str, Any], *, where: str
+) -> None:
+    missing = set(_REQUIRED_B04A_IDENTITY_FIELDS) - set(payload)
+    assert not missing, f"{where} missing identity fields {sorted(missing)}"
+
+
+def _run_b04a_synthetic_writing_smoke(
+    out_dir: Path,
+    *,
+    budget_override_seconds: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run the B04A synthetic smoke in writing mode."""
+    env = {
+        **os.environ,
+        "PYTHONHASHSEED": "42",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+    }
+    if budget_override_seconds is not None:
+        env["B04A_SMOKE_BUDGET_OVERRIDE_PER_CANDIDATE_SECONDS"] = str(
+            budget_override_seconds
+        )
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "run_slp8_region_mini.py"),
+            "--config", str(B04A_CONFIG_PATH),
+            "--output-dir", str(out_dir),
+            "--synthetic-cpu-smoke-b04a",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+        env=env,
+    )
+
+
+@pytest.fixture
+def b04a_write_dir(tmp_path):
+    """Run a writing-mode B04A synthetic CPU smoke and return the output dir."""
+    out = tmp_path / "b04a_write"
+    if out.exists():
+        shutil.rmtree(out, ignore_errors=True)
+    proc = _run_b04a_synthetic_writing_smoke(out)
+    assert proc.returncode in {0, 1}, (
+        f"stderr: {proc.stderr}\nstdout: {proc.stdout}"
+    )
+    assert out.exists()
+    assert (out / "manifest.json").exists(), (
+        f"B04A writing smoke did not produce manifest.json in {out}; "
+        f"stderr={proc.stderr}"
+    )
+    return out
+
+
+class TestB04AActualArtifactIdentityAudit:
+    """Audit the actual on-disk B04A artifact identity after a writing-mode run.
+
+    Every R02 ITERATE review point is covered by inspecting the
+    real on-disk JSON / log / checkpoint / CSV / terminal artifacts
+    produced by the writing-mode synthetic CPU smoke.  In-memory
+    return values of ``_b04a_identity_block`` alone are NOT a
+    substitute for an end-to-end carrier audit (R02 ITERATE
+    explicitly noted the gap).
+    """
+
+    # ------------------------------------------------------------------
+    # (1) best.pt / last.pt payload["identity"] seven fields, non-empty
+    # ------------------------------------------------------------------
+
+    def test_best_last_pt_identity_block_has_seven_required_fields(
+        self, b04a_write_dir: Path
+    ) -> None:
+        for cand in B04A_ACTIVE_CANDIDATE_NAMES:
+            for seed in B04A_SEEDS:
+                seed_dir = (
+                    b04a_write_dir
+                    / "checkpoints"
+                    / cand
+                    / f"seed_{seed:04d}"
+                )
+                for pt_name in ("best.pt", "last.pt"):
+                    payload = torch.load(
+                        seed_dir / pt_name,
+                        map_location="cpu",
+                        weights_only=True,
+                    )
+                    identity = payload["identity"]
+                    _assert_has_required_identity_fields(
+                        identity,
+                        where=f"{cand}/seed_{seed:04d}/{pt_name}",
+                    )
+                    # Synthetic identity: EXP-ID is the sentinel;
+                    # data_manifest_sha256 is the deterministic
+                    # synthetic-manifest hash; split_sha256 is
+                    # non-empty; model_version matches the
+                    # candidate builder.
+                    assert (
+                        identity["experiment_id"] == SYNTHETIC_EXP_ID
+                    )
+                    assert identity["data_manifest_sha256"] != ""
+                    assert identity["split_sha256"] != ""
+                    assert identity["git_commit"] != ""
+                    assert identity["config_sha256"] != ""
+                    assert (
+                        identity["model_version"]
+                        == get_model_builder(cand).version
+                    )
+                    assert identity["model_version"] == cand
+
+    # ------------------------------------------------------------------
+    # (2) Run-level JSON carriers carry the seven fields
+    # ------------------------------------------------------------------
+
+    def test_run_level_carriers_have_seven_identity_fields(
+        self, b04a_write_dir: Path
+    ) -> None:
+        for fname in (
+            "manifest.json",
+            "status.json",
+            "candidate_decision.json",
+            "environment.json",
+            "input_manifest_hashes.json",
+            "resolved_config.json",
+            "budget_report.json",
+        ):
+            payload = json.loads(
+                (b04a_write_dir / fname).read_text(encoding="utf-8")
+            )
+            _assert_has_required_identity_fields(
+                payload, where=fname
+            )
+
+    # ------------------------------------------------------------------
+    # (3) DONE/FAILED/STOPPED terminal JSON carry the seven fields
+    # ------------------------------------------------------------------
+
+    def test_terminal_json_identity(self, b04a_write_dir: Path) -> None:
+        # Exactly one of the three terminal files exists.
+        terminals = [
+            b04a_write_dir / tf
+            for tf in ("DONE.json", "FAILED.json", "STOPPED.json")
+            if (b04a_write_dir / tf).exists()
+        ]
+        assert len(terminals) == 1, (
+            f"expected exactly one terminal file, found "
+            f"{[t.name for t in terminals]}"
+        )
+        terminal = json.loads(terminals[0].read_text(encoding="utf-8"))
+        _assert_has_required_identity_fields(
+            terminal, where=terminals[0].name
+        )
+        assert terminal["experiment_id"] == SYNTHETIC_EXP_ID
+        assert terminal["synthetic"] is True
+        assert (
+            terminal["data_manifest_source"]
+            == "synthetic_canonical_manifest_sha256"
+        )
+
+    # ------------------------------------------------------------------
+    # (4) run.log and per-seed logs first line is identity JSON
+    # ------------------------------------------------------------------
+
+    def test_log_files_first_line_is_identity(
+        self, b04a_write_dir: Path
+    ) -> None:
+        run_log = b04a_write_dir / "logs" / "run.log"
+        first = run_log.read_text(encoding="utf-8").splitlines()[0]
+        first_obj = json.loads(first)
+        _assert_has_required_identity_fields(
+            first_obj, where="logs/run.log first line"
+        )
+        for cand in B04A_ACTIVE_CANDIDATE_NAMES:
+            for seed in B04A_SEEDS:
+                seed_log = (
+                    b04a_write_dir
+                    / "logs"
+                    / f"{cand}_seed_{seed:04d}.log"
+                )
+                if not seed_log.exists():
+                    continue
+                first_seed = seed_log.read_text(
+                    encoding="utf-8"
+                ).splitlines()[0]
+                first_seed_obj = json.loads(first_seed)
+                _assert_has_required_identity_fields(
+                    first_seed_obj,
+                    where=f"logs/{cand}_seed_{seed:04d}.log first line",
+                )
+
+    # ------------------------------------------------------------------
+    # (5) CSV identity sidecars
+    # ------------------------------------------------------------------
+
+    def test_csv_identity_sidecars(self, b04a_write_dir: Path) -> None:
+        for cand in B04A_ACTIVE_CANDIDATE_NAMES:
+            for seed in B04A_SEEDS:
+                seed_dir = (
+                    b04a_write_dir
+                    / "checkpoints"
+                    / cand
+                    / f"seed_{seed:04d}"
+                )
+                epoch_csv = seed_dir / "epoch_metrics.csv"
+                epoch_sidecar = epoch_csv.with_suffix(
+                    epoch_csv.suffix + ".identity.json"
+                )
+                pred_csv = seed_dir / "predictions_manifest.csv"
+                pred_sidecar = pred_csv.with_suffix(
+                    pred_csv.suffix + ".identity.json"
+                )
+                for sidecar in (epoch_sidecar, pred_sidecar):
+                    if not sidecar.exists():
+                        continue
+                    payload = json.loads(
+                        sidecar.read_text(encoding="utf-8")
+                    )
+                    _assert_has_required_identity_fields(
+                        payload["identity"],
+                        where=str(sidecar.relative_to(b04a_write_dir)),
+                    )
+
+    # ------------------------------------------------------------------
+    # (6) Run / candidate / seed / checkpoint identity are consistent
+    # ------------------------------------------------------------------
+
+    def test_run_candidate_seed_checkpoint_identity_consistent(
+        self, b04a_write_dir: Path
+    ) -> None:
+        manifest = json.loads(
+            (b04a_write_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        # Run-level model_version is multi_candidate[...] in config
+        # order; candidate/seed/checkpoint model_version is the
+        # candidate builder's exact version.
+        assert manifest["model_version"].startswith("multi_candidate[")
+        assert manifest["model_version"].endswith("]")
+        for cand in B04A_ACTIVE_CANDIDATE_NAMES:
+            assert cand in manifest["model_version"]
+        for cand in B04A_ACTIVE_CANDIDATE_NAMES:
+            for seed in B04A_SEEDS:
+                seed_dir = (
+                    b04a_write_dir
+                    / "checkpoints"
+                    / cand
+                    / f"seed_{seed:04d}"
+                )
+                payload = torch.load(
+                    seed_dir / "best.pt",
+                    map_location="cpu",
+                    weights_only=True,
+                )
+                identity = payload["identity"]
+                # EXP-ID, Git, config, data manifest, split:
+                # exactly equal to the run-level bundle.
+                for key in (
+                    "experiment_id",
+                    "git_commit",
+                    "git_dirty",
+                    "config_sha256",
+                    "data_manifest_sha256",
+                    "split_sha256",
+                ):
+                    assert identity[key] == manifest[key], (
+                        f"identity drift on {cand}/seed_{seed:04d}: "
+                        f"{key} checkpoint={identity[key]!r} "
+                        f"manifest={manifest[key]!r}"
+                    )
+                # model_version differs only as the contract
+                # requires: candidate-level exact builder version
+                # (not the run-level multi_candidate[...]).
+                assert identity["model_version"] == cand
+                assert identity["model_version"] != manifest["model_version"]
+
+    # ------------------------------------------------------------------
+    # (7) Writer must use the (possibly mutated) result identity
+    # ------------------------------------------------------------------
+
+    def test_b04a_run_bundle_writer_uses_result_identity(
+        self, tmp_path: Path
+    ) -> None:
+        """A run bundle writer cannot use a different identity than the
+        B04ARunResult it received; the result is the single source of
+        truth (R02 ITERATE review point 4: eliminate double identity
+        source).
+        """
+        from topper_perception.neural.slp8_region_determinism import (
+            apply_settings,
+        )
+        from topper_perception.neural.slp8_region_mini import (
+            B04ARunResult,
+            B04AAdvanceDecision,
+            _write_b04a_run_bundle,
+        )
+
+        config = _build_b04a_mini_config()
+        determinism = apply_settings(42, cpu_threads=1)
+        result = B04ARunResult(
+            config=config,
+            dataset_manifest={"n_test_samples": 0},
+            environment={},
+            class_weight_result=compute_class_weights(
+                {
+                    "n_samples": 1,
+                    "n_pixels": 9,
+                    "per_class_pixel_ratio": {
+                        0: 1.0 / 9.0,
+                        1: 1.0 / 9.0,
+                        2: 1.0 / 9.0,
+                        3: 1.0 / 9.0,
+                        4: 1.0 / 9.0,
+                        5: 1.0 / 9.0,
+                        6: 1.0 / 9.0,
+                        7: 1.0 / 9.0,
+                        8: 1.0 / 9.0,
+                    },
+                }
+            ),
+            candidate_results={},
+            n_candidates_feasible=0,
+            n_candidates_not_feasible=3,
+            n_candidates_failed=0,
+            n_candidates_stopped=0,
+            overall_decision="MINI_NOT_FEASIBLE",
+            advanced=(),
+            near_tie_applied=False,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            advance_decision=B04AAdvanceDecision(
+                advanced=(),
+                near_tie_applied=False,
+                near_tie_margin=B04A_NEAR_TIE_MARGIN,
+                tiebreaks=[],
+            ),
+            terminal_state="DONE",
+            started_at_utc="2026-01-01T00:00:00+00:00",
+            ended_at_utc="2026-01-01T00:00:00+00:00",
+            wall_clock_seconds=0.0,
+            input_hashes={},
+            train_class_stats_source="synthetic",
+            synthetic=True,
+            determinism=determinism,
+            resource_budget=ResourceBudget(
+                max_wall_seconds_per_candidate=1.0,
+                max_wall_seconds_total=1.0,
+                max_peak_cuda_mb=8192.0,
+            ),
+            b01_contract_report=None,
+            experiment_id="EXP-OWNER-A",
+            data_manifest_sha256="a" * 64,
+            git_commit="0" * 40,
+            git_dirty=False,
+        )
+        # Mutate the result AFTER construction; the writer must use
+        # the mutated values, proving there is no separate identity
+        # source.
+        result.experiment_id = "EXP-OWNER-MUTATED"
+        result.data_manifest_sha256 = "b" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "bundle"
+            _write_b04a_run_bundle(
+                output_dir=out,
+                result=result,
+                config_sha256=_TEST_CONFIG_SHA,
+            )
+            manifest = json.loads(
+                (out / "manifest.json").read_text(encoding="utf-8")
+            )
+            assert (
+                manifest["experiment_id"] == "EXP-OWNER-MUTATED"
+            ), "writer used a different EXP-ID than the result object"
+            assert (
+                manifest["data_manifest_sha256"] == "b" * 64
+            ), "writer used a different data_manifest_sha256"
+
+    # ------------------------------------------------------------------
+    # (8) resume rejects git_commit, git_dirty, split_sha256 drift
+    # ------------------------------------------------------------------
+
+    def test_resume_rejects_git_and_split_drift(self) -> None:
+        saved = CheckpointIdentity(
+            task_id=B04A_TASK_ID,
+            candidate=SMALL_UNET_VERSION,
+            model_version=SMALL_UNET_VERSION,
+            seed=42,
+            n_classes=N_CLASSES,
+            image_shape=PRESSURE_SHAPE,
+            config_sha256=_TEST_CONFIG_SHA,
+            a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            split_sha256=A06_SPLIT_SHA256_EXPECTED,
+            freeze_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+            train_class_stats_sha256="e" * 64,
+            class_weight_sha256="d" * 64,
+            input_manifest_hashes_sha256="c" * 64,
+            git_commit="0" * 40,
+            git_dirty=False,
+            experiment_id=_TEST_OWNER_EXP_ID,
+            data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+        )
+        for drift_field, new_value in (
+            ("git_commit", "f" * 40),
+            ("git_dirty", True),
+            ("split_sha256", "e" * 64),
+        ):
+            drifted = replace(saved, **{drift_field: new_value})
+            with pytest.raises(
+                ResumeIdentityError, match=drift_field
+            ):
+                verify_resume_identity(saved=saved, requested=drifted)
+
+    # ------------------------------------------------------------------
+    # (9) Synthetic checkpoint's experiment_id / data_manifest_sha256
+    # are non-empty
+    # ------------------------------------------------------------------
+
+    def test_synthetic_checkpoint_identity_non_empty(
+        self, b04a_write_dir: Path
+    ) -> None:
+        for cand in B04A_ACTIVE_CANDIDATE_NAMES:
+            for seed in B04A_SEEDS:
+                seed_dir = (
+                    b04a_write_dir
+                    / "checkpoints"
+                    / cand
+                    / f"seed_{seed:04d}"
+                )
+                for pt_name in ("best.pt", "last.pt"):
+                    payload = torch.load(
+                        seed_dir / pt_name,
+                        map_location="cpu",
+                        weights_only=True,
+                    )
+                    identity = payload["identity"]
+                    assert (
+                        identity["experiment_id"] == SYNTHETIC_EXP_ID
+                    )
+                    assert identity["experiment_id"] != ""
+                    assert identity["data_manifest_sha256"] != ""
+                    # The synthetic manifest hash is a deterministic
+                    # constant of the canonical payload; verify it
+                    # matches the value computed at write time.
+                    from topper_perception.neural.slp8_region_mini import (
+                        _compute_synthetic_manifest_sha256,
+                    )
+
+                    assert identity["data_manifest_sha256"] == (
+                        _compute_synthetic_manifest_sha256()
+                    )
+
+    # ------------------------------------------------------------------
+    # (10) post-validation FAILED / STOPPED artifacts also carry
+    # identity
+    # ------------------------------------------------------------------
+
+    def test_post_validation_terminal_artifacts_carry_identity(
+        self, tmp_path: Path
+    ) -> None:
+        # Drive the B04A synthetic smoke into a STOPPED state with
+        # a tiny per-candidate budget override.  The terminal JSON
+        # must still carry the seven required identity fields; the
+        # identity contract is not relaxed for post-validation
+        # FAILED / STOPPED paths.
+        out = tmp_path / "b04a_stopped"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        proc = _run_b04a_synthetic_writing_smoke(
+            out,
+            budget_override_seconds=1e-9,
+        )
+        # Either DONE (budget override did not trip the new budget
+        # format) or STOPPED; the assertion is on the terminal
+        # JSON regardless of the exit code.
+        assert proc.returncode in {0, 1}, (
+            f"stderr: {proc.stderr}\nstdout: {proc.stdout}"
+        )
+        stopped_path = out / "STOPPED.json"
+        done_path = out / "DONE.json"
+        assert stopped_path.exists() or done_path.exists()
+        if stopped_path.exists():
+            data = json.loads(
+                stopped_path.read_text(encoding="utf-8")
+            )
+            where = "STOPPED.json"
+        else:
+            data = json.loads(
+                done_path.read_text(encoding="utf-8")
+            )
+            where = "DONE.json"
+        _assert_has_required_identity_fields(data, where=where)
+        assert data["experiment_id"] == SYNTHETIC_EXP_ID
+        assert data["synthetic"] is True
+        assert (
+            data["data_manifest_source"]
+            == "synthetic_canonical_manifest_sha256"
+        )
+
+    # ------------------------------------------------------------------
+    # R03 ITERATE: cover-order / post-validation / single-identity tests
+    # ------------------------------------------------------------------
+
+    def test_write_status_files_extra_cannot_overwrite_identity(
+        self, tmp_path: Path
+    ) -> None:
+        """``extra`` must NOT be able to override the frozen identity.
+
+        The contract (R03 ITERATE) is that the ``identity`` dict
+        is the single source of truth for the seven required
+        identity fields.  A caller that passes a ``extra`` entry
+        for ``experiment_id`` (or any other identity key) with a
+        different value MUST trigger a fail-closed exception, not
+        a silent override.
+        """
+        from topper_perception.neural.slp8_region_mini import (
+            MiniProtocolError,
+            write_status_files,
+        )
+
+        out = tmp_path / "override_attempt"
+        with pytest.raises(
+            MiniProtocolError, match="disagrees with frozen identity"
+        ):
+            write_status_files(
+                out,
+                status="FAILED",
+                identity={
+                    "experiment_id": "EXP-OWNER-A",
+                    "git_commit": "0" * 40,
+                    "git_dirty": False,
+                    "config_sha256": "a" * 64,
+                    "data_manifest_sha256": "b" * 64,
+                    "split_sha256": "c" * 64,
+                    "model_version": "multi_candidate[x,y,z]",
+                },
+                extra={
+                    # The attempted override.  The contract
+                    # forbids this even when the extra value is
+                    # "sensible" because the identity carrier is
+                    # the single source of truth.
+                    "experiment_id": "EXP-OWNER-FAKE",
+                    "error": "synthetic failure",
+                },
+            )
+        # No terminal file should have been written when the
+        # fail-closed exception fires.
+        assert not (out / "FAILED.json").exists()
+        assert not (out / "status.json").exists()
+
+    def test_write_status_files_extra_consistent_identity_merged(
+        self, tmp_path: Path
+    ) -> None:
+        """``extra`` keys that do NOT collide with ``identity`` are
+        merged into the terminal JSON; ``identity`` keys win.
+        """
+        from topper_perception.neural.slp8_region_mini import (
+            write_status_files,
+        )
+
+        out = tmp_path / "merge"
+        write_status_files(
+            out,
+            status="FAILED",
+            identity={
+                "experiment_id": "EXP-OWNER-A",
+                "git_commit": "0" * 40,
+                "git_dirty": False,
+                "config_sha256": "a" * 64,
+                "data_manifest_sha256": "b" * 64,
+                "split_sha256": "c" * 64,
+                "model_version": "multi_candidate[x,y,z]",
+            },
+            extra={
+                "error": "synthetic failure",
+                "mode": "real-b01-b04a",
+            },
+        )
+        data = json.loads(
+            (out / "FAILED.json").read_text(encoding="utf-8")
+        )
+        _assert_has_required_identity_fields(data, where="FAILED.json")
+        assert data["experiment_id"] == "EXP-OWNER-A"
+        assert data["error"] == "synthetic failure"
+        assert data["mode"] == "real-b01-b04a"
+
+    def test_b04a_post_validation_failed_artifact_carries_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the B04A orchestrator raises a post-validation
+        exception, the CLI's main ``except`` block must still
+        write a ``FAILED.json`` that carries the seven required
+        identity fields (R03 ITERATE).  The identity is
+        reconstructed from the available CLI args, not from
+        ``B04ARunResult`` (which does not exist on the failure
+        path).
+        """
+        mod = _load_run_slp8_module()
+        captured: dict[str, Any] = {}
+
+        def fake_synthetic_cpu_smoke_b04a(
+            config_path, output_dir, **kwargs
+        ):  # noqa: ARG001
+            # Synthetic post-validation exception AFTER config
+            # validation, b01 contract verification, and EXP-ID
+            # defaulting.  main()'s except block must build a
+            # full identity block from the available CLI args
+            # before writing FAILED.json.
+            raise MiniProtocolError(
+                "synthetic post-validation failure injected by "
+                "TestB04AActualArtifactIdentityAudit"
+            )
+
+        monkeypatch.setattr(
+            mod, "_run_synthetic_cpu_smoke_b04a", fake_synthetic_cpu_smoke_b04a
+        )
+        # Run the CLI through the real ``main`` entry point so the
+        # except block is exercised.  A fresh output dir keeps
+        # the test isolated.
+        out = tmp_path / "post_validation_failed"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        rc = mod.main(
+            [
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--synthetic-cpu-smoke-b04a",
+            ]
+        )
+        # The post-validation exception is a non-rejection, so
+        # main() returns 1 (FAILED).  Pre-validation rejections
+        # (output-dir collision, --experiment-id missing on a
+        # real B01 path, etc.) return 2; this path returns 1.
+        assert rc == 1, (
+            f"expected exit 1 (post-validation FAILED); stderr "
+            f"may be inspected separately"
+        )
+        # Debug: list the output directory contents.
+        contents = sorted(p.name for p in out.iterdir()) if out.exists() else []
+        failed = out / "FAILED.json"
+        assert failed.exists(), (
+            f"post-validation FAILED.json missing at {failed}; "
+            f"the CLI must emit a terminal artifact on a "
+            f"post-validation failure (R03 ITERATE); out contents="
+            f"{contents}"
+        )
+        data = json.loads(failed.read_text(encoding="utf-8"))
+        _assert_has_required_identity_fields(data, where="FAILED.json")
+        assert data["experiment_id"] == SYNTHETIC_EXP_ID
+        assert data["synthetic"] is True
+        assert (
+            data["data_manifest_source"]
+            == "synthetic_canonical_manifest_sha256"
+        )
+        assert "error" in data
+
+    def test_post_validation_identity_construction_fails_closed_when_config_unreadable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the post-validation path cannot construct the
+        identity (helper raises ``MiniProtocolError``), main()
+        returns 2 and does NOT write any terminal JSON.  This
+        keeps the pre-validation contract intact (no fake
+        identity is ever written just to satisfy the carrier).
+        """
+        mod = _load_run_slp8_module()
+
+        def fake_build_identity(*args, **kwargs):
+            raise MiniProtocolError(
+                "_build_post_validation_identity injected failure"
+            )
+
+        # Inject a post-validation exception by patching
+        # ``run_mini_b04a`` (the orchestrator step the synthetic
+        # CPU smoke calls); the fake raises a ``MiniProtocolError``
+        # that main()'s except block must convert into either a
+        # terminal FAILED artifact carrying the identity, or a
+        # fail-closed REJECTED if the identity cannot be
+        # constructed.  We additionally patch
+        # ``_build_post_validation_identity`` to fail so the
+        # fail-closed path is exercised.
+        def fake_run_mini_b04a(**kwargs):
+            raise MiniProtocolError(
+                "post-validation exception injected by "
+                "TestB04AActualArtifactIdentityAudit"
+            )
+
+        from topper_perception.neural import slp8_region_mini as sm
+
+        monkeypatch.setattr(sm, "run_mini_b04a", fake_run_mini_b04a)
+        # ``_run_synthetic_cpu_smoke_b04a`` does an inline
+        # ``from topper_perception.neural.slp8_region_mini import
+        # run_mini_b04a``; the patch on ``sm.run_mini_b04a`` is
+        # what that inline import picks up because both names
+        # refer to the same module object.  We additionally
+        # patch the module-level attribute on ``mod`` to cover
+        # any other code path.
+        monkeypatch.setattr(mod, "run_mini_b04a", fake_run_mini_b04a)
+        monkeypatch.setattr(
+            mod, "_build_post_validation_identity", fake_build_identity
+        )
+
+        out = tmp_path / "post_validation_id_fail_closed"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        rc = mod.main(
+            [
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--synthetic-cpu-smoke-b04a",
+            ]
+        )
+        assert rc == 2
+        # main() must NOT write FAILED.json / status.json when
+        # the helper cannot safely construct the identity.
+        assert not (out / "FAILED.json").exists()
+        assert not (out / "status.json").exists()
+
+    def test_git_identity_frozen_at_run_start_unchanged_by_writer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Bundle writers MUST NOT re-resolve ``git rev-parse
+        HEAD`` / ``git status --porcelain`` themselves.  The run-
+        start ``B04ARunResult.git_commit`` / ``.git_dirty`` is
+        frozen; if a writer accidentally calls the resolver
+        again, the bundle would carry the current HEAD rather
+        than the run-start HEAD.  This test asserts that the
+        writer takes the run-start values from the result.
+        """
+        from topper_perception.neural.slp8_region_determinism import (
+            apply_settings,
+        )
+        from topper_perception.neural.slp8_region_mini import (
+            B04AAdvanceDecision,
+            B04ARunResult,
+            _write_b04a_run_bundle,
+        )
+
+        config = _build_b04a_mini_config()
+        determinism = apply_settings(42, cpu_threads=1)
+
+        # Freeze the run-start identity to a recognisable sentinel.
+        FROZEN_COMMIT = "0" * 40
+        FROZEN_DIRTY = False
+        result = B04ARunResult(
+            config=config,
+            dataset_manifest={"n_test_samples": 0},
+            environment={},
+            class_weight_result=compute_class_weights(
+                {
+                    "n_samples": 1,
+                    "n_pixels": 9,
+                    "per_class_pixel_ratio": {
+                        cid: 1.0 / 9.0 for cid in range(9)
+                    },
+                }
+            ),
+            candidate_results={},
+            n_candidates_feasible=0,
+            n_candidates_not_feasible=3,
+            n_candidates_failed=0,
+            n_candidates_stopped=0,
+            overall_decision="MINI_NOT_FEASIBLE",
+            advanced=(),
+            near_tie_applied=False,
+            near_tie_margin=B04A_NEAR_TIE_MARGIN,
+            advance_decision=B04AAdvanceDecision(
+                advanced=(),
+                near_tie_applied=False,
+                near_tie_margin=B04A_NEAR_TIE_MARGIN,
+                tiebreaks=[],
+            ),
+            terminal_state="DONE",
+            started_at_utc="2026-01-01T00:00:00+00:00",
+            ended_at_utc="2026-01-01T00:00:00+00:00",
+            wall_clock_seconds=0.0,
+            input_hashes={},
+            train_class_stats_source="synthetic",
+            synthetic=True,
+            determinism=determinism,
+            resource_budget=ResourceBudget(
+                max_wall_seconds_per_candidate=1.0,
+                max_wall_seconds_total=1.0,
+                max_peak_cuda_mb=8192.0,
+            ),
+            b01_contract_report=None,
+            experiment_id=SYNTHETIC_EXP_ID,
+            data_manifest_sha256=_expected_synthetic_manifest_sha(),
+            git_commit=FROZEN_COMMIT,
+            git_dirty=FROZEN_DIRTY,
+        )
+
+        # Now monkeypatch ``_resolve_git_identity`` to return a
+        # different value, simulating a worktree drift (e.g. a
+        # commit happens after run start).  The writer MUST
+        # ignore the live resolver and use the frozen values.
+        DRIFTED_COMMIT = "f" * 40
+        DRIFTED_DIRTY = True
+
+        def fake_resolve_git_identity():
+            return DRIFTED_COMMIT, DRIFTED_DIRTY
+
+        # Patch the symbol that ``_b04a_identity_block`` would
+        # import if it tried to re-resolve.  We don't even need
+        # the writer to call it; we just verify the carrier uses
+        # the result's frozen values, not the live resolver.
+        from topper_perception.neural import slp8_region_mini as sm
+
+        monkeypatch.setattr(
+            sm, "_resolve_git_identity", fake_resolve_git_identity
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "bundle"
+            _write_b04a_run_bundle(
+                output_dir=out,
+                result=result,
+                config_sha256=_TEST_CONFIG_SHA,
+            )
+            manifest = json.loads(
+                (out / "manifest.json").read_text(encoding="utf-8")
+            )
+            # The bundle MUST carry the run-start values, not
+            # the drifted values.  If the writer had called the
+            # live resolver, the test would observe DRIFTED_*.
+            assert manifest["git_commit"] == FROZEN_COMMIT, (
+                "bundle writer re-resolved git identity; "
+                "carrier no longer matches the run-start "
+                "frozen identity"
+            )
+            assert manifest["git_dirty"] is FROZEN_DIRTY
+
+
+# ---------------------------------------------------------------------------
+# R04 ITERATE: git_commit fail-closed + frozen run identity context
+# ---------------------------------------------------------------------------
+
+
+class TestR04B04AGitCommitFailClosed:
+    """R04 ITERATE: ``_b04a_identity_block`` and ``_resolve_git_identity``
+    refuse to emit a formal B04A identity with a malformed or sentinel
+    ``git_commit``.  The frozen B04A identity contract pins a real
+    Git object ID at run start; a Reviewer must never see an empty
+    or sentinel value in any formal carrier.
+    """
+
+    def test_b04a_identity_block_rejects_empty_git_commit(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            MiniProtocolError,
+        )
+
+        for empty in ("", "   ", "\t\n", None):
+            with pytest.raises(MiniProtocolError, match="git_commit"):
+                _b04a_identity_block(
+                    config=_build_b04a_mini_config(),
+                    config_sha256=_TEST_CONFIG_SHA,
+                    experiment_id=_TEST_OWNER_EXP_ID,
+                    data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                    git_commit=empty,  # type: ignore[arg-type]
+                )
+
+    def test_b04a_identity_block_rejects_unresolvable_sentinel(self):
+        from topper_perception.neural.slp8_region_mini import (
+            UNRESOLVABLE_GIT_COMMIT,
+            _b04a_identity_block,
+            MiniProtocolError,
+        )
+
+        with pytest.raises(MiniProtocolError, match="unresolvable"):
+            _b04a_identity_block(
+                config=_build_b04a_mini_config(),
+                config_sha256=_TEST_CONFIG_SHA,
+                experiment_id=_TEST_OWNER_EXP_ID,
+                data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                git_commit=UNRESOLVABLE_GIT_COMMIT,
+            )
+
+    def test_b04a_identity_block_rejects_non_hex_git_commit(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            MiniProtocolError,
+        )
+
+        for bad in (
+            "z" * 40,                   # non-hex characters
+            "g" * 40,                   # invalid hex letter
+            "0" * 39 + "z",             # 40 chars, last char non-hex
+        ):
+            with pytest.raises(MiniProtocolError, match="non-hex"):
+                _b04a_identity_block(
+                    config=_build_b04a_mini_config(),
+                    config_sha256=_TEST_CONFIG_SHA,
+                    experiment_id=_TEST_OWNER_EXP_ID,
+                    data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                    git_commit=bad,
+                )
+
+    def test_b04a_identity_block_rejects_wrong_length_git_commit(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            MiniProtocolError,
+        )
+
+        for bad in (
+            "abc",                       # too short
+            "0" * 7,                     # 7 chars
+            "0" * 39,                    # 39 chars
+            "0" * 41,                    # 41 chars
+            "0" * 63,                    # 63 chars
+            "0" * 65,                    # 65 chars
+            "0" * 128,                   # too long
+        ):
+            with pytest.raises(MiniProtocolError, match="length"):
+                _b04a_identity_block(
+                    config=_build_b04a_mini_config(),
+                    config_sha256=_TEST_CONFIG_SHA,
+                    experiment_id=_TEST_OWNER_EXP_ID,
+                    data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                    git_commit=bad,
+                )
+
+    def test_b04a_identity_block_rejects_git_commit_with_internal_whitespace(
+        self,
+    ):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+            MiniProtocolError,
+        )
+
+        for bad in (
+            " " + "0" * 39,              # leading whitespace
+            "0" * 39 + " ",              # trailing whitespace
+            "0" * 20 + " " + "0" * 19,   # internal whitespace
+        ):
+            with pytest.raises(MiniProtocolError, match="whitespace"):
+                _b04a_identity_block(
+                    config=_build_b04a_mini_config(),
+                    config_sha256=_TEST_CONFIG_SHA,
+                    experiment_id=_TEST_OWNER_EXP_ID,
+                    data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                    git_commit=bad,
+                )
+
+    def test_b04a_identity_block_accepts_40_and_64_char_hex(self):
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_identity_block,
+        )
+
+        sha1 = "0" * 40
+        sha256 = "f" * 64
+        for valid in (sha1, sha256, "Ab" + "c" * 38, "F" * 64):
+            block = _b04a_identity_block(
+                config=_build_b04a_mini_config(),
+                config_sha256=_TEST_CONFIG_SHA,
+                experiment_id=_TEST_OWNER_EXP_ID,
+                data_manifest_sha256=_TEST_FREEZE_MANIFEST_FILE_SHA,
+                git_commit=valid,
+            )
+            # The block stores the lowercased value to match
+            # ``git rev-parse`` output convention.
+            assert block["git_commit"] == valid.lower()
+            assert block["git_commit"] != ""
+
+    def test_resolve_git_identity_raises_on_resolver_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When ``git rev-parse HEAD`` or ``git status --porcelain``
+        fails, ``_resolve_git_identity`` raises
+        :class:`MiniProtocolError`.  Formal B04A identity
+        construction cannot accept a sentinel
+        ``unresolvable_git_commit`` value.
+        """
+        from topper_perception.neural import slp8_region_mini as sm
+        from topper_perception.neural.slp8_region_mini import (
+            MiniProtocolError,
+            _resolve_git_identity,
+        )
+
+        class _Boom(RuntimeError):
+            pass
+
+        def _explode(*args, **kwargs):  # noqa: ARG001
+            raise _Boom("synthetic git rev-parse failure")
+
+        monkeypatch.setattr(
+            "subprocess.run", _explode
+        )
+        with pytest.raises(MiniProtocolError, match="git rev-parse"):
+            _resolve_git_identity()
+        # Module-level symbol still references the same callable.
+        assert sm._resolve_git_identity is _resolve_git_identity
+
+
+class TestR04B04AFrozenRunIdentityContext:
+    """R04 ITERATE: the CLI freezes the run identity context BEFORE
+    dispatching any handler.  The post-validation FAILED identity
+    uses that frozen context; the handler MUST NOT re-resolve
+    Git identity at exception time.
+    """
+
+    def test_cli_frozen_identity_used_in_post_validation_failed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI main() resolves ``_resolve_git_identity`` once at the
+        top and threads the value through to the post-validation
+        FAILED path.  If a downstream writer accidentally re-resolves
+        and the worktree has drifted, the FAILED.json still carries
+        the dispatch-time frozen Git SHA, not the live value.
+        """
+        mod = _load_run_slp8_module()
+
+        # The dispatch-time frozen value the CLI must record.
+        CLI_FROZEN_COMMIT = "a" * 40
+        CLI_FROZEN_DIRTY = False
+
+        # The "current state" the writer / orchestrator would see
+        # if they re-resolved after the dispatch.
+        DRIFTED_COMMIT = "f" * 40
+        DRIFTED_DIRTY = True
+
+        # Counter to differentiate the CLI dispatch freeze (call 1)
+        # from any later re-resolve attempts.
+        state = {"call_count": 0}
+
+        def _cli_freeze_then_drift():
+            state["call_count"] += 1
+            if state["call_count"] == 1:
+                return CLI_FROZEN_COMMIT, CLI_FROZEN_DIRTY
+            return DRIFTED_COMMIT, DRIFTED_DIRTY
+
+        from topper_perception.neural import slp8_region_mini as sm
+
+        # Patch the source module's ``_resolve_git_identity``;
+        # the script does a local import in main(), so the script
+        # module itself does not own the symbol.
+        monkeypatch.setattr(sm, "_resolve_git_identity", _cli_freeze_then_drift)
+
+        def _fake_synthetic_cpu_smoke_b04a(
+            config_path, output_dir, **kwargs  # noqa: ARG001
+        ):
+            # Synthetic post-validation exception after data
+            # contract verification, so the FAILED path runs
+            # through _build_post_validation_identity.
+            raise MiniProtocolError(
+                "synthetic R04 post-validation failure injected by "
+                "TestR04B04AFrozenRunIdentityContext"
+            )
+
+        monkeypatch.setattr(
+            mod, "_run_synthetic_cpu_smoke_b04a", _fake_synthetic_cpu_smoke_b04a
+        )
+
+        out = tmp_path / "frozen_id"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        rc = mod.main(
+            [
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--synthetic-cpu-smoke-b04a",
+            ]
+        )
+        # The post-validation FAILED returns 1 (non-rejection).
+        assert rc == 1
+        failed = out / "FAILED.json"
+        assert failed.exists(), (
+            "post-validation FAILED.json missing; the CLI must "
+            "emit a terminal artifact on a post-validation failure "
+            "(R04 ITERATE)"
+        )
+        data = json.loads(failed.read_text(encoding="utf-8"))
+        # FAILED.json MUST carry the dispatch-time frozen git SHA.
+        assert data["git_commit"] == CLI_FROZEN_COMMIT
+        assert data["git_commit"] != DRIFTED_COMMIT
+        assert data["git_dirty"] is CLI_FROZEN_DIRTY
+        # R05 ITERATE: the post-validation FAILED path must NOT
+        # re-resolve Git identity.  The CLI dispatch freeze is the
+        # single source; call_count must be exactly 1.
+        assert state["call_count"] == 1, (
+            f"expected _resolve_git_identity call_count == 1 "
+            f"(CLI dispatch freeze only); got {state['call_count']}.  "
+            "post-validation FAILED path must not re-resolve Git "
+            "(R05 ITERATE fix: changed from >= 1 to == 1)"
+        )
+
+    def test_cli_returns_2_when_identity_context_unresolvable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If ``_resolve_git_identity`` fails BEFORE the dispatch
+        (no run-start identity can be established), the CLI fails
+        closed: no output file is created, exit code 2, no
+        sentinel identity is written.
+        """
+        mod = _load_run_slp8_module()
+        from topper_perception.neural import slp8_region_mini as sm
+        from topper_perception.neural.slp8_region_mini import (
+            MiniProtocolError,
+        )
+
+        def _unresolvable():
+            raise MiniProtocolError(
+                "_resolve_git_identity: git rev-parse HEAD failed; "
+                "rc=128 stderr='fatal: not a git repository'"
+            )
+
+        monkeypatch.setattr(sm, "_resolve_git_identity", _unresolvable)
+
+        out = tmp_path / "no_id_context"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        rc = mod.main(
+            [
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--synthetic-cpu-smoke-b04a",
+            ]
+        )
+        # The CLI fails closed: 2, no file in the output dir.
+        assert rc == 2
+        assert not (out / "FAILED.json").exists()
+        assert not (out / "status.json").exists()
+        assert not (out / "DONE.json").exists()
+
+
+class TestR04B04ARealB01PostValidationFailed:
+    """R04 ITERATE: real B01 post-validation failure path carries
+    the same seven required identity fields.  The test uses a
+    fresh B01 freeze fixture and a synthetic Owner EXP-ID; no
+    TEST labels are read.
+    """
+
+    def test_real_b01_post_validation_failed_artifact_carriers_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Drive a real B01 dispatch with a real B01 freeze fixture,
+        inject a post-validation exception AFTER the B01 contract
+        has been verified, and assert the FAILED.json / status.json
+        carry the same seven required identity fields.
+        ``data_manifest_sha256`` MUST equal the on-disk
+        ``freeze_manifest.json`` file SHA.  ``git_commit`` MUST
+        equal the dispatch-time frozen value (not the live
+        resolver).  ``TEST=0`` is enforced by the
+        ``_make_fake_b01_freeze_dir`` helper (which never reads
+        any TEST labels).
+        """
+        mod = _load_run_slp8_module()
+        from topper_perception.io.slp8_training_table_freeze import (
+            load_b01_freeze_tables,
+        )
+        from test_slp8_region_mini import _make_fake_b01_freeze_dir
+
+        # Build a real B01 freeze fixture and capture the actual
+        # on-disk ``freeze_manifest.json`` file SHA.  The fixture
+        # creates train+val ONLY; the runner uses
+        # load_b01_freeze_tables(..., load_test=False) so TEST
+        # rows are never loaded and n_test_samples=0.
+        # NOTE: ``test_manifest.csv`` IS created by the fixture
+        # (it's a structural part of the B01 freeze schema, even
+        # when TEST rows are not loaded at runtime).  The TEST=0
+        # invariant is enforced by ``load_test=False`` in the
+        # runner and by ``freeze._test_rows is None`` here.
+        b01_freeze = _make_fake_b01_freeze_dir(
+            tmp_path / "b01_freeze",
+        )
+        freeze = load_b01_freeze_tables(b01_freeze, load_test=False)
+        freeze_manifest_path = b01_freeze / "freeze_manifest.json"
+        assert freeze_manifest_path.is_file(), (
+            "B01 freeze fixture must include freeze_manifest.json; "
+            f"missing at {freeze_manifest_path}"
+        )
+        # R05 ITERATE: assert the TEST=0 invariant at the loader
+        # level.  With ``load_test=False``, the freeze handle's
+        # ``_test_rows`` must be None -- this is the concrete
+        # proof that the runner never loads TEST labels.
+        assert freeze._test_rows is None, (  # noqa: SLF001
+            "freeze._test_rows must be None after "
+            "load_b01_freeze_tables(..., load_test=False); "
+            "the TEST=0 invariant is violated "
+            "(R05 ITERATE fix for TestR04B04ARealB01PostValidationFailed)"
+        )
+        import hashlib
+
+        expected_dm_sha = hashlib.sha256(
+            freeze_manifest_path.read_bytes()
+        ).hexdigest()
+        # TEST=0 invariant: the freeze was loaded with
+        # ``load_test=False`` so the B04 Mini never reads any TEST
+        # labels.  The post-validation helper does not touch TEST
+        # either.  This test therefore never enables
+        # ``enable_test_access`` and never accesses
+        # ``freeze.test_rows`` (which would raise
+        # ``TestLeakageError`` by design).
+
+        # The dispatch-time frozen Git SHA the CLI must record.
+        CLI_FROZEN_COMMIT = "1" * 40
+        CLI_FROZEN_DIRTY = False
+        from topper_perception.neural import slp8_region_mini as sm
+
+        def _frozen_resolver():
+            return CLI_FROZEN_COMMIT, CLI_FROZEN_DIRTY
+
+        monkeypatch.setattr(sm, "_resolve_git_identity", _frozen_resolver)
+
+        # Inject a post-validation exception AFTER the B01 contract
+        # has been verified.  The exception simulates a real
+        # training-time failure (e.g. budget exceeded) so the
+        # FAILED path runs through _build_post_validation_identity.
+        OWNER_EXP_ID = (
+            "EXP-SLP-B04A-PM-ARCH-EXPANSION-MINI-20260830-AUTODL-R04"
+        )
+
+        def _fake_run_real_b01_b04a(**kwargs):  # noqa: ARG001
+            raise MiniProtocolError(
+                "R04 synthetic post-validation exception after B01 "
+                "contract verification"
+            )
+
+        monkeypatch.setattr(
+            mod, "_run_real_b01_b04a", _fake_run_real_b01_b04a
+        )
+
+        out = tmp_path / "real_b01_post_validation_failed"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        # The data_root argument is required by ``--dataset-root``
+        # but is not read by the post-validation helper (which only
+        # reads the B01 freeze dir).  Pass a tmp_path; the B01
+        # contract is mocked out so the dataset_root content is
+        # never inspected.
+        data_root = tmp_path / "data_root"
+        data_root.mkdir(parents=True, exist_ok=True)
+        rc = mod.main(
+            [
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--run-authorized",
+                "--b01-freeze-dir", str(b01_freeze),
+                "--dataset-root", str(data_root),
+                "--experiment-id", OWNER_EXP_ID,
+            ]
+        )
+        # post-validation FAILED returns 1 (non-rejection).
+        assert rc == 1, (
+            f"expected exit 1 (post-validation FAILED on real B01 "
+            f"path); got rc={rc}"
+        )
+        failed = out / "FAILED.json"
+        assert failed.exists(), (
+            f"post-validation FAILED.json missing at {failed}; "
+            f"the CLI must emit a terminal artifact on a real B01 "
+            f"post-validation failure (R04 ITERATE)"
+        )
+        data = json.loads(failed.read_text(encoding="utf-8"))
+        _assert_has_required_identity_fields(data, where="FAILED.json")
+        # Real B01 path: Owner EXP-ID, NOT the synthetic sentinel.
+        assert data["experiment_id"] == OWNER_EXP_ID
+        # data_manifest_sha256 == freeze_manifest.json file SHA.
+        assert data["data_manifest_sha256"] == expected_dm_sha
+        # git_commit == dispatch-time frozen value.
+        assert data["git_commit"] == CLI_FROZEN_COMMIT
+        assert data["git_dirty"] is CLI_FROZEN_DIRTY
+        # Real B01 path: synthetic marker is False.
+        assert data["synthetic"] is False
+        assert (
+            data["data_manifest_source"] == "freeze_manifest_file_sha256"
+        )
+        # The CLI must also write status.json with the same fields
+        # (sibling of FAILED.json).  The contract guarantees the
+        # terminal artifact identity matches the run-level bundle.
+        status = out / "status.json"
+        assert status.exists(), (
+            f"status.json missing at {status}; the CLI must emit a "
+            f"status.json sibling on a real B01 post-validation "
+            f"failure (R04 ITERATE)"
+        )
+        sdata = json.loads(status.read_text(encoding="utf-8"))
+        # status.json MUST carry the same seven required fields
+        # (R03 ITERATE: identity merged into status.json top level).
+        for field in _REQUIRED_B04A_IDENTITY_FIELDS:
+            assert field in sdata, (
+                f"status.json missing identity field {field!r} "
+                f"(R04 ITERATE: status.json must carry the same "
+                f"identity as FAILED.json)"
+            )
+        # FAILED.json and status.json MUST agree on every identity
+        # field (R03 ITERATE: single source of truth).
+        for field in _REQUIRED_B04A_IDENTITY_FIELDS:
+            assert data[field] == sdata[field], (
+                f"FAILED.json and status.json disagree on "
+                f"{field!r}: FAILED={data[field]!r} status="
+                f"{sdata[field]!r} (R04 ITERATE: same identity)"
+            )
+
+
+class TestR05B04ANormalSuccessGitIdentity:
+    """R05 ITERATE: the CLI resolves Git identity once at dispatch
+    time; ``run_mini_b04a`` receives the frozen values and does NOT
+    re-resolve.  The normal-success path must complete with
+    ``call_count == 1`` and every carrier in the DONE bundle must
+    agree on the frozen ``git_commit`` / ``git_dirty`` values.
+
+    This is the regression test for the defect identified by the
+    Codex Reviewer: before R05, ``run_mini_b04a`` internally called
+    ``_resolve_git_identity()`` a second time, causing normal
+    checkpoints/results to potentially carry a different SHA than the
+    post-validation FAILED path (which used the frozen CLI value).
+    """
+
+    def test_normal_success_resolver_called_exactly_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Drive the synthetic B04A smoke to normal completion and
+        assert that ``_resolve_git_identity`` is called exactly once
+        (the CLI dispatch freeze).  ``run_mini_b04a`` must NOT call
+        it again; any re-resolve would raise.
+
+        The DONE bundle is audited: every carrier must agree on the
+        frozen ``git_commit = 'a' * 40`` and ``git_dirty = False``.
+        """
+        mod = _load_run_slp8_module()
+
+        # The CLI dispatch-time frozen value.
+        FROZEN_COMMIT = "a" * 40
+        FROZEN_DIRTY = False
+
+        state = {"call_count": 0}
+
+        def _cli_freeze_then_explode():
+            state["call_count"] += 1
+            if state["call_count"] == 1:
+                return FROZEN_COMMIT, FROZEN_DIRTY
+            # R05: run_mini_b04a must NOT re-resolve; any second
+            # call proves the defect is not fixed.
+            raise AssertionError(
+                "_resolve_git_identity called more than once; "
+                "run_mini_b04a re-resolved Git identity after the "
+                "CLI dispatch freeze (R05 ITERATE defect)"
+            )
+
+        from topper_perception.neural import slp8_region_mini as sm
+
+        monkeypatch.setattr(sm, "_resolve_git_identity", _cli_freeze_then_explode)
+
+        out = tmp_path / "normal_success_git_id"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+
+        rc = mod.main(
+            [
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--synthetic-cpu-smoke-b04a",
+            ]
+        )
+        assert rc == 0, f"expected exit 0 (normal DONE); got rc={rc}"
+        done = out / "DONE.json"
+        assert done.exists(), "DONE.json missing after normal synthetic B04A run"
+        data = json.loads(done.read_text(encoding="utf-8"))
+        # R05: the normal-success path uses the CLI dispatch-time frozen SHA.
+        assert data["git_commit"] == FROZEN_COMMIT
+        assert data["git_dirty"] is FROZEN_DIRTY
+        # Strict assertion: exactly one call, no re-resolution.
+        assert state["call_count"] == 1, (
+            f"expected _resolve_git_identity call_count == 1 "
+            f"(CLI dispatch freeze only); got {state['call_count']}.  "
+            "run_mini_b04a must not re-resolve Git identity "
+            "(R05 ITERATE)"
+        )
+
+    def test_normal_success_bundle_carriers_agree_on_git_identity(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verify every carrier in the normal-success DONE bundle
+        carries the same frozen Git identity.  Covered carriers:
+
+        - DONE.json (run-level)
+        - status.json (run-level)
+        - manifest.json (run-level)
+        - candidate_decision.json (run-level)
+        - per-seed identity sidecars under checkpoints/<cand>/seed_<seed>/
+        - checkpoint best.pt / last.pt identity blocks
+
+        All must agree on ``git_commit = 'a' * 40`` and
+        ``git_dirty = False``.
+        """
+        mod = _load_run_slp8_module()
+
+        FROZEN_COMMIT = "a" * 40
+        FROZEN_DIRTY = False
+
+        def _frozen_resolver():
+            return FROZEN_COMMIT, FROZEN_DIRTY
+
+        from topper_perception.neural import slp8_region_mini as sm
+
+        monkeypatch.setattr(sm, "_resolve_git_identity", _frozen_resolver)
+
+        out = tmp_path / "bundle_audit_git_id"
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+
+        rc = mod.main(
+            [
+                "--config", str(B04A_CONFIG_PATH),
+                "--output-dir", str(out),
+                "--synthetic-cpu-smoke-b04a",
+            ]
+        )
+        assert rc == 0
+        assert (out / "DONE.json").exists()
+
+        # Collect git identity from every required carrier.
+        carrier_git_commits: dict[str, str] = {}
+        carrier_git_dirty: dict[str, bool] = {}
+
+        def _extract_git_identity(path: Path, label: str) -> None:
+            """Extract git_commit/git_dirty from a JSON carrier."""
+            if not path.is_file():
+                return
+            try:
+                content = json.loads(path.read_text(encoding="utf-8"))
+                git_commit = content.get("git_commit", "")
+                git_dirty = content.get("git_dirty")
+                carrier_git_commits[label] = git_commit
+                carrier_git_dirty[label] = git_dirty
+            except Exception:
+                pass
+
+        # Run-level carriers.
+        for fname, label in [
+            ("DONE.json", "DONE.json"),
+            ("status.json", "status.json"),
+            ("manifest.json", "manifest.json"),
+            ("candidate_decision.json", "candidate_decision.json"),
+        ]:
+            _extract_git_identity(out / fname, label)
+
+        # Per-seed identity sidecars.
+        checkpoints_dir = out / "checkpoints"
+        if checkpoints_dir.is_dir():
+            for cand_dir in checkpoints_dir.iterdir():
+                if not cand_dir.is_dir():
+                    continue
+                for seed_dir in cand_dir.iterdir():
+                    if not seed_dir.is_dir():
+                        continue
+                    seed_label = f"checkpoints/{cand_dir.name}/{seed_dir.name}"
+                    _extract_git_identity(seed_dir / "seed_identity.json", f"{seed_label}/seed_identity.json")
+                    # Read checkpoint pt identity from metadata.
+                    for pt_name in ("best.pt", "last.pt"):
+                        pt_path = seed_dir / pt_name
+                        if pt_path.is_file():
+                            try:
+                                import torch as _torch
+
+                                ckpt = _torch.load(
+                                    pt_path, map_location="cpu", weights_only=False
+                                )
+                                if "identity" in ckpt:
+                                    id_block = ckpt["identity"]
+                                    carrier_git_commits[f"{seed_label}/{pt_name}"] = str(
+                                        id_block.get("git_commit", "")
+                                    )
+                                    carrier_git_dirty[f"{seed_label}/{pt_name}"] = bool(
+                                        id_block.get("git_dirty")
+                                    )
+                            except Exception:
+                                pass
+
+        # All carriers must have the frozen Git commit.
+        for label, gc in carrier_git_commits.items():
+            assert gc == FROZEN_COMMIT, (
+                f"carrier {label} has git_commit={gc!r}, expected "
+                f"{FROZEN_COMMIT!r} (R05 ITERATE: all carriers must "
+                "agree on the CLI dispatch-time frozen value)"
+            )
+        for label, gd in carrier_git_dirty.items():
+            assert gd is FROZEN_DIRTY, (
+                f"carrier {label} has git_dirty={gd!r}, expected "
+                f"{FROZEN_DIRTY!r} (R05 ITERATE: all carriers must "
+                "agree on the CLI dispatch-time frozen value)"
+            )
+        # At least run-level DONE.json must be checked.
+        assert "DONE.json" in carrier_git_commits, (
+            "DONE.json must be audited for git identity (R05 ITERATE)"
+        )

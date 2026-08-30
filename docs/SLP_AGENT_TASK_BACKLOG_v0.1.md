@@ -252,7 +252,38 @@ Reviewer checklist:
 - GPU Mini R02（2026-08-30）：RTX 4090 上完成三候选 × 三 seeds 的 9/9 checkpoint，但 runner 将重载 `best.pt` 与后续 final model 比较，导致 `best_epoch < final_epoch` 的 seed 被错误标记为 reload FAILED；R02 终态保持 `FAILED`，R01/R02 证据包 SHA `75b9cd09...cb6494` 已回传本地，任何 `advanced` 字段不得作为正式晋级。
 - Reload 修复（`TASK-SLP-B04A-RELOAD-CONSISTENCY-FIX-v0.1`）：best epoch 写盘前生成固定 CPU logits probe 并随 `best.pt` 保存；重载后对同一 probe 做数值比较，同时保留全量 prediction hash。定向 5 passed、B04 完整回归 167 passed、B04A/模型/协议联合 247 passed、协议 30 OKs/0 errors、no-write smoke DONE；Codex 已独立复核并 `ACCEPT`，但未授权 GPU。
 - R02 复核新增阻塞：run-level `experiment_id` 不是 Owner 授权的 R02 EXP-ID，`data_manifest_sha256` 错写为 config SHA，且 run-level `model_version` 为空。必须另立 experiment-identity carrier 修复任务，不得混入 reload 修复。
-- 下一 Gate：Reviewer 先验收 reload 修复；再完成独立 identity carrier 修复与验收；两者通过后才冻结新 Git SHA，并由 Owner 单独授权全新 R03 EXP-ID。`B07` 继续 `BLOCKED_BY_B04A`，直到 corrected Mini 经 Reviewer 验收并冻结最多 1–2 个候选。
+- Identity carrier 修复（`TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1`，2026-08-30，MiniMax Code 提交 Codex 独立复核）：CheckpointIdentity 扩展 `experiment_id` / `data_manifest_sha256` 字段；`_b04a_identity_block` 显式接收 EXP-ID 与 freeze_manifest_file_sha，run-level `model_version` 改用 `multi_candidate[... ]` 格式；CLI 新增 `--experiment-id`，真实 B01 路径在读取 B01 数据前 fail-closed，不创建 output_dir；resume 拒收 EXP-ID / data_manifest / model_version 漂移与 pre-fix 旧 checkpoint。同步 sentinel `SYNTHETIC_EXP_ID` 与 deterministic `_compute_synthetic_manifest_sha256()` 隔离合成与真实身份。回归：`test_b04a_runner_integration.py` 102/102（含新增 `TestB04AExperimentIdentityCarriers` 22 tests）、`test_b04a_implementation.py` 79/79、`test_b04a_protocol_validator.py` 50/50、`test_slp8_region_models.py` 38/38、`test_check_markdown_links.py` 6/6、`test_slp8_region_mini.py` 164/164（3 subprocess determinism 子集 deselected / `NOT RUN`），validator 30 OKs/0 errors。`py_compile` 干净。
+- Identity carrier 修复 R02 ITERATE（2026-08-30，Codex Reviewer R01 独立审查 ITERATE）：R01 暴露 5 项真实 artifact 缺陷：
+  1. `_run_synthetic_cpu_smoke_b04a` 把 EXP-ID / data_manifest_sha256 传给 `_write_b04a_run_bundle` 但没传给 `run_mini_b04a`，导致 `best.pt`/`last.pt` 中 `experiment_id=""`、`data_manifest_sha256=""`；
+  2. CheckpointIdentity 顶层缺 `git_commit` / `git_dirty`，且协议要求的精确 `split_sha256` 字段名未独立存在（只有旧 `a06_split_sha256`）；
+  3. `DONE.json` / `FAILED.json` / `STOPPED.json` 等 terminal JSON 缺 7 个 required identity fields；
+  4. `B04ARunResult` 与 `_write_b04a_run_bundle` 是双 identity source，可被传入不一致值；
+  5. 缺真实 artifact（best.pt / log / CSV sidecar / terminal JSON / DONE/FAILED/STOPPED）identity 审计测试。
+  R02 已全部修复：`run_mini_b04a` / `run_mini` 与所有 `_write_b04a_*` 函数及 `write_status_files` 都从同一 frozen identity 构造；`run_mini_b04a` 拒绝 `B04ARunResult` 与 `_write_b04a_run_bundle` 参数不一致；CheckpointIdentity 增加 `git_commit` / `git_dirty` / `split_sha256` 三个字段并通过 `verify_resume_identity` 自动覆盖；terminal JSON 携带完整 7 字段；新增真实 artifact 审计测试覆盖 best.pt / last.pt / logs / CSV sidecar / DONE/FAILED/STOPPED / 跨载体一致性 / 不一致 fail-closed / resume 漂移。`TEST=0`，`B07` 继续 `BLOCKED_BY_B04A`。
+- Identity carrier 修复 R03 ITERATE（2026-08-30，Codex Reviewer R02 独立审查 ITERATE）：R02 暴露 5 项覆盖/异常/单源/合同/文档缺陷：
+  1. `write_status_files` 覆盖顺序错（`extra` 可篡改 identity）→ 改为 `extra → identity` 顺序；7 required fields 冲突时 fail-closed；辅助字段（`task_id` / `synthetic` / `data_manifest_source` / `a06_split_sha256`）正常 merge；
+  2. 通用 except 终态 `FAILED.json` / `status.json` 缺 7 字段 → 新增 `_build_post_validation_identity` 辅助函数 + `main()` mutating 分支 + pre-validation 失败继续 no-write；
+  3. 双 identity source 未根除 → `B04ARunResult` 增 `git_commit` / `git_dirty` 字段；`run_mini_b04a` 入口解析一次后写入 result；`_b04a_identity_block` 不再内部调 `_resolve_git_identity`；
+  4. 合同 `Files allowed to change` 不全 → 显式加入 `slp8_region_resume.py`（checkpoint/resume identity schema）与 `smoke_b04a_runner_integration.py`（synthetic smoke identity propagation）；
+  5. 文档状态 → `IDENTITY_FIX_ITERATE_R03 / READY_FOR_REVIEW`。
+  R03 修补 5 个新测试覆盖 conflict fail-closed / consistent merge / post-validation FAILED / helper fail-closed / git identity frozen。
+- Identity carrier 修复 R04 ITERATE 收口（2026-08-30，Codex Reviewer R03 收口要求）：R04 修补 5 项：
+  1. 实际修改任务合同：`Files allowed to change` 加入 `slp8_region_resume.py`（checkpoint/resume identity schema）与 `smoke_b04a_runner_integration.py`（synthetic carrier propagation）；
+  2. `git_commit` fail-closed：`_b04a_identity_block` 通过新增 `_validate_git_commit_strict` 拒绝空 / 空白 / `unresolvable_git_commit` 哨兵 / 非 hex / 错长度（不是 40 或 64 hex 字符）；
+  3. `_resolve_git_identity` 改为严格模式：`git rev-parse HEAD` / `git status --porcelain` 失败或返回非 SHA 值时抛 `MiniProtocolError`（不再返回 `unresolvable_git_commit` 哨兵）；
+  4. CLI 在 dispatch 前冻结 run identity context：`main()` 顶部调用 `_resolve_git_identity()` 一次；post-validation FAILED 走 mutating 分支用 helper 构造 identity（不再重解析 git identity）；resolver 失败时 return 2 不写文件；
+  5. 文档状态 → `IDENTITY_FIX_ITERATE_R04 / READY_FOR_REVIEW`。
+  R04 新增 10 个测试覆盖 git_commit fail-closed（空 / 空白 / sentinel / 非 hex / 错长度 / 接受 40+64 hex）、resolver 失败抛错、CLI 冻结 context 使用、resolver 不可解时 return 2、真实 B01 post-validation failure（freeze fixture + `freeze_manifest.json` + Owner EXP-ID + 训练前注入异常 + FAILED.json 7 字段 + `data_manifest_sha256 == freeze_manifest.json file SHA` + `git_commit == dispatch-time frozen` + `TEST=0`）。`TEST=0` 保持。R04 严禁写 `ACCEPTED` / `R03 GPU AUTHORIZED` / `B07 READY`。
+- Identity carrier 修复 R05 ITERATE 收口（2026-08-30，Codex Reviewer R04 不 ACCEPT：正常训练路径仍二次解析 Git identity）：R05 修补 5 项：
+  1. `run_mini_b04a()` 增加必填 `git_commit: str` / `git_dirty: bool` keyword-only 参数，入口加 `_validate_git_commit_strict` 验证，删内部 `_resolve_git_identity()` 调用；所有 carrier（CheckpointIdentity / B04ARunResult / best.pt / last.pt）只用传入值；
+  2. `_run_synthetic_cpu_smoke_b04a()`、`_run_real_b01_b04a()` 均传入 `frozen_git_commit` / `frozen_git_dirty`；
+  3. `smoke_b04a_runner_integration.py` 解析一次 git identity 并传入两个 `run_mini_b04a()` 调用点；
+  4. 新增 `TestR05B04ANormalSuccessGitIdentity`（2 个测试）：`call_count == 1` + DONE bundle carrier 审计（run-level JSON + per-seed checkpoint pt identity）；
+  5. R04 断言 `>= 1` → `== 1`；R04 real-B01 fixture `freeze._test_rows is None` 断言 TEST=0；
+  6. 文档状态 → `IDENTITY_FIX_ITERATE_R05 / READY_FOR_REVIEW`。
+  12 个 R04+R05 定向测试全部通过。
+- Identity carrier 修复 R05 Codex 独立验收（2026-08-30）：`ACCEPT`。Reviewer 独立得到 R05 2/2、B04A integration 129/129、B04 Mini 167/167、Markdown 6/6、protocol validator 30 OKs/0 errors，`py_compile` 与 `git diff --check` 通过；写作模式 synthetic DONE bundle 共审计 54 个 identity carriers（8 run-level JSON + 18 CSV sidecar + 18 checkpoint + 10 log 首行），6 个 strict run identity 字段 0 mismatch。真实 B01 fixture 保留结构性 TEST manifest，但 `load_test=False` 且 `_test_rows is None`，未读取 TEST labels。
+- 下一 Gate：合并 identity 修复并冻结新的 `main` Git SHA；随后另立 R03 run-preparation/Owner-authorization record 与全新 EXP-ID。当前仍为 `GPU_R03_NOT_AUTHORIZED`，`B07` 继续 `BLOCKED_BY_B04A`，任何 TEST 仍禁止。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 

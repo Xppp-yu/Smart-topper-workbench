@@ -55,13 +55,16 @@ from topper_perception.neural.slp8_region_mini import (  # noqa: E402
     B04_PROTOCOL_NAME,
     ConfigValidationError,
     MiniProtocolError,
-    _protocol_of_config,
+    SYNTHETIC_EXP_ID,
     _b04a_advance_decision,
     _b04a_aggregate_candidate,
     _b04a_identity_block,
     _b04a_per_region_pass,
     _b04a_seed_class_collapse,
     _b04a_worst_subject_pass,
+    _compute_synthetic_manifest_sha256,
+    _protocol_of_config,
+    _write_b04a_run_bundle,
     build_mini_config,
     run_mini_b04a,
     validate_mini_config,
@@ -226,6 +229,16 @@ def _smoke_run_one(
     )
     assert_class_weight_invariants(class_weight_result)
 
+    # R05 ITERATE: resolve Git identity once here, the same way the
+    # CLI does.  The smoke exercises the full carrier pipeline, so the
+    # per-seed CheckpointIdentity blocks must receive the same value
+    # the CLI would freeze at dispatch time.
+    from topper_perception.neural.slp8_region_mini import (
+        _resolve_git_identity,
+    )
+
+    smoke_git_commit, smoke_git_dirty = _resolve_git_identity()
+
     started_at = time.time()
     # In no-write mode, the orchestrator still needs a writable
     # directory for its per-seed checkpoint path.  Use a
@@ -252,6 +265,10 @@ def _smoke_run_one(
                 train_class_stats_source="synthetic_train_class_stats",
                 synthetic=True,
                 budget=budget,
+                experiment_id=SYNTHETIC_EXP_ID,
+                data_manifest_sha256=_compute_synthetic_manifest_sha256(),
+                git_commit=smoke_git_commit,
+                git_dirty=smoke_git_dirty,
             )
         finally:
             shutil.rmtree(orchestrator_output_dir, ignore_errors=True)
@@ -274,6 +291,10 @@ def _smoke_run_one(
             train_class_stats_source="synthetic_train_class_stats",
             synthetic=True,
             budget=budget,
+            experiment_id=SYNTHETIC_EXP_ID,
+            data_manifest_sha256=_compute_synthetic_manifest_sha256(),
+            git_commit=smoke_git_commit,
+            git_dirty=smoke_git_dirty,
         )
     ended_at = time.time()
     result.wall_clock_seconds = float(ended_at - started_at)
@@ -318,7 +339,12 @@ def _smoke_run_one(
         "test_access": TEST_ACCESS_DECLARATION,
         "identity_keys": sorted(
             _b04a_identity_block(
-                config=config, config_sha256=file_sha256(config_path)
+                config=config,
+                config_sha256=file_sha256(config_path),
+                experiment_id=SYNTHETIC_EXP_ID,
+                data_manifest_sha256=_compute_synthetic_manifest_sha256(),
+                git_commit=result.git_commit,
+                git_dirty=result.git_dirty,
             ).keys()
         ),
         "environment": _gather_environment(),
