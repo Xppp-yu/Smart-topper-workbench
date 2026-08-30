@@ -284,6 +284,7 @@ Reviewer checklist:
   12 个 R04+R05 定向测试全部通过。
 - Identity carrier 修复 R05 Codex 独立验收（2026-08-30）：`ACCEPT`。Reviewer 独立得到 R05 2/2、B04A integration 129/129、B04 Mini 167/167、Markdown 6/6、protocol validator 30 OKs/0 errors，`py_compile` 与 `git diff --check` 通过；写作模式 synthetic DONE bundle 共审计 54 个 identity carriers（8 run-level JSON + 18 CSV sidecar + 18 checkpoint + 10 log 首行），6 个 strict run identity 字段 0 mismatch。真实 B01 fixture 保留结构性 TEST manifest，但 `load_test=False` 且 `_test_rows is None`，未读取 TEST labels。
 - 下一 Gate：合并 identity 修复并冻结新的 `main` Git SHA；随后另立 R03 run-preparation/Owner-authorization record 与全新 EXP-ID。当前仍为 `GPU_R03_NOT_AUTHORIZED`，`B07` 继续 `BLOCKED_BY_B04A`，任何 TEST 仍禁止。
+- R03 运行准备（`TASK-SLP-B04A-R03-RUN-PREPARATION-v0.1`，2026-08-30）：已冻结 proposed EXP-ID `EXP-SLP-B04A-PM-ARCH-EXPANSION-MINI-20260830-AUTODL-R03`、candidate code SHA `bdd4c3d5...`、config/archive/freeze/split hashes、AutoDL no-training Preflight 和唯一正式启动/恢复命令。当前 `PREPARATION_COMPLETE / READY_FOR_AUTODL_PREFLIGHT / GPU_R03_NOT_AUTHORIZED`；任务发布后须重新冻结 clean released SHA，Preflight 经 Codex 复核后仍需 Owner 单独授权。
 
 ### TASK-SLP-B05：遮盖条件压力测试
 
