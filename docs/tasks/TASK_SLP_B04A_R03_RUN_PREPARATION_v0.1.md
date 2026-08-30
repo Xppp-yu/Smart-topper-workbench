@@ -32,7 +32,7 @@ must never be presented as the final run identity.
 | Final clean released SHA | `PENDING_TASK_RELEASE` |
 | Git dirty at run | `false` required |
 | Config | `configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json` |
-| Config SHA-256 | `f5c4ed124fe5eef80b57345d56d73c4c3efaab491b84804dd96051a1103e6a5a` |
+| Config SHA-256 (Git/LF bytes; AutoDL runtime) | `74230e146cdde4b980c5f3e8308e2a6ad6f176ac1b16941243a6e8a6b8aab3fa` |
 | B01 archive SHA-256 | `23b32395238130437c1ec1b0771fbc793b8be74578b0a1acb2ca237c1913269a` |
 | `freeze_manifest.json` file SHA-256 | `42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04` |
 | Freeze manifest core SHA-256 | `3c78999551580fc46ce15229e053798b5e4c9464a5bab27e05130cb319090b1e` |
@@ -43,8 +43,12 @@ must never be presented as the final run identity.
 | Budget | 45 cumulative min/candidate; 135 total; peak CUDA <= 8192 MB |
 | Device | AutoDL CUDA; target RTX 4090 24 GB; exact identity pending Preflight |
 
-All hashes must be recomputed on AutoDL. Any mismatch is fail-closed and
-requires a new preparation record, not an in-run repair.
+The config hash is frozen from the committed Git blob and the LF checkout used
+on AutoDL. A Windows checkout may materialize CRLF bytes and therefore produce
+`f5c4ed124fe5eef80b57345d56d73c4c3efaab491b84804dd96051a1103e6a5a`;
+that Windows worktree hash is diagnostic only and must not be used as the Linux
+run identity. All hashes must be recomputed on AutoDL. Any other mismatch is
+fail-closed and requires a new preparation record, not an in-run repair.
 
 ## Boundaries
 
@@ -70,7 +74,7 @@ B04A_CONFIG="$B04A_REPO/configs/experiments/slp8_pm_architecture_expansion_mini_
 B04A_PREFLIGHT="$B04A_REPO/outputs/preflight/B04A_R03_20260830"
 B04A_EXP_ID=EXP-SLP-B04A-PM-ARCH-EXPANSION-MINI-20260830-AUTODL-R03
 B04A_FINAL_GIT_SHA=PENDING_TASK_RELEASE
-B04A_CONFIG_SHA=f5c4ed124fe5eef80b57345d56d73c4c3efaab491b84804dd96051a1103e6a5a
+B04A_CONFIG_SHA=74230e146cdde4b980c5f3e8308e2a6ad6f176ac1b16941243a6e8a6b8aab3fa
 B04A_ARCHIVE_SHA=23b32395238130437c1ec1b0771fbc793b8be74578b0a1acb2ca237c1913269a
 B04A_FREEZE_SHA=42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
 
@@ -116,7 +120,7 @@ Authorization timestamp: PENDING
 Final EXP-ID: EXP-SLP-B04A-PM-ARCH-EXPANSION-MINI-20260830-AUTODL-R03
 Final clean released Git SHA: PENDING_TASK_RELEASE
 Git dirty: false required
-Config SHA-256: f5c4ed124fe5eef80b57345d56d73c4c3efaab491b84804dd96051a1103e6a5a
+Config SHA-256: 74230e146cdde4b980c5f3e8308e2a6ad6f176ac1b16941243a6e8a6b8aab3fa
 B01 freeze manifest file SHA-256: 42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
 B01 freeze manifest core SHA-256: 3c78999551580fc46ce15229e053798b5e4c9464a5bab27e05130cb319090b1e
 A06 split SHA-256: 024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706
@@ -141,7 +145,7 @@ B04A_DATA_ROOT=/root/autodl-tmp/datasets/SLP_8Region_Pressure_VAL_v1.1
 B04A_CONFIG="$B04A_REPO/configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json"
 B04A_EXP_ID=EXP-SLP-B04A-PM-ARCH-EXPANSION-MINI-20260830-AUTODL-R03
 B04A_FINAL_GIT_SHA=PENDING_TASK_RELEASE
-B04A_CONFIG_SHA=f5c4ed124fe5eef80b57345d56d73c4c3efaab491b84804dd96051a1103e6a5a
+B04A_CONFIG_SHA=74230e146cdde4b980c5f3e8308e2a6ad6f176ac1b16941243a6e8a6b8aab3fa
 B04A_FREEZE_SHA=42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
 
 cd "$B04A_REPO"

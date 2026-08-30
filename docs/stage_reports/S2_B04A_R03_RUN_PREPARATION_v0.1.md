@@ -32,6 +32,10 @@ and Owner authorization Gates. GPU Mini, TEST, commit, and push were `NOT RUN`.
 - Markdown relative-link check: 4 files, 0 errors; Bash blocks: syntax OK.
 - Documentation/protocol tests: 56 passed; full B04A runner integration:
   129 passed; protocol validator: 30 OKs / 0 errors; `git diff --check`: passed.
+- AutoDL publication audit found that the original config hash was computed
+  from a Windows CRLF worktree (`f5c4ed...e6a5a`). The committed Git blob and
+  AutoDL LF checkout correctly hash to `74230e...8aa3fa`; the task now freezes
+  the latter as the runtime identity and records the former as diagnostic only.
 - AutoDL CUDA Preflight: `NOT RUN`; research training: `NOT RUN`; TEST: `0`.
 
 ## Verified, inferred, and unverified
