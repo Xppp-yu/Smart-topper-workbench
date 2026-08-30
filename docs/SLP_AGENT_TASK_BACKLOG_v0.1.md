@@ -301,10 +301,11 @@ Reviewer checklist:
 
 ### TASK-SLP-B07：Full 协议冻结
 
-- 状态：`BLOCKED_BY_B04A`；B05/B06 为可选独立路线，不阻塞 pressure-only Full，但 B04A 是当前前置 Gate。
+- 状态：`PROTOCOL_ACCEPTED / COMPUTE_NOT_RUN / TEST_DENIED`；B04A R03 已由 Owner `ACCEPT_WITH_LIMITATIONS`，前置 Gate 解除；B05/B06 为可选独立路线。
 - 目标：冻结 folds、候选、预算、指标、选择规则、资源和停止条件。
 - 证据硬 Gate：运行 manifest 必须内嵌 `experiment_id`、`git_commit`、`git_dirty`、`config_sha256`、`data_manifest_sha256`、`split_sha256` 和 `model_version`；不得依赖外部终端记录补 Git SHA。
 - 禁止：协议与 Full 运行同一任务完成。
+- 当前草案：91 development subjects / 4,095 samples 固定 5-fold；DeepLabV3+-lite + ResUNet-lite；seeds `[42,123,2026]`；30 units；pooled OOF primary；15 min/unit、450 min total、8192 MiB；TEST=0。入口：`configs/experiments/slp8_pm_full_protocol_v0.1.json`、`configs/experiments/slp8_pm_full_folds_v0.1.json`、`docs/tasks/TASK_SLP_B07_FULL_PROTOCOL_FREEZE_v0.1.md`。
 
 ### TASK-SLP-B08：Full Runner 与一折预检
 

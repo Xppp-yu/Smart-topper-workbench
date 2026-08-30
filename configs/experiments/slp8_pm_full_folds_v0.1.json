@@ -1,0 +1,66 @@
+{
+  "version": "slp8_pm_full_folds_v0.1",
+  "task_id": "TASK-SLP-B07-FULL-PROTOCOL-FREEZE-v0.1",
+  "source_freeze_version": "slp8_training_tables_v0.1",
+  "source_a06_split_sha256": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+  "source_train_manifest_sha256": "4801f0c4130bc52a49245b4930bfa7e871bbbce3f8ec5bc38fed2f238736d044",
+  "source_val_manifest_sha256": "800c8262049a2694024ddb0c8ffe7a5f1c2d5a79321d95f0923653c2feb7ea71",
+  "development_subject_count": 91,
+  "development_sample_count": 4095,
+  "frames_per_subject": 45,
+  "test_subject_count_declared_structural_only": 11,
+  "test_samples_declared_structural_only": 495,
+  "test_access": "DENIED",
+  "algorithm": "sort development subject_id ascending, assign zero-based index modulo 5",
+  "n_folds": 5,
+  "folds": [
+    {
+      "fold_id": "fold_1",
+      "val_subject_ids": ["00001", "00007", "00012", "00020", "00025", "00031", "00038", "00043", "00048", "00053", "00058", "00063", "00068", "00074", "00079", "00085", "00091", "00097", "00102"],
+      "val_subject_count": 19,
+      "val_sample_count": 855,
+      "train_subject_count": 72,
+      "train_sample_count": 3240
+    },
+    {
+      "fold_id": "fold_2",
+      "val_subject_ids": ["00002", "00008", "00013", "00021", "00026", "00033", "00039", "00044", "00049", "00054", "00059", "00064", "00069", "00075", "00080", "00086", "00092", "00098"],
+      "val_subject_count": 18,
+      "val_sample_count": 810,
+      "train_subject_count": 73,
+      "train_sample_count": 3285
+    },
+    {
+      "fold_id": "fold_3",
+      "val_subject_ids": ["00003", "00009", "00016", "00022", "00027", "00034", "00040", "00045", "00050", "00055", "00060", "00065", "00071", "00076", "00081", "00088", "00093", "00099"],
+      "val_subject_count": 18,
+      "val_sample_count": 810,
+      "train_subject_count": 73,
+      "train_sample_count": 3285
+    },
+    {
+      "fold_id": "fold_4",
+      "val_subject_ids": ["00005", "00010", "00017", "00023", "00028", "00035", "00041", "00046", "00051", "00056", "00061", "00066", "00072", "00077", "00083", "00089", "00094", "00100"],
+      "val_subject_count": 18,
+      "val_sample_count": 810,
+      "train_subject_count": 73,
+      "train_sample_count": 3285
+    },
+    {
+      "fold_id": "fold_5",
+      "val_subject_ids": ["00006", "00011", "00019", "00024", "00030", "00037", "00042", "00047", "00052", "00057", "00062", "00067", "00073", "00078", "00084", "00090", "00096", "00101"],
+      "val_subject_count": 18,
+      "val_sample_count": 810,
+      "train_subject_count": 73,
+      "train_sample_count": 3285
+    }
+  ],
+  "invariants": {
+    "each_development_subject_exactly_one_val_fold": true,
+    "train_val_subject_overlap_per_fold": 0,
+    "oof_subject_coverage_per_seed": 91,
+    "oof_sample_coverage_per_seed": 4095,
+    "test_subjects_in_any_fold": 0,
+    "fit_preprocessing_on_fold_train_only": true
+  }
+}

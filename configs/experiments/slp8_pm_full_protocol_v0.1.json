@@ -1,0 +1,187 @@
+{
+  "protocol": "B07",
+  "task_id": "TASK-SLP-B07-FULL-PROTOCOL-FREEZE-v0.1",
+  "config_version": "slp8_pm_full_protocol_v0.1",
+  "status": "PROTOCOL_ACCEPTED",
+  "execution_authorized": false,
+  "runner_implemented": false,
+  "test_access": {
+    "allowed": false,
+    "load_test": false,
+    "expected_rows": 0,
+    "expected_labels": 0,
+    "expected_onehot": 0
+  },
+  "data_contract": {
+    "dataset_id": "SLP_8Region_Pressure_VAL_v1.1",
+    "freeze_version": "slp8_training_tables_v0.1",
+    "a06_split_sha256": "024f5abe05afc108f66be978dfc6d3e2f0c558571141d7cb459b849d0d33a706",
+    "freeze_manifest_file_sha256": "42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04",
+    "development_source_splits": ["train", "val"],
+    "development_subject_count": 91,
+    "development_sample_count": 4095,
+    "setting": "danaLab",
+    "cover": "uncover",
+    "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+    "source_review_status": "NOT_REVIEWED",
+    "pressure_storage_dtype": "float64",
+    "model_input_dtype": "float32",
+    "label_dtype": "int64",
+    "raw_semantics": "raw_pmarray_response_not_kPa"
+  },
+  "fold_contract": {
+    "manifest_path": "configs/experiments/slp8_pm_full_folds_v0.1.json",
+    "manifest_sha256": "0ac344c9bb89cc71757c796096a8e2c63e8b4bb1cf9eeea2cab875fd2add8b2b",
+    "n_folds": 5,
+    "unit": "subject",
+    "oof_coverage_required_per_seed": {
+      "subjects": 91,
+      "samples": 4095,
+      "duplicates": 0,
+      "missing": 0
+    },
+    "fit_preprocessing_on_fold_train_only": true,
+    "test_subjects_in_folds": 0
+  },
+  "candidates": [
+    {
+      "name": "slp8_deeplabv3plus_lite_v0.1",
+      "model_version": "slp8_deeplabv3plus_lite_v0.1",
+      "exact_parameter_count": 53449,
+      "b04a_r03_macro_iou_mean": 0.5044011036077056,
+      "b04a_r03_worst_subject_iou": 0.43699157768956226,
+      "role": "B04A_R03_ADVANCED"
+    },
+    {
+      "name": "slp8_resunet_lite_v0.1",
+      "model_version": "slp8_resunet_lite_v0.1",
+      "exact_parameter_count": 120809,
+      "b04a_r03_macro_iou_mean": 0.4506930688354398,
+      "b04a_r03_worst_subject_iou": 0.3378973457117046,
+      "role": "B04A_R03_ADVANCED"
+    }
+  ],
+  "training_contract": {
+    "inheritance": "B04A frozen training contract; no post-Mini tuning",
+    "seeds": [42, 123, 2026],
+    "input_shape": [192, 84],
+    "augmentation_policy": "none",
+    "pretrained": false,
+    "initialization": "kaiming_normal_fan_out_relu",
+    "loss": "CrossEntropyLoss",
+    "class_weights": "fold-TRAIN-only inverse_sqrt_pixel_ratio; background=1.0; foreground mean excludes background; clip [0.25,4.0]",
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "scheduler": null,
+    "max_epochs": 30,
+    "min_epochs": 5,
+    "early_stopping_monitor": "val_loss",
+    "early_stopping_patience": 4,
+    "checkpoint_selection": "minimum finite fold-val loss",
+    "all_fold_seed_units_must_succeed": true
+  },
+  "execution_matrix": {
+    "candidates": 2,
+    "folds": 5,
+    "seeds": 3,
+    "total_units": 30,
+    "serial_on_one_gpu": true
+  },
+  "metrics": {
+    "primary": "pooled development OOF fixed foreground macro IoU per seed, then arithmetic mean across 3 seeds",
+    "background_included_in_primary": false,
+    "required": [
+      "fixed_foreground_macro_iou",
+      "fixed_foreground_macro_dice",
+      "per_region_iou_dice_precision_recall_support",
+      "per_subject_fixed_foreground_macro_iou",
+      "worst_subject_iou",
+      "per_posture_metrics",
+      "centroid_error",
+      "background_iou",
+      "confusion_matrix"
+    ],
+    "fold_average_is_primary": false,
+    "failed_units_may_be_dropped": false
+  },
+  "selection_rule": {
+    "output_candidate_count": 1,
+    "rank_by": "mean pooled-OOF fixed foreground macro IoU across seeds descending",
+    "near_tie_if_absolute_difference_lt": 0.02,
+    "near_tie_tiebreak_order": [
+      "higher minimum per-subject IoU across all seeds",
+      "lower exact_parameter_count",
+      "lexicographically smaller model_version"
+    ],
+    "no_test_in_selection": true,
+    "no_hyperparameter_changes_after_results": true
+  },
+  "hard_fail_closed_gates": [
+    "identity missing or mismatch",
+    "fold manifest SHA mismatch",
+    "train/val subject overlap",
+    "OOF duplicate or missing sample",
+    "any TEST row, label, onehot, statistic, prediction or metric access",
+    "NaN or Inf loss/metric",
+    "OOM or resource budget breach",
+    "parameter count mismatch or parameters unchanged",
+    "checkpoint/reload prediction mismatch",
+    "any fold-seed unit FAILED or STOPPED",
+    "multiple or missing terminal state files"
+  ],
+  "resource_budget": {
+    "machine_tier": "single NVIDIA RTX 4090 24GB",
+    "max_wall_minutes_per_fold_seed_unit": 15,
+    "max_wall_minutes_per_candidate": 225,
+    "max_wall_minutes_total": 450,
+    "max_peak_cuda_mb": 8192,
+    "b08_one_fold_preflight_max_wall_minutes": 15,
+    "resume_preserves_unit_candidate_and_total_accumulators": true
+  },
+  "identity_contract": {
+    "required_fields": [
+      "experiment_id",
+      "git_commit",
+      "git_dirty",
+      "config_sha256",
+      "data_manifest_sha256",
+      "split_sha256",
+      "fold_manifest_sha256",
+      "model_version",
+      "candidate",
+      "fold_id",
+      "seed"
+    ],
+    "git_dirty_must_be": false,
+    "same_frozen_identity_across_all_carriers": true,
+    "formats": {
+      "json": "top-level fields",
+      "csv": "sibling .identity.json",
+      "checkpoint": "payload.identity",
+      "log": "first line JSON"
+    }
+  },
+  "required_artifacts": [
+    "manifest.json",
+    "resolved_config.json",
+    "environment.json",
+    "input_manifest_hashes.json",
+    "fold_manifest.json",
+    "status.json",
+    "candidate_decision.json",
+    "budget_report.json",
+    "oof_predictions.csv",
+    "oof_metrics_summary.json",
+    "per_subject_metrics.csv",
+    "per_region_metrics.csv",
+    "per_posture_metrics.csv",
+    "logs/run.log",
+    "exactly one of DONE.json FAILED.json STOPPED.json"
+  ],
+  "next_gates": {
+    "B08": "implement Full runner and execute synthetic plus one-fold no-TEST preflight",
+    "B09": "Owner-authorized development Full only after B08 acceptance",
+    "B09T": "separate one-time final TEST only after B11 candidate freeze and explicit Owner authorization"
+  }
+}
