@@ -5067,6 +5067,42 @@ def _write_b04a_candidate_aggregate(
     return out_path
 
 
+def _b04a_observed_peak_cuda_mb(
+    candidate_results: Mapping[str, B04ACandidateAggregate],
+) -> float:
+    """Return the finite non-negative maximum of all per-seed CUDA peaks."""
+
+    observed_seed_peaks: list[float] = []
+    for candidate, aggregate in candidate_results.items():
+        for seed in aggregate.seeds:
+            seed_result = aggregate.per_seed.get(int(seed))
+            if seed_result is None:
+                raise MiniProtocolError(
+                    "B04A run-level budget report is missing a per-seed result: "
+                    f"candidate={candidate!r} seed={seed}"
+                )
+            raw_peak = seed_result.budget_report.get("peak_cuda_mb")
+            if isinstance(raw_peak, bool) or not isinstance(raw_peak, (int, float)):
+                raise MiniProtocolError(
+                    "B04A per-seed budget peak_cuda_mb must be numeric: "
+                    f"candidate={candidate!r} seed={seed} value={raw_peak!r}"
+                )
+            peak = float(raw_peak)
+            if not math.isfinite(peak) or peak < 0.0:
+                raise MiniProtocolError(
+                    "B04A per-seed budget peak_cuda_mb must be finite and "
+                    f"non-negative: candidate={candidate!r} seed={seed} "
+                    f"value={raw_peak!r}"
+                )
+            observed_seed_peaks.append(peak)
+    if not observed_seed_peaks:
+        raise MiniProtocolError(
+            "B04A run-level budget report requires at least one observed "
+            "per-seed peak_cuda_mb"
+        )
+    return max(observed_seed_peaks)
+
+
 def _write_b04a_run_bundle(
     *,
     output_dir: Path,
@@ -5108,6 +5144,15 @@ def _write_b04a_run_bundle(
         git_commit=result.git_commit,
         git_dirty=result.git_dirty,
     )
+
+    elapsed_total_seconds = float(result.wall_clock_seconds)
+    if not math.isfinite(elapsed_total_seconds) or elapsed_total_seconds < 0.0:
+        raise MiniProtocolError(
+            "B04A run-level wall_clock_seconds must be finite and non-negative; "
+            f"got {result.wall_clock_seconds!r}"
+        )
+
+    peak_cuda_mb = _b04a_observed_peak_cuda_mb(result.candidate_results)
 
     # manifest.json
     manifest: dict[str, Any] = dict(identity)
@@ -5272,10 +5317,8 @@ def _write_b04a_run_bundle(
     budget_payload: dict[str, Any] = {
         **identity,
         "thresholds": result.resource_budget.as_dict(),
-        "elapsed_total_seconds": float(
-            result.resource_budget.max_wall_seconds_total  # placeholder
-        ),
-        "peak_cuda_mb": 0.0,
+        "elapsed_total_seconds": elapsed_total_seconds,
+        "peak_cuda_mb": peak_cuda_mb,
         "candidates": {
             cand: {
                 "elapsed_seconds_total": float(agg.elapsed_seconds_total),

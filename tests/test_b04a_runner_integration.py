@@ -218,6 +218,7 @@ def _make_fake_candidate_result(
     best_macro_iou: float,
     worst_subject_iou: float | None,
     per_region_ious: dict[int, float] | None = None,
+    peak_cuda_mb: float = 123.0,
 ) -> CandidateResult:
     """Build a CandidateResult with the minimum surface needed by the B04A aggregator."""
 
@@ -310,7 +311,7 @@ def _make_fake_candidate_result(
         class_weight_summary={},
         elapsed_seconds=0.01,
         budget_status="ok",
-        budget_report={},
+        budget_report={"peak_cuda_mb": float(peak_cuda_mb)},
         budget_thresholds={},
     )
 
@@ -3437,6 +3438,55 @@ class TestB04AActualArtifactIdentityAudit:
                 payload, where=fname
             )
 
+    def test_budget_report_uses_observed_wall_clock_and_seed_peak(
+        self, b04a_write_dir: Path
+    ) -> None:
+        budget = json.loads(
+            (b04a_write_dir / "budget_report.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (b04a_write_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        seed_peaks: list[float] = []
+        for metrics_path in (
+            b04a_write_dir / "checkpoints"
+        ).glob("*/seed_*/metrics_summary.json"):
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+            seed_peaks.append(float(metrics["budget_report"]["peak_cuda_mb"]))
+        assert seed_peaks
+        assert budget["elapsed_total_seconds"] == pytest.approx(
+            manifest["wall_clock_seconds"]
+        )
+        assert budget["elapsed_total_seconds"] != pytest.approx(
+            budget["thresholds"]["max_wall_seconds_total"]
+        )
+        assert budget["peak_cuda_mb"] == pytest.approx(max(seed_peaks))
+
+    @pytest.mark.parametrize(
+        "bad_peak", [None, True, "0", -1.0, float("nan"), float("inf")]
+    )
+    def test_budget_peak_malformed_fails_closed(self, bad_peak: Any) -> None:
+        from topper_perception.neural.slp8_region_mini import (
+            _b04a_observed_peak_cuda_mb,
+        )
+
+        per_seed = {
+            seed: _make_fake_candidate_result(
+                candidate=SMALL_UNET_VERSION,
+                seed=seed,
+                feasibility="FEASIBLE",
+                best_macro_iou=0.5,
+                worst_subject_iou=0.4,
+            )
+            for seed in B04A_SEEDS
+        }
+        per_seed[B04A_SEEDS[0]].budget_report["peak_cuda_mb"] = bad_peak
+        aggregate = _b04a_aggregate_candidate(
+            SMALL_UNET_VERSION, per_seed, B04A_SEEDS
+        )
+        with pytest.raises(MiniProtocolError, match="peak_cuda_mb"):
+            _b04a_observed_peak_cuda_mb({SMALL_UNET_VERSION: aggregate})
+
     # ------------------------------------------------------------------
     # (3) DONE/FAILED/STOPPED terminal JSON carry the seven fields
     # ------------------------------------------------------------------
@@ -3656,6 +3706,21 @@ class TestB04AActualArtifactIdentityAudit:
             git_commit="0" * 40,
             git_dirty=False,
         )
+        identity_seed_results = {
+            seed: _make_fake_candidate_result(
+                candidate=SMALL_UNET_VERSION,
+                seed=seed,
+                feasibility="FEASIBLE",
+                best_macro_iou=0.5,
+                worst_subject_iou=0.4,
+            )
+            for seed in B04A_SEEDS
+        }
+        result.candidate_results = {
+            SMALL_UNET_VERSION: _b04a_aggregate_candidate(
+                SMALL_UNET_VERSION, identity_seed_results, B04A_SEEDS
+            )
+        }
         # Mutate the result AFTER construction; the writer must use
         # the mutated values, proving there is no separate identity
         # source.
@@ -4091,6 +4156,21 @@ class TestB04AActualArtifactIdentityAudit:
             git_commit=FROZEN_COMMIT,
             git_dirty=FROZEN_DIRTY,
         )
+        identity_seed_results = {
+            seed: _make_fake_candidate_result(
+                candidate=SMALL_UNET_VERSION,
+                seed=seed,
+                feasibility="FEASIBLE",
+                best_macro_iou=0.5,
+                worst_subject_iou=0.4,
+            )
+            for seed in B04A_SEEDS
+        }
+        result.candidate_results = {
+            SMALL_UNET_VERSION: _b04a_aggregate_candidate(
+                SMALL_UNET_VERSION, identity_seed_results, B04A_SEEDS
+            )
+        }
 
         # Now monkeypatch ``_resolve_git_identity`` to return a
         # different value, simulating a worktree drift (e.g. a

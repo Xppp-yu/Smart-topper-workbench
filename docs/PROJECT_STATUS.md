@@ -1,11 +1,11 @@
 # Smart Topper Windows Research Workbench — 项目状态
 
-最后更新：2026-08-30（B04A GPU Mini R02 因 runner 缺陷 FAILED；reload 与 identity carrier 修复均已验收；GPU R03 尚未授权）
+最后更新：2026-08-30（B04A GPU Mini R03 已完成；budget carrier 缺陷已修复，结果待 Owner Gate）
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成；验收前保持 `READY_FOR_REVIEW`。
 
 ## 当前一句话状态
 
-PoPu P5.2-C 已接受 `small_resnet` 为固定睡姿五分类总体研究候选模型族；P6/P6.1 已完成 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟；P7 Full 软件扰动证据已完成并复核（14 conditions × 5 seeds × 15 folds），但不构成硬件、产品、整夜睡眠或控制安全验证。SLP A09R、B01–B04 已验收；B04 R05 在 TEST=0 下得到 SmallUNet `0.439625`、TinyFCN `0.051631`。B04A R02 在 RTX 4090 上完成 3 候选 × 3 seeds 计算，但因 runner 缺陷终态 `FAILED`；R01/R02 已按 SHA 归档，结果不得用于正式晋级。reload 与 experiment identity carrier 修复均已通过独立审查和回归并验收；下一步是在合并后的新 Git SHA 上准备全新 R03 EXP-ID。GPU R03、B07 和任何 TEST 均未授权。
+PoPu P5.2-C 已接受 `small_resnet` 为固定睡姿五分类总体研究候选模型族；P6/P6.1 已完成 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟；P7 Full 软件扰动证据已完成并复核（14 conditions × 5 seeds × 15 folds），但不构成硬件、产品、整夜睡眠或控制安全验证。SLP A09R、B01–B04 已验收；B04 R05 在 TEST=0 下得到 SmallUNet `0.439625`、TinyFCN `0.051631`。B04A R03 已在冻结 SHA `f0fac823`、TEST=0 下完成 3 candidates × 3 seeds，9/9 reload 一致，晋级记录为 DeepLabV3+-lite 与 ResUNet-lite；原始顶层 budget carrier 错把耗时/显存写成 `8100.0/0.0`，Reviewer 已从不可变 per-seed 证据重算 `2128.7466 s / 363.4121 MiB`，本地 writer 修复与回归已完成。当前等待 Owner 对 R03 `ACCEPT_WITH_LIMITATIONS / ITERATE / NEW_EXP_REQUIRED` 作 Gate 决定；B07 与任何 TEST 仍未授权。
 
 ## 阶段看板
 
