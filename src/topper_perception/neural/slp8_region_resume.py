@@ -47,10 +47,20 @@ class ResumeRefusedError(Exception):
 
 @dataclass(frozen=True)
 class CheckpointIdentity:
-    """Stable identity fields embedded in every B04 checkpoint.
+    """Stable identity fields embedded in every B04 / B04A checkpoint.
 
     The B04 R02 contract: a resume attempt that disagrees on **any**
-    field in this block is rejected fail-closed.
+    field in this block is rejected fail-closed.  The B04A
+    experiment-identity carrier fix (TASK-SLP-B04A-EXPERIMENT-IDENTITY-
+    CARRIER-FIX-v0.1) extends the block with ``experiment_id``,
+    ``data_manifest_sha256``, ``git_commit``, ``git_dirty`` and
+    ``split_sha256`` so resume also rejects Owner EXP-ID drift, the
+    on-disk ``freeze_manifest.json`` file hash drift, Git HEAD
+    drift, and dirty-worktree drift.  ``a06_split_sha256`` is
+    retained as the historical split-manifest field name; the
+    frozen B04A contract also requires the canonical
+    ``split_sha256`` name to appear at the top level of every
+    carrier.
     """
 
     task_id: str
@@ -61,10 +71,20 @@ class CheckpointIdentity:
     image_shape: tuple[int, int]
     config_sha256: str
     a06_split_sha256: str
+    split_sha256: str
     freeze_manifest_sha256: str
     train_class_stats_sha256: str
     class_weight_sha256: str
     input_manifest_hashes_sha256: str
+    git_commit: str
+    git_dirty: bool
+    # B04A experiment-identity carrier fix: every checkpoint MUST
+    # carry the Owner-supplied EXP-ID and the on-disk freeze-manifest
+    # file SHA-256.  Empty strings are reserved for fail-closed
+    # bootstrap / synthetic cases and are still compared field-by-field
+    # by :func:`verify_resume_identity`.
+    experiment_id: str = ""
+    data_manifest_sha256: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -76,10 +96,15 @@ class CheckpointIdentity:
             "image_shape": list(self.image_shape),
             "config_sha256": str(self.config_sha256),
             "a06_split_sha256": str(self.a06_split_sha256),
+            "split_sha256": str(self.split_sha256),
             "freeze_manifest_sha256": str(self.freeze_manifest_sha256),
             "train_class_stats_sha256": str(self.train_class_stats_sha256),
             "class_weight_sha256": str(self.class_weight_sha256),
             "input_manifest_hashes_sha256": str(self.input_manifest_hashes_sha256),
+            "git_commit": str(self.git_commit),
+            "git_dirty": bool(self.git_dirty),
+            "experiment_id": str(self.experiment_id),
+            "data_manifest_sha256": str(self.data_manifest_sha256),
         }
 
 
@@ -92,6 +117,29 @@ def identity_from_dict(payload: Mapping[str, Any]) -> CheckpointIdentity:
     if "identity" not in payload:
         raise ResumeIdentityError("checkpoint payload missing 'identity' block")
     raw = payload["identity"]
+    # ``experiment_id`` / ``data_manifest_sha256`` were added by
+    # TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1.  ``git_commit``
+    # / ``git_dirty`` / ``split_sha256`` were also added in the R02
+    # ITERATE pass so resume also rejects Git HEAD drift, dirty
+    # worktree drift, and the canonical ``split_sha256`` field-name
+    # drift.  Older checkpoints written before that task used a
+    # shorter identity block; refuse to load them as resume sources
+    # for B04A so a Reviewer can never silently inherit a missing
+    # identity.
+    for required in (
+        "experiment_id",
+        "data_manifest_sha256",
+        "git_commit",
+        "git_dirty",
+        "split_sha256",
+    ):
+        if required not in raw:
+            raise ResumeIdentityError(
+                f"checkpoint identity is missing the required "
+                f"{required!r} field (added by "
+                "TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1); "
+                "refusing to load a pre-fix checkpoint"
+            )
     return CheckpointIdentity(
         task_id=str(raw["task_id"]),
         candidate=str(raw["candidate"]),
@@ -101,10 +149,15 @@ def identity_from_dict(payload: Mapping[str, Any]) -> CheckpointIdentity:
         image_shape=tuple(int(v) for v in raw["image_shape"]),
         config_sha256=str(raw["config_sha256"]),
         a06_split_sha256=str(raw["a06_split_sha256"]),
+        split_sha256=str(raw["split_sha256"]),
         freeze_manifest_sha256=str(raw["freeze_manifest_sha256"]),
         train_class_stats_sha256=str(raw["train_class_stats_sha256"]),
         class_weight_sha256=str(raw["class_weight_sha256"]),
         input_manifest_hashes_sha256=str(raw["input_manifest_hashes_sha256"]),
+        git_commit=str(raw["git_commit"]),
+        git_dirty=bool(raw["git_dirty"]),
+        experiment_id=str(raw["experiment_id"]),
+        data_manifest_sha256=str(raw["data_manifest_sha256"]),
     )
 
 

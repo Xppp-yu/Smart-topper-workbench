@@ -326,7 +326,14 @@ def _make_snapshot(
     )
 
 
-def _build_identity(candidate: str = MODEL_VERSION) -> CheckpointIdentity:
+def _build_identity(
+    candidate: str = MODEL_VERSION,
+    *,
+    experiment_id: str = "EXP-SLP-B04-TEST-EXP-ID",
+    data_manifest_sha256: str = "0" * 64,
+    git_commit: str = "0" * 40,
+    git_dirty: bool = False,
+) -> CheckpointIdentity:
     return CheckpointIdentity(
         task_id=TASK_ID,
         candidate=candidate,
@@ -336,10 +343,15 @@ def _build_identity(candidate: str = MODEL_VERSION) -> CheckpointIdentity:
         image_shape=PRESSURE_SHAPE,
         config_sha256="",
         a06_split_sha256=A06_SPLIT_SHA256_EXPECTED,
+        split_sha256=A06_SPLIT_SHA256_EXPECTED,
         freeze_manifest_sha256="",
         train_class_stats_sha256="",
         class_weight_sha256="",
         input_manifest_hashes_sha256="",
+        git_commit=git_commit,
+        git_dirty=git_dirty,
+        experiment_id=experiment_id,
+        data_manifest_sha256=data_manifest_sha256,
     )
 
 

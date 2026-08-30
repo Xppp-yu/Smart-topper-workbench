@@ -354,6 +354,128 @@ _CONFIG_VERSION_TO_PROTOCOL: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
+# Experiment identity carrier (TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1)
+# ---------------------------------------------------------------------------
+#
+# The experiment-identity carrier fix is a frozen contract: every
+# formal B04A run must carry an Owner-supplied ``experiment_id`` and
+# the on-disk ``freeze_manifest.json`` file SHA-256.  Synthetic smoke
+# paths are explicitly synthetic and use the deterministic SHA-256 of
+# the canonical synthetic dataset manifest payload -- they MUST NOT
+# be accepted as a real B01 identity.
+
+#: The seven required identity fields the frozen B04A
+#: ``identity_hard_gate.required_fields`` contract pins at the
+#: top level of every JSON carrier and as the first JSON line of
+#: every log carrier.  Conflict detection in :func:`write_status_files`
+#: and resume drift rejection in :func:`verify_resume_identity` are
+#: scoped to this set.
+_REQUIRED_B04A_IDENTITY_FIELDS: tuple[str, ...] = (
+    "experiment_id",
+    "git_commit",
+    "git_dirty",
+    "config_sha256",
+    "data_manifest_sha256",
+    "split_sha256",
+    "model_version",
+)
+
+#: Sentinel experiment_id used by the synthetic CPU smoke only.
+#: Real B01 runs MUST supply an Owner-authorized EXP-ID via
+#: ``--experiment-id``; the CLI fail-closes when a real B01 run is
+#: requested without one.
+SYNTHETIC_EXP_ID = "EXP-SLP-B04A-SYNTHETIC-SMOKE"
+
+#: Sentinel git_commit string used by the legacy lenient resolver
+#: when the repository's Git HEAD cannot be resolved.  Formal B04A
+#: identity construction rejects this sentinel: a Reviewer must
+#: never see an ``unresolvable_git_commit`` in any formal carrier.
+UNRESOLVABLE_GIT_COMMIT = "unresolvable_git_commit"
+
+#: Deterministic payload of the canonical synthetic dataset manifest.
+#: This is hashed in :func:`_compute_synthetic_manifest_sha256` to
+#: produce a stable ``data_manifest_sha256`` for synthetic smoke.
+#: Synthetic identity MUST NEVER be accepted as a real B01 identity:
+#: the hash is distinct from any on-disk ``freeze_manifest.json``
+#: file hash and the synthetic mode is flagged at every carrier.
+SYNTHETIC_DATA_MANIFEST_PAYLOAD: dict[str, Any] = {
+    "kind": "slp8_synthetic_smoke_manifest",
+    "config_version": B04A_CONFIG_VERSION,
+    "synthetic": True,
+    "synthetic_train_samples": 4,
+    "synthetic_val_samples": 2,
+    "synthetic_seeds": list(B04A_SEEDS),
+    "n_classes": 9,
+    "image_shape": [192, 84],
+    "normalization": "raw_passthrough_with_minmax_reference",
+    "fit_split": "train",
+    "provenance": "V221_CORRECTED_SUPPORT_AUTO_ACCEPTED",
+    "source_review_status": "NOT_REVIEWED",
+    "note": (
+        "Canonical synthetic smoke manifest.  The SHA-256 of this "
+        "payload is the data_manifest_sha256 for every synthetic "
+        "smoke carrier.  Synthetic identity must never be confused "
+        "with a real B01 freeze_manifest.json file hash."
+    ),
+}
+
+
+def _compute_synthetic_manifest_sha256() -> str:
+    """Return the deterministic SHA-256 of the canonical synthetic dataset manifest.
+
+    The hash is stable across processes and operating systems because
+    the input is the :data:`SYNTHETIC_DATA_MANIFEST_PAYLOAD` dict
+    serialised with ``sort_keys=True`` and ``separators=(",", ":")``.
+    A Reviewer can verify the value by hashing the canonical payload
+    in the same way.
+    """
+
+    text = json.dumps(
+        SYNTHETIC_DATA_MANIFEST_PAYLOAD,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=_json_default,
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _build_run_level_model_version(candidates: Sequence[str]) -> str:
+    """Build the run-level ``multi_candidate[... ]`` model_version string.
+
+    The frozen grammar (TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-
+    FIX-v0.1):
+
+    ``multi_candidate[<candidate_1>,<candidate_2>,...,<candidate_n>]``
+
+    The order is taken from the validated frozen config (the
+    ``candidates`` field of the resolved :class:`MiniConfig`), never
+    from completed results.  An empty candidate list raises
+    :class:`MiniProtocolError` so a reviewer's empty payload never
+    silently produces ``multi_candidate[]``.
+    """
+
+    if not candidates:
+        raise MiniProtocolError(
+            "_build_run_level_model_version: candidate list is empty; "
+            "refusing to emit multi_candidate[] for the run-level "
+            "model_version carrier"
+        )
+    # Defensive: strip whitespace, fail-closed on empty names.
+    cleaned: list[str] = []
+    for cand in candidates:
+        name = str(cand).strip()
+        if not name:
+            raise MiniProtocolError(
+                "_build_run_level_model_version: candidate name is "
+                "blank; refusing to emit an empty model_version name "
+                "in the multi_candidate[...] string"
+            )
+        cleaned.append(name)
+    return "multi_candidate[" + ",".join(cleaned) + "]"
+
+
+# ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
 
@@ -372,6 +494,21 @@ class OutputCollisionError(MiniProtocolError):
 
 class RunAuthorizationError(MiniProtocolError):
     """Raised when a real B01 run is requested without --run-authorized."""
+
+
+class ExperimentIdentityError(MiniProtocolError):
+    """Raised when the experiment identity (EXP-ID / data manifest SHA) is invalid.
+
+    Added by TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1.  The
+    runner fail-closes when:
+
+    * a real B01 run is requested without a non-empty Owner-supplied
+      ``--experiment-id``;
+    * a real B01 run's ``data_manifest_sha256`` cannot be computed
+      from the on-disk ``freeze_manifest.json`` file;
+    * a synthetic smoke's identity would otherwise be confused with a
+      real B01 identity.
+    """
 
 
 class NonFiniteMetricsError(MiniProtocolError):
@@ -3221,6 +3358,8 @@ def run_mini(
     budget: ResourceBudget | None = None,
     b01_contract_report: dict[str, Any] | None = None,
     resume_from_per_candidate: dict[str, Path] | None = None,
+    experiment_id: str = "",
+    data_manifest_sha256: str = "",
 ) -> MiniRunResult:
     """Run the B04 Mini end-to-end across all frozen candidates.
 
@@ -3269,6 +3408,14 @@ def run_mini(
         )
     budget_state = ResourceBudgetState(budget)
 
+    # Resolve the run-level git identity once so every checkpoint
+    # identity block carries the same ``git_commit`` / ``git_dirty``
+    # values (TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1
+    # R02 ITERATE: resume now also rejects Git HEAD drift and
+    # dirty-worktree drift).
+    git_commit, git_dirty = _resolve_git_identity()
+    a06_split = str(config.b01_a06_split_sha256_expected)
+
     candidate_results: dict[str, CandidateResult] = {}
     n_feasible = 0
     n_not_feasible = 0
@@ -3308,13 +3455,18 @@ def run_mini(
             n_classes=int(N_CLASSES),
             image_shape=tuple(PRESSURE_SHAPE),
             config_sha256=config_sha,
-            a06_split_sha256=str(config.b01_a06_split_sha256_expected),
+            a06_split_sha256=a06_split,
+            split_sha256=a06_split,
             freeze_manifest_sha256=str(input_hashes.get("freeze_manifest_sha256", "")),
             train_class_stats_sha256=str(input_hashes.get("train_class_stats_sha256", "")),
             class_weight_sha256=class_weight_sha256(class_weight_result.as_dict()),
             input_manifest_hashes_sha256=input_manifest_hashes_sha256(
                 input_manifest_hashes_for_payload
             ),
+            git_commit=git_commit,
+            git_dirty=git_dirty,
+            experiment_id=str(experiment_id or ""),
+            data_manifest_sha256=str(data_manifest_sha256 or ""),
         )
         resume_path = (
             Path(resume_from_per_candidate[candidate_name])
@@ -3478,6 +3630,14 @@ class B04ARunResult:
     result types share the same ``terminal_state`` set
     (``DONE``/``FAILED``/``STOPPED``) so the CLI can use a single
     status-file writer.
+
+    The ``experiment_id`` and ``data_manifest_sha256`` fields are
+    added by TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1 so
+    the run-level bundle writer can use the same identity values
+    that the run-level CheckpointIdentity block uses.  They default
+    to empty strings to remain backward-compatible with the older
+    synthetic smoke calls; the B04A orchestrator (and the CLI) MUST
+    populate them before invoking :func:`_write_b04a_run_bundle`.
     """
 
     config: MiniConfig
@@ -3504,6 +3664,16 @@ class B04ARunResult:
     determinism: DeterminismSettings
     resource_budget: ResourceBudget
     b01_contract_report: dict[str, Any] | None
+    experiment_id: str = ""
+    data_manifest_sha256: str = ""
+    # Run-level git identity, frozen at the orchestrator entry
+    # point.  The writers MUST take these values from the result
+    # object rather than re-resolving ``git rev-parse HEAD`` /
+    # ``git status --porcelain`` themselves, so the bundle carries
+    # the run-start identity even if the worktree drifts during
+    # the run (R03 ITERATE: single run identity source).
+    git_commit: str = ""
+    git_dirty: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -4163,6 +4333,14 @@ def run_mini_b04a(
     budget: ResourceBudget | None = None,
     b01_contract_report: dict[str, Any] | None = None,
     resume_from_per_candidate_seed: dict[str, dict[int, Path]] | None = None,
+    experiment_id: str = "",
+    data_manifest_sha256: str = "",
+    # R05 ITERATE: required keyword-only frozen Git identity.
+    # The CLI resolves Git identity once at dispatch time and passes
+    # the frozen values here.  The orchestrator MUST NOT re-resolve;
+    # every carrier in this run must agree on the run-start SHA.
+    git_commit: str,
+    git_dirty: bool,
 ) -> B04ARunResult:
     """Run the B04A Mini end-to-end across the three registered seeds.
 
@@ -4178,6 +4356,14 @@ def run_mini_b04a(
     The 0/1/2/3-feasible advance rules are applied by
     :func:`_b04a_advance_decision`.  The terminal state follows the
     B04 contract (``FAILED`` > ``STOPPED`` > ``DONE``).
+
+    R05 ITERATE: ``git_commit`` and ``git_dirty`` are REQUIRED
+    keyword-only parameters.  The caller (CLI handler) MUST supply
+    the values frozen at CLI dispatch time.  The orchestrator does
+    NOT call :func:`_resolve_git_identity` internally; every
+    CheckpointIdentity, :class:`B04ARunResult`, and downstream
+    carrier uses these passed values verbatim.  ``git_commit`` is
+    validated by :func:`_validate_git_commit_strict` at entry.
     """
 
     if config.protocol != B04A_PROTOCOL_NAME:
@@ -4185,6 +4371,12 @@ def run_mini_b04a(
             f"run_mini_b04a requires protocol={B04A_PROTOCOL_NAME!r}; "
             f"got {config.protocol!r}"
         )
+
+    # R05 ITERATE: ``git_commit`` / ``git_dirty`` are REQUIRED.
+    # Validate immediately so a bad value fails before any training
+    # state is established.
+    _validate_git_commit_strict(git_commit)
+    # ``git_dirty`` is a bool and needs no validation here.
 
     started_at = datetime.now(timezone.utc).isoformat()
     output_dir = Path(output_dir)
@@ -4214,6 +4406,12 @@ def run_mini_b04a(
         )
     config_sha = file_sha256(Path(config_path_str))
 
+    # R05 ITERATE: the Git identity is supplied by the caller
+    # (CLI handler) as a frozen value.  The orchestrator MUST NOT
+    # re-resolve: every CheckpointIdentity, B04ARunResult, and
+    # downstream carrier uses these passed values verbatim.
+    a06_split = str(config.b01_a06_split_sha256_expected)
+
     candidate_aggregates: dict[str, B04ACandidateAggregate] = {}
     input_manifest_hashes_for_payload: dict[str, Any] = dict(input_hashes)
 
@@ -4242,7 +4440,8 @@ def run_mini_b04a(
                 n_classes=int(N_CLASSES),
                 image_shape=tuple(PRESSURE_SHAPE),
                 config_sha256=config_sha,
-                a06_split_sha256=str(config.b01_a06_split_sha256_expected),
+                a06_split_sha256=a06_split,
+                split_sha256=a06_split,
                 freeze_manifest_sha256=str(
                     input_hashes.get("freeze_manifest_sha256", "")
                 ),
@@ -4255,6 +4454,10 @@ def run_mini_b04a(
                 input_manifest_hashes_sha256=input_manifest_hashes_sha256(
                     input_manifest_hashes_for_payload
                 ),
+                git_commit=git_commit,
+                git_dirty=git_dirty,
+                experiment_id=str(experiment_id or ""),
+                data_manifest_sha256=str(data_manifest_sha256 or ""),
             )
             resume_path: Path | None = None
             if (
@@ -4358,6 +4561,10 @@ def run_mini_b04a(
         determinism=determinism,
         resource_budget=budget,
         b01_contract_report=b01_contract_report,
+        experiment_id=str(experiment_id or ""),
+        data_manifest_sha256=str(data_manifest_sha256 or ""),
+        git_commit=git_commit,
+        git_dirty=git_dirty,
     )
 
 
@@ -4366,43 +4573,154 @@ def run_mini_b04a(
 # ---------------------------------------------------------------------------
 
 
+def _validate_git_commit_strict(git_commit: str) -> str:
+    """Validate a ``git_commit`` string for inclusion in a formal B04A identity.
+
+    The frozen B04A identity contract pins a real Git object ID at
+    run start so a Reviewer can compare it byte-for-byte with the
+    artifact's recorded value.  An empty, whitespace-only, sentinel
+    or non-hex value is rejected; an obvious-length value (not 40
+    or 64 hex characters) is also rejected.  Whitespace inside the
+    string is rejected because ``git rev-parse`` never produces
+    whitespace inside a commit.
+
+    This helper is the single source of truth for the contract; the
+    ``_b04a_identity_block`` builder calls it before emitting the
+    block, and the post-validation CLI helper uses the strict
+    resolver to obtain a value that will pass it.
+    """
+
+    raw = str(git_commit or "")
+    if not raw or not raw.strip():
+        raise MiniProtocolError(
+            "_validate_git_commit_strict: git_commit is empty or "
+            "whitespace-only; refusing to emit a B04A identity block "
+            "with an empty git_commit (TASK-SLP-B04A-EXPERIMENT-"
+            "IDENTITY-CARRIER-FIX-v0.1 R04 ITERATE)."
+        )
+    if raw != raw.strip():
+        raise MiniProtocolError(
+            "_validate_git_commit_strict: git_commit contains leading "
+            "or trailing whitespace; refusing to emit a B04A identity "
+            "block with a malformed git_commit "
+            f"({git_commit!r})."
+        )
+    if any(ch.isspace() for ch in raw):
+        raise MiniProtocolError(
+            "_validate_git_commit_strict: git_commit contains internal "
+            "whitespace; refusing to emit a B04A identity block with a "
+            f"malformed git_commit ({git_commit!r})."
+        )
+    if raw == UNRESOLVABLE_GIT_COMMIT:
+        raise MiniProtocolError(
+            "_validate_git_commit_strict: git_commit is the legacy "
+            "unresolvable sentinel; refusing to emit a B04A identity "
+            "block with an unresolvable git_commit "
+            "(TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1 R04 "
+            "ITERATE: the formal identity must be a real Git object ID)."
+        )
+    if len(raw) not in (40, 64):
+        raise MiniProtocolError(
+            "_validate_git_commit_strict: git_commit has an invalid "
+            f"length {len(raw)}; expected 40 (SHA-1) or 64 (SHA-256) "
+            f"hex characters.  value={git_commit!r}"
+        )
+    try:
+        int(raw, 16)
+    except ValueError:
+        raise MiniProtocolError(
+            "_validate_git_commit_strict: git_commit contains non-hex "
+            f"characters; refusing to emit a B04A identity block with "
+            f"a non-hex git_commit ({git_commit!r})."
+        ) from None
+    return raw.lower()
+
+
 def _resolve_git_identity() -> tuple[str, bool]:
     """Return (git_commit, git_dirty) for the artifact identity block.
 
-    Falls back to a sentinel string when the commit cannot be
-    resolved (e.g. shallow clone or non-git environment).  The
-    sentinel is explicitly NOT a valid commit SHA so a Reviewer can
-    tell at a glance that the identity is unresolvable.
+    R04 ITERATE: this function is now strict.  When the repository's
+    Git HEAD cannot be resolved (e.g. shallow clone, non-git
+    environment, or ``git rev-parse`` returning a non-SHA value) the
+    function raises :class:`MiniProtocolError` instead of returning
+    a sentinel.  Formal B04A identity construction depends on a
+    real Git object ID, and a sentinel ``unresolvable_git_commit``
+    would silently mutate the contract.
+
+    The historical lenient behaviour (returning the sentinel) is no
+    longer reachable from any code path that feeds
+    :func:`_b04a_identity_block`; tests that previously monkeypatched
+    the resolver to return a sentinel must now return a valid
+    40-character hex SHA.
     """
 
-    try:
-        import subprocess
+    import subprocess
 
-        project_root = Path(__file__).resolve().parents[3]
-        commit = subprocess.run(
+    project_root = Path(__file__).resolve().parents[3]
+    try:
+        commit_proc = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
             cwd=str(project_root),
-        ).stdout.strip()
+        )
+    except Exception as exc:
+        raise MiniProtocolError(
+            "_resolve_git_identity: git rev-parse HEAD raised; "
+            f"exception={exc!r}.  B04A formal identity construction "
+            "requires a real Git object ID; refusing to write a "
+            "sentinel identity (TASK-SLP-B04A-EXPERIMENT-IDENTITY-"
+            "CARRIER-FIX-v0.1 R04 ITERATE)."
+        ) from exc
+    if commit_proc.returncode != 0:
+        raise MiniProtocolError(
+            "_resolve_git_identity: git rev-parse HEAD failed; "
+            f"rc={commit_proc.returncode} stderr={commit_proc.stderr.strip()!r}.  "
+            "B04A formal identity construction requires a real Git "
+            "object ID; refusing to write a sentinel identity "
+            "(TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1 R04 "
+            "ITERATE)."
+        )
+    commit = commit_proc.stdout.strip()
+    try:
         dirty_proc = subprocess.run(
             ["git", "status", "--porcelain"],
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
             cwd=str(project_root),
         )
-        dirty = bool(dirty_proc.stdout.strip())
-        return commit, dirty
-    except Exception:
-        return "unresolvable_git_commit", True
+    except Exception as exc:
+        raise MiniProtocolError(
+            "_resolve_git_identity: git status --porcelain raised; "
+            f"exception={exc!r}.  B04A formal identity construction "
+            "requires the working tree state; refusing to write a "
+            "sentinel identity (TASK-SLP-B04A-EXPERIMENT-IDENTITY-"
+            "CARRIER-FIX-v0.1 R04 ITERATE)."
+        ) from exc
+    if dirty_proc.returncode != 0:
+        raise MiniProtocolError(
+            "_resolve_git_identity: git status --porcelain failed; "
+            f"rc={dirty_proc.returncode} stderr={dirty_proc.stderr.strip()!r}.  "
+            "B04A formal identity construction requires the working "
+            "tree state; refusing to write a sentinel identity "
+            "(TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1 R04 "
+            "ITERATE)."
+        )
+    dirty = bool(dirty_proc.stdout.strip())
+    commit = _validate_git_commit_strict(commit)
+    return commit, dirty
 
 
 def _b04a_identity_block(
     *,
     config: MiniConfig,
     config_sha256: str,
+    experiment_id: str,
+    data_manifest_sha256: str,
+    git_commit: str = "",
+    git_dirty: bool = False,
     candidate: str | None = None,
     seed: int | None = None,
 ) -> dict[str, Any]:
@@ -4410,35 +4728,110 @@ def _b04a_identity_block(
 
     The block always includes the seven identity fields required by
     ``configs/experiments/slp8_pm_architecture_expansion_mini_v0.1.json``
-    ``identity_hard_gate.required_fields``.  ``candidate`` and
-    ``seed`` are added when known; per-seed artifacts carry them.
+    ``identity_hard_gate.required_fields``:
+
+    * ``experiment_id`` -- the Owner-supplied EXP-ID (real B01) or
+      :data:`SYNTHETIC_EXP_ID` (synthetic smoke).  MUST be non-empty;
+      a TASK-ID-derived fallback is explicitly forbidden.
+    * ``git_commit`` / ``git_dirty`` -- resolved once at the
+      orchestrator entry point and passed in; the writer MUST
+      NOT call :func:`_resolve_git_identity` again because the
+      run identity was frozen at run start (R03 ITERATE: single
+      run identity source).
+    * ``config_sha256`` -- the on-disk config JSON SHA-256.
+    * ``data_manifest_sha256`` -- for real B01 runs, the on-disk
+      ``freeze_manifest.json`` file SHA-256
+      (``freeze_manifest_file_sha256``); for synthetic smoke, the
+      deterministic SHA-256 of the canonical synthetic manifest
+      payload.  Falling back to ``config_sha256`` is forbidden.
+    * ``split_sha256`` -- the A06 split SHA-256 expectation.
+    * ``model_version`` -- for run-level artifacts the deterministic
+      ``multi_candidate[... ]`` string in frozen config order; for
+      candidate- and seed-level artifacts the candidate builder's
+      exact version.
+
+    ``candidate`` and ``seed`` are added when known; per-seed
+    artifacts carry them.  ``synthetic`` and ``data_manifest_source``
+    are also added so a Reviewer can audit the synthetic-vs-real
+    provenance.
     """
 
-    git_commit, git_dirty = _resolve_git_identity()
-    block: dict[str, Any] = {
-        "experiment_id": (
-            f"{config.task_id}::{candidate or '<run>'}"
-            f"::seed={seed if seed is not None else '-'}"
-        ),
-        "task_id": config.task_id,
-        "git_commit": git_commit,
-        "git_dirty": git_dirty,
-        "config_sha256": config_sha256,
-        "data_manifest_sha256": str(
-            (getattr(config, "_data_manifest_sha256", None) or "")
+    exp_id = str(experiment_id or "").strip()
+    if not exp_id:
+        raise MiniProtocolError(
+            "_b04a_identity_block: experiment_id is empty; refusing "
+            "to emit a B04A identity block without an Owner-supplied "
+            "EXP-ID (TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1)"
         )
-        or config_sha256,
+
+    # R04 ITERATE: a real Git object ID is mandatory.  The CLI freezes
+    # ``git_commit`` / ``git_dirty`` at run start; the writer MUST NOT
+    # re-resolve.  An empty / whitespace / unresolvable / non-hex /
+    # wrong-length value is fail-closed because the frozen B04A
+    # identity contract pins a real Git object ID at run start.
+    git_commit_validated = _validate_git_commit_strict(git_commit)
+
+    dm_sha = str(data_manifest_sha256 or "").strip().lower()
+    if not dm_sha:
+        raise MiniProtocolError(
+            "_b04a_identity_block: data_manifest_sha256 is empty; "
+            "refusing to emit a B04A identity block without a real "
+            "B01 freeze_manifest.json file hash or a deterministic "
+            "synthetic manifest hash.  The previous behaviour of "
+            "silently falling back to config_sha256 is forbidden."
+        )
+
+    if candidate is not None:
+        # Candidate- and seed-level artifacts carry the candidate
+        # builder's exact model_version.  An empty / unknown
+        # candidate name is fail-closed: a missing builder means
+        # the candidate was not registered in the model registry
+        # and the B04A validator should already have caught that.
+        builder = get_model_builder(candidate)
+        model_version = str(builder.version)
+        if not model_version.strip():
+            raise MiniProtocolError(
+                f"_b04a_identity_block: candidate {candidate!r} has "
+                "an empty model_version; refusing to emit a B04A "
+                "identity block with an empty model_version"
+            )
+    else:
+        # Run-level artifact: the deterministic
+        # ``multi_candidate[... ]`` string in frozen config order.
+        # The config.candidates list is the validated frozen active
+        # set (DEFERRED entries are filtered out by
+        # :func:`_build_b04a_mini_config`), so the order matches the
+        # config file.
+        model_version = _build_run_level_model_version(list(config.candidates))
+
+    block: dict[str, Any] = {
+        "experiment_id": exp_id,
+        "task_id": config.task_id,
+        "git_commit": git_commit_validated,
+        "git_dirty": bool(git_dirty),
+        "config_sha256": config_sha256,
+        "data_manifest_sha256": dm_sha,
         "split_sha256": str(config.b01_a06_split_sha256_expected),
-        "model_version": (
-            get_model_builder(candidate).version
-            if candidate is not None
-            else ""
-        ),
+        # The historical field name is retained for backward
+        # compatibility with the B04 R02 carrier; the canonical
+        # contract field name is ``split_sha256`` above.
+        "a06_split_sha256": str(config.b01_a06_split_sha256_expected),
+        "model_version": model_version,
     }
     if candidate is not None:
         block["candidate"] = candidate
     if seed is not None:
         block["seed"] = int(seed)
+    # Mark synthetic provenance explicitly.  The ``synthetic`` field
+    # is True only for the synthetic smoke path; real B01 runs MUST
+    # NOT carry ``synthetic=True`` anywhere.
+    is_synthetic = exp_id == SYNTHETIC_EXP_ID
+    block["synthetic"] = bool(is_synthetic)
+    block["data_manifest_source"] = (
+        "synthetic_canonical_manifest_sha256"
+        if is_synthetic
+        else "freeze_manifest_file_sha256"
+    )
     return block
 
 
@@ -4450,8 +4843,16 @@ def _write_b04a_seed_artifacts(
     seed_result: CandidateResult,
     config: MiniConfig,
     config_sha256: str,
+    result: B04ARunResult,
 ) -> None:
-    """Write the per-seed B04A artifacts for one (candidate, seed)."""
+    """Write the per-seed B04A artifacts for one (candidate, seed).
+
+    The run-level identity values (``experiment_id``,
+    ``data_manifest_sha256``) are taken from :class:`B04ARunResult`
+    so the seed artifact can never drift from the run-level
+    identity; the contract no longer allows the caller to pass
+    an independent set of identity fields.
+    """
 
     seed_dir = output_dir / "checkpoints" / candidate / f"seed_{seed:04d}"
     seed_dir.mkdir(parents=True, exist_ok=True)
@@ -4459,6 +4860,10 @@ def _write_b04a_seed_artifacts(
     identity = _b04a_identity_block(
         config=config,
         config_sha256=config_sha256,
+        experiment_id=result.experiment_id,
+        data_manifest_sha256=result.data_manifest_sha256,
+        git_commit=result.git_commit,
+        git_dirty=result.git_dirty,
         candidate=candidate,
         seed=seed,
     )
@@ -4619,8 +5024,16 @@ def _write_b04a_candidate_aggregate(
     aggregate: B04ACandidateAggregate,
     config: MiniConfig,
     config_sha256: str,
+    result: B04ARunResult,
 ) -> Path:
-    """Write the per-candidate aggregate decision file."""
+    """Write the per-candidate aggregate decision file.
+
+    The run-level identity values are taken from
+    :class:`B04ARunResult` (single source of truth) so the
+    candidate aggregate identity cannot drift from the run-level
+    identity; the contract no longer allows the caller to pass
+    an independent set of identity fields.
+    """
 
     candidate_dir = output_dir / "checkpoints" / candidate
     candidate_dir.mkdir(parents=True, exist_ok=True)
@@ -4628,6 +5041,10 @@ def _write_b04a_candidate_aggregate(
         _b04a_identity_block(
             config=config,
             config_sha256=config_sha256,
+            experiment_id=result.experiment_id,
+            data_manifest_sha256=result.data_manifest_sha256,
+            git_commit=result.git_commit,
+            git_dirty=result.git_dirty,
             candidate=candidate,
         )
     )
@@ -4663,7 +5080,19 @@ def _write_b04a_run_bundle(
     one resolved_config, one input_manifest_hashes, one environment,
     one status.json, one terminal file (DONE/FAILED/STOPPED), one
     candidate_decision.json, one budget_report.json, and a run.log
-    whose first line is the identity JSON.
+    whose first line is the identity JSON.  The seven required
+    identity fields (``experiment_id``, ``git_commit``,
+    ``git_dirty``, ``config_sha256``, ``data_manifest_sha256``,
+    ``split_sha256``, ``model_version``) appear at the top level of
+    every JSON carrier and as the first JSON line of every log
+    carrier.
+
+    The run-level identity is taken from
+    :attr:`B04ARunResult.experiment_id` and
+    :attr:`B04ARunResult.data_manifest_sha256`; the writer does
+    NOT accept an independent pair of identity parameters, so a
+    caller cannot make the run-level bundle disagree with the
+    result object.
     """
 
     output_dir = Path(output_dir)
@@ -4674,6 +5103,10 @@ def _write_b04a_run_bundle(
     identity = _b04a_identity_block(
         config=result.config,
         config_sha256=config_sha256,
+        experiment_id=result.experiment_id,
+        data_manifest_sha256=result.data_manifest_sha256,
+        git_commit=result.git_commit,
+        git_dirty=result.git_dirty,
     )
 
     # manifest.json
@@ -4867,6 +5300,7 @@ def _write_b04a_run_bundle(
             aggregate=agg,
             config=result.config,
             config_sha256=config_sha256,
+            result=result,
         )
 
     # Per-seed artifacts
@@ -4882,6 +5316,7 @@ def _write_b04a_run_bundle(
                 seed_result=seed_result,
                 config=result.config,
                 config_sha256=config_sha256,
+                result=result,
             )
 
     # logs/run.log with identity as the first JSON line
@@ -5262,12 +5697,26 @@ def write_status_files(
     *,
     status: str,
     extra: Mapping[str, Any],
+    identity: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit exactly one of ``DONE.json`` / ``FAILED.json`` / ``STOPPED.json``.
 
     The three terminal files are mutually exclusive: writing one of
     them deletes the other two so a downstream reader can rely on
     ``ls output_dir | grep .json`` to see at most one terminal file.
+
+    When ``identity`` is provided, the seven required identity
+    fields (``experiment_id``, ``git_commit``, ``git_dirty``,
+    ``config_sha256``, ``data_manifest_sha256``, ``split_sha256``,
+    ``model_version``) are merged LAST into the top level of the
+    terminal JSON so an ``extra`` field cannot overwrite a frozen
+    identity value.  When ``identity`` and ``extra`` share a key
+    and the values differ, the writer fails closed because the
+    caller has not been able to agree on the identity contract
+    (TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-FIX-v0.1 R03
+    ITERATE: identity values are the single source of truth; an
+    ``extra`` payload that disagrees with ``identity`` is a
+    contract violation, not an "override" surface).
     """
 
     output_dir = Path(output_dir)
@@ -5282,12 +5731,40 @@ def write_status_files(
     for other_status, other_path in targets.items():
         if other_status != status and other_path.exists():
             other_path.unlink()
-    payload = {
+    payload: dict[str, Any] = {
         "status": status,
         "task_id": TASK_ID,
         "ended_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     payload.update(dict(extra))
+    if identity is not None:
+        # Conflict detection is scoped to the seven required
+        # identity fields only; the ``task_id`` and other auxiliary
+        # keys (e.g. ``synthetic`` / ``data_manifest_source``) come
+        # from different sources and may legitimately differ.  The
+        # seven required fields are the single source of truth
+        # and an ``extra`` value that disagrees is a contract
+        # violation; we fail closed rather than silently letting
+        # the ``extra`` value win (R03 ITERATE: identity keys are
+        # NOT an override surface).  All other identity keys
+        # (including ``synthetic``, ``data_manifest_source``,
+        # ``a06_split_sha256``, ``task_id``) are merged without
+        # conflict detection so the terminal JSON participates
+        # in the same identity contract as the run-level bundle.
+        for key, value in identity.items():
+            str_key = str(key)
+            if str_key in _REQUIRED_B04A_IDENTITY_FIELDS:
+                if str_key in payload and payload[str_key] != value:
+                    raise MiniProtocolError(
+                        f"write_status_files: extra payload disagrees "
+                        f"with frozen identity on key {str_key!r}; "
+                        f"refusing to emit a terminal JSON whose "
+                        f"identity is ambiguous "
+                        f"(TASK-SLP-B04A-EXPERIMENT-IDENTITY-CARRIER-"
+                        f"FIX-v0.1 R03 ITERATE).  extra="
+                        f"{payload[str_key]!r} identity={value!r}"
+                    )
+            payload[str_key] = value
     write_json(target, payload)
 
 
