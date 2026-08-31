@@ -309,10 +309,23 @@ Reviewer checklist:
 
 ### TASK-SLP-B08：Full Runner 与一折预检
 
-- 状态：`BLOCKED_BY_B07`。
-- 目标：实现受治理 runner；先做单折时间/显存预算。
-- 要求：实现并测试 B07 的内嵌 Git/config/data/split identity；任一缺失或漂移必须 fail-closed。
-- Gate：Reviewer 接受预检后才运行 Full。
+- 状态：`RUNNER_IMPLEMENTATION_COMPLETE / READY_FOR_CODE_REVIEW / GPU_PREFLIGHT_NOT_RUN`。
+- 目标：独立 Reviewer 验收；随后冻结 clean SHA/新 EXP-ID，由 Owner 单独决定 RTX 4090 one-fold preflight 授权。
+- 实现交付：
+  - `src/topper_perception/neural/slp8_region_full.py`（~2400 行）：真实 B01 TRAIN+VAL runner（`load_b01_freeze_tables(..., load_test=False)` + `_test_rows is None` 断言 + subject fold 路由 + fold-TRAIN-only normalization/class weights）；`Slp8RegionDataset` 真实训练（B04A 原语复用待后续任务）；OOF 逐样本 predictions（`unit_oof.csv` + `merge_seed_oof` pooled 重算）；synthetic/real 路径分离守卫；Unit 事务化（atomic `complete.json`、无 `--force`）；真实 resume（identity 验证 + budget accumulator 不归零）；validate-only/no-write 零文件创建。
+  - `scripts/run_slp8_region_full.py`：CLI `run_validate_only()` 零文件；`run_synthetic_cpu_smoke()`；`run_full()` 入口。
+  - `scripts/smoke_b08_full_runner.py`：独立 standalone smoke。
+  - `tests/test_slp8_region_full.py`：74 passed；含 bounded one-fold、best reload OOF、per-subject、FAILED/STOPPED terminal 与 interruption/resume。
+  - `scripts/validate_b07_protocol.py`：已恢复为 HEAD（超出范围）；CRLF worktree 下预期报 SHA mismatch。
+- Synthetic CPU smoke 结果：30/30 DONE；22.7s；winner 选中；budget OK；TEST=0 declarative policy；temp dir 清理完毕。
+- 测试结果：B08 74 passed；B04/B04A core+models+links 347 passed；py_compile、working/staged diff check 干净。B07 独立 validator 在 Windows CRLF checkout 报 worktree-byte SHA mismatch；validator 文件保持 HEAD，B08 committed-blob SHA tests PASS。
+- 关键设计决策：
+  - Runner 使用 `committed_file_sha256(repo_root, relative_path)` via `git show :path`（committed tree，非工作树 CRLF）
+  - `partition_records_for_fold(records, *, val_subject_ids)` 按 B07 fold subject 路由，TRAIN/VAL overlap=0
+  - OOF：real mode 逐样本 CSV（sample_id / subject_id / fold_id / seed / candidate / predicted_class）
+  - Unit 事务：成功写 `complete.json` 后才改 terminal state；已有 DONE.json 拒绝覆盖
+- Gate：独立 Code Review；接受后冻结 clean Git SHA 和新 EXP-ID，再由 Owner 单独授权 RTX 4090 one-fold preflight。
+- 严禁：AutoDL / 真实 RTX 4090 preflight、真实 GPU 训练、30-unit Full、TEST evaluation、`enable_test_access`、commit、push、merge。
 
 ### TASK-SLP-B09：Full 公平比较
 
