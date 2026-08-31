@@ -319,6 +319,11 @@ Reviewer checklist:
   - `scripts/validate_b07_protocol.py`：已恢复为 HEAD（超出范围）；CRLF worktree 下预期报 SHA mismatch。
 - Synthetic CPU smoke 结果：30/30 DONE；22.7s；winner 选中；budget OK；TEST=0 declarative policy；temp dir 清理完毕。
 - 测试结果：B08 74 passed；B04/B04A core+models+links 347 passed；py_compile、working/staged diff check 干净。B07 独立 validator 在 Windows CRLF checkout 报 worktree-byte SHA mismatch；validator 文件保持 HEAD，B08 committed-blob SHA tests PASS。
+- 2026-08-31 R01 真实 RTX 4090 one-fold 在首 epoch 前失败：real loader 返回
+  `RegionSample`，但 guard 错误调用 `.get()`；旧 preflight 外层也未为该异常写根级
+  terminal。Round 7 本地修复两项合同并新增回归，B08 **76 passed**；R01 保留，
+  runner 已冻结为 `e0ba25a9aa0b33be971327ca398d822f7c7d1c8a`；R02 尚未
+  授权/运行，Full 与 TEST 仍未授权。
 - 关键设计决策：
   - Runner 使用 `committed_file_sha256(repo_root, relative_path)` via `git show :path`（committed tree，非工作树 CRLF）
   - `partition_records_for_fold(records, *, val_subject_ids)` 按 B07 fold subject 路由，TRAIN/VAL overlap=0
