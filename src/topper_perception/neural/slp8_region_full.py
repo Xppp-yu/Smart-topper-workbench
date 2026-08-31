@@ -1197,10 +1197,28 @@ def build_model(
     return model
 
 
+def _validate_real_region_records(
+    train_records: Sequence[Mapping[str, Any] | RegionSample],
+    val_records: Sequence[Mapping[str, Any] | RegionSample],
+) -> None:
+    """Fail closed unless real TRAIN/VAL records use the production type."""
+    real_records = [*train_records, *val_records]
+    if not all(isinstance(record, RegionSample) for record in real_records):
+        raise FullProtocolError(
+            "real B01 path requires RegionSample TRAIN/VAL records; "
+            "synthetic mappings must not enter real B01 training path"
+        )
+    if any(record.sample_id.startswith("SYNTH_") for record in real_records):
+        raise FullProtocolError(
+            "real B01 path received SYNTH_ sample IDs; "
+            "synthetic data must not enter real B01 training path"
+        )
+
+
 def train_one_unit(
     unit: FullUnit,
-    train_records: Sequence[Mapping[str, Any]],
-    val_records: Sequence[Mapping[str, Any]],
+    train_records: Sequence[Mapping[str, Any] | RegionSample],
+    val_records: Sequence[Mapping[str, Any] | RegionSample],
     config: FullConfig,
     unit_output_dir: Path,
     # Real B01 path extra inputs (None in synthetic mode)
@@ -1224,9 +1242,10 @@ def train_one_unit(
     ----------
     unit : FullUnit
         The unit to execute.
-    train_records : Sequence[Mapping]
-        Fold-TRAIN records (FreezeRow-dicts for real B01, synthetic dicts for smoke).
-    val_records : Sequence[Mapping]
+    train_records : Sequence[Mapping | RegionSample]
+        Fold-TRAIN records (``RegionSample`` objects for real B01, synthetic
+        dictionaries for smoke).
+    val_records : Sequence[Mapping | RegionSample]
         Fold-VAL records.
     config : FullConfig
         Run configuration.
@@ -1299,12 +1318,10 @@ def train_one_unit(
                 "synthetic_mode=False but real B01 inputs are missing; "
                 "real B01 path must provide normalization, class_weight_result, and data_root"
             )
-        # Guard: real path must never have called build_synthetic_fold_dataset
-        if any(r.get("sample_id", "").startswith("SYNTH_") for r in train_records):
-            raise FullProtocolError(
-                "real B01 path received SYNTH_ sample IDs; "
-                "synthetic data must not enter real B01 training path"
-            )
+        # Guard: the real path accepts the production RegionSample contract,
+        # never synthetic dictionaries.  Keep this explicit so a future type
+        # drift fails closed before constructing the dataset.
+        _validate_real_region_records(train_records, val_records)
 
         train_dataset = Slp8RegionDataset(
             samples=list(train_records),

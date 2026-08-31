@@ -352,19 +352,6 @@ def run_one_fold_preflight(
         raise FullProtocolError("one-fold preflight requires non-empty real TRAIN/VAL and fitted preprocessing")
     unit = FullUnit(candidate=candidate, fold_id=fold_id, seed=seed)
     unit_dir = output_dir / "unit"
-    result = train_one_unit(
-        unit=unit,
-        train_records=train_s,
-        val_records=val_s,
-        config=full_config,
-        unit_output_dir=unit_dir,
-        normalization=norm,
-        class_weight_result=cw,
-        data_root=dataset_root,
-        val_sample_ids=[s.sample_id for s in val_s],
-        val_subject_ids_list=[s.subject_id for s in val_s],
-        val_postures=[s.posture for s in val_s],
-    )
     identity = {
         "experiment_id": experiment_id,
         "git_commit": git_commit,
@@ -378,6 +365,31 @@ def run_one_fold_preflight(
         "fold_id": fold_id,
         "seed": seed,
     }
+    try:
+        result = train_one_unit(
+            unit=unit,
+            train_records=train_s,
+            val_records=val_s,
+            config=full_config,
+            unit_output_dir=unit_dir,
+            normalization=norm,
+            class_weight_result=cw,
+            data_root=dataset_root,
+            val_sample_ids=[s.sample_id for s in val_s],
+            val_subject_ids_list=[s.subject_id for s in val_s],
+            val_postures=[s.posture for s in val_s],
+        )
+    except Exception as exc:
+        payload = {
+            **identity,
+            "status": "FAILED",
+            "unit_status": "FAILED",
+            "error": f"train_one_unit failed: {type(exc).__name__}: {exc}",
+            "test_access": False,
+        }
+        _write_json(output_dir / "preflight_manifest.json", payload)
+        _write_json(output_dir / "FAILED.json", payload)
+        return 1
     if result.status != "DONE" or result.checkpoint_best_path is None:
         payload = {
             **identity, "status": "FAILED", "unit_status": result.status,

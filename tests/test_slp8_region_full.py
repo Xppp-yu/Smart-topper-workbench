@@ -52,6 +52,7 @@ from topper_perception.neural.slp8_region_full import (
     FullRunResult,
     SeedOOFResult,
     UnitResult,
+    _validate_real_region_records,
     _write_real_oof_npz,
     aggregate_candidate_results,
     apply_selection_rule,
@@ -74,6 +75,7 @@ from topper_perception.neural.slp8_region_full import (
     validate_oof_rows,
     write_unit_complete_atomic,
 )
+from topper_perception.neural.slp8_region_dataset import RegionSample
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2320,6 +2322,97 @@ def test_round6_one_fold_preflight_is_bounded_and_writes_carriers(
     assert manifest["test_access"] is False
     assert (output_dir / "DONE.json").is_file()
     assert not (output_dir / "FAILED.json").exists()
+
+
+def test_round7_real_region_sample_contract_uses_attributes() -> None:
+    """Production RegionSample records pass the real-path type guard."""
+    def sample(sample_id: str, split: str) -> RegionSample:
+        return RegionSample(
+            sample_id=sample_id,
+            subject_id=f"subject_{split}",
+            ml_split=split,
+            posture="SUPINE",
+            pressure_path="pressure.npy",
+            label_path="label.npy",
+            onehot_path="onehot.npy",
+        )
+
+    _validate_real_region_records([sample("train_1", "train")], [sample("val_1", "val")])
+
+    with pytest.raises(FullProtocolError, match="requires RegionSample"):
+        _validate_real_region_records(
+            [{"sample_id": "train_1"}], [sample("val_1", "val")]
+        )
+
+    with pytest.raises(FullProtocolError, match="SYNTH_ sample IDs"):
+        _validate_real_region_records(
+            [sample("SYNTH_train_1", "train")], [sample("val_1", "val")]
+        )
+
+
+def test_round7_one_fold_exception_writes_failed_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected training exception is sealed as a root FAILED terminal."""
+    script_path = ROOT / "scripts" / "run_slp8_region_full.py"
+    spec = importlib.util.spec_from_file_location("b08_cli_round7", script_path)
+    assert spec is not None and spec.loader is not None
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    candidate = B07_CANDIDATES[0]
+    protocol = SimpleNamespace(
+        candidates=(candidate,), seeds=(42,),
+        fold_subjects={"fold_1": ("subject_val",)},
+    )
+    sample_train = SimpleNamespace(
+        sample_id="train_1", subject_id="subject_train", posture="SUPINE",
+    )
+    sample_val = SimpleNamespace(
+        sample_id="val_1", subject_id="subject_val", posture="SUPINE",
+    )
+    full_config = SimpleNamespace(
+        config_sha256="a" * 64, data_manifest_sha256="b" * 64,
+        fold_manifest_sha256="c" * 64, a06_split_sha256="e" * 64,
+    )
+    monkeypatch.setattr(cli, "load_frozen_full_protocol", lambda *a, **k: protocol)
+    monkeypatch.setattr(cli, "resolve_git_identity", lambda root: ("d" * 40, False))
+    monkeypatch.setattr(cli, "build_full_config", lambda **kwargs: full_config)
+    monkeypatch.setattr(
+        cli, "load_real_b01_fold",
+        lambda *a, **k: ([sample_train], [sample_val], object(), object()),
+    )
+    monkeypatch.setattr(
+        cli, "train_one_unit",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AttributeError("RegionSample object has no attribute get")
+        ),
+    )
+
+    output_dir = tmp_path / "preflight-failed"
+    rc = cli.run_one_fold_preflight(
+        config=PROTOCOL, output_dir=output_dir, repo_root=ROOT,
+        b01_freeze_dir=tmp_path, dataset_root=tmp_path,
+        experiment_id="EXP-SLP-B08-PREFLIGHT-FAILED-TEST", candidate=candidate,
+        fold_id="fold_1", seed=42, device="cuda", batch_size=1,
+        max_epochs=30,
+    )
+
+    assert rc == 1
+    terminals = [
+        path for path in output_dir.iterdir()
+        if path.name in {"DONE.json", "FAILED.json", "STOPPED.json"}
+    ]
+    assert [path.name for path in terminals] == ["FAILED.json"]
+    failed = json.loads((output_dir / "FAILED.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (output_dir / "preflight_manifest.json").read_text(encoding="utf-8")
+    )
+    assert failed == manifest
+    assert failed["status"] == "FAILED"
+    assert failed["unit_status"] == "FAILED"
+    assert "AttributeError" in failed["error"]
+    assert failed["test_access"] is False
 
 
 # ---------------------------------------------------------------------------
