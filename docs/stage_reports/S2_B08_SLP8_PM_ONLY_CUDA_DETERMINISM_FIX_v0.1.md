@@ -1,7 +1,7 @@
 # S2_B08 — CUDA deterministic loss 与失败 OOF Round 8 修复
 
 **TASK-ID**: `TASK-SLP-B08-FULL-RUNNER-AND-ONE-FOLD-PREFLIGHT-v0.1`
-**状态**: `REVIEW_ACCEPTED / RUNNER_COMMITTED / R03_NOT_RUN / TEST_DENIED`
+**状态**: `REVIEW_ACCEPTED / R03_PREFLIGHT_PASSED / TEST_DENIED`
 
 ## 1. R02 现场根因
 
@@ -38,12 +38,16 @@ RuntimeError: nll_loss2d_forward_out_cuda_template does not have a deterministic
 - 同环境原生 `F.cross_entropy` 可复现与 AutoDL 相同的 deterministic RuntimeError，
   证明单纯降级至 Torch 2.12 不能解决。
 
-## 4. 边界与下一 Gate
+## 4. R03 真实验证与边界
 
 - primitive probe 不读取 SLP TRAIN/VAL/TEST，不是 Mini/Full 实验。
-- Torch `2.13.0+cu130` + RTX 4090 尚未验证新 primitive；R03 正式运行前必须
-  在 AutoDL 先执行随机张量 CUDA probe。
-- R01/R02 必须保留；R03、Full、TEST 均未运行。
+- Torch `2.13.0+cu130` + RTX 4090 strict deterministic random-tensor model /
+  loss / AdamW probe 通过，随后 R03 one-fold 真实运行通过。
+- R03：best epoch 22；wall 155.329 s；peak CUDA 368.764 MiB；best checkpoint
+  SHA `51db02cf6e26a11cef27b6627437cedaafe269357ca214d4662b7941a57c2506`；
+  reload consistent；OOF 855 samples / 19 subjects；唯一 DONE；TEST=0。
+- 本地 archive SHA `55aa5a4c708a1ba9b2f9ee89a8d05d937e61f4edcd02bdf83b1f5600b478a298`
+  与 sidecar 匹配，`LOCAL_ARCHIVE_AUDIT_PASSED`。
+- R01/R02/R03 必须保留；Full、TEST 均未运行。
 - runner 修复提交：`02fb364902736a64ee8708440f0dd0bdddf860bc`。
-- 下一 Gate：推送 baseline、制作 R03 bundle；AutoDL primitive probe 通过后，
-  Owner 再单独授权 R03。
+- 下一 Gate：B09 Full 运行准备与 Owner 独立授权；B08 通过不自动授权 Full。

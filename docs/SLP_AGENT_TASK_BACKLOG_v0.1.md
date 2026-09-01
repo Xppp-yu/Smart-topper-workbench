@@ -309,7 +309,7 @@ Reviewer checklist:
 
 ### TASK-SLP-B08：Full Runner 与一折预检
 
-- 状态：`RUNNER_IMPLEMENTATION_COMPLETE / READY_FOR_CODE_REVIEW / GPU_PREFLIGHT_NOT_RUN`。
+- 状态：`ACCEPT / R03_ONE_FOLD_PREFLIGHT_PASSED / TEST_DENIED`（2026-09-01）。
 - 目标：独立 Reviewer 验收；随后冻结 clean SHA/新 EXP-ID，由 Owner 单独决定 RTX 4090 one-fold preflight 授权。
 - 实现交付：
   - `src/topper_perception/neural/slp8_region_full.py`（~2400 行）：真实 B01 TRAIN+VAL runner（`load_b01_freeze_tables(..., load_test=False)` + `_test_rows is None` 断言 + subject fold 路由 + fold-TRAIN-only normalization/class weights）；`Slp8RegionDataset` 真实训练（B04A 原语复用待后续任务）；OOF 逐样本 predictions（`unit_oof.csv` + `merge_seed_oof` pooled 重算）；synthetic/real 路径分离守卫；Unit 事务化（atomic `complete.json`、无 `--force`）；真实 resume（identity 验证 + budget accumulator 不归零）；validate-only/no-write 零文件创建。
@@ -328,18 +328,23 @@ Reviewer checklist:
   forward 失败（zero optimizer steps）；唯一 FAILED terminal 生效，但空 OOF
   stack 二次异常覆盖原始 error。Round 8 已本地实现数学等价 deterministic
   cross entropy、失败 OOF 保护与 DONE coverage guard；R03 runner 已冻结为
-  `02fb364902736a64ee8708440f0dd0bdddf860bc`，尚未授权/运行。
+  `02fb364902736a64ee8708440f0dd0bdddf860bc`。
+- 2026-09-01 R03 RTX 4090 one-fold 完成：唯一 DONE，best epoch 22，wall
+  155.329s，peak CUDA 368.764 MiB，reload consistent；TRAIN 3240/72 subjects，
+  VAL OOF 855 unique samples/19 subjects，TEST=0。archive SHA
+  `55aa5a4c708a1ba9b2f9ee89a8d05d937e61f4edcd02bdf83b1f5600b478a298`
+  本地匹配并通过 `LOCAL_ARCHIVE_AUDIT_PASSED`；checkpoint/OOF/archive 不入 Git。
 - 关键设计决策：
   - Runner 使用 `committed_file_sha256(repo_root, relative_path)` via `git show :path`（committed tree，非工作树 CRLF）
   - `partition_records_for_fold(records, *, val_subject_ids)` 按 B07 fold subject 路由，TRAIN/VAL overlap=0
   - OOF：real mode 逐样本 CSV（sample_id / subject_id / fold_id / seed / candidate / predicted_class）
   - Unit 事务：成功写 `complete.json` 后才改 terminal state；已有 DONE.json 拒绝覆盖
-- Gate：独立 Code Review；接受后冻结 clean Git SHA 和新 EXP-ID，再由 Owner 单独授权 RTX 4090 one-fold preflight。
-- 严禁：AutoDL / 真实 RTX 4090 preflight、真实 GPU 训练、30-unit Full、TEST evaluation、`enable_test_access`、commit、push、merge。
+- Gate：B08 已验收；下一步仅为 B09 Full 运行准备与独立 Owner 授权。
+- 严禁：未经新授权运行 30-unit Full、TEST evaluation 或 `enable_test_access`；不得提交 archive/checkpoint/OOF/raw data。
 
 ### TASK-SLP-B09：Full 公平比较
 
-- 状态：`BLOCKED_BY_B08`。
+- 状态：`READY_FOR_RUN_PREPARATION / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`。
 - 目标：真实 subject-isolated Full。
 - 输出：开发期 subject-isolated OOF/VAL predictions、逐区域/受试者、模型和日志；默认 TEST=0。
 - 停止：OOM、NaN、split leak、manifest mismatch、reload mismatch。

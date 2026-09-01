@@ -1,6 +1,6 @@
 # TASK-SLP-B08-ONE-FOLD-PREFLIGHT-RUN-v0.1
 
-状态：`R01_FAILED / R02_FAILED_AT_FIRST_LOSS / R03_RUNNER_FROZEN / R03_NOT_AUTHORIZED / TEST_DENIED`
+状态：`R01_FAILED / R02_FAILED / R03_PREFLIGHT_PASSED / B08_ACCEPTED / TEST_DENIED`
 
 ## R01 现场结果（2026-08-31）
 
@@ -33,6 +33,24 @@
 在 B08 runner 已接受后，仅执行一个真实 development fold/candidate/seed，
 测量 wall time、peak CUDA memory，并验证 best-checkpoint reload 与完整 identity
 carriers。该任务不是 B09 Full，也不产生候选排名。
+
+## R03 最终结果（2026-09-01）
+
+- Owner 明确授权 R03 单 unit；clean runner
+  `02fb364902736a64ee8708440f0dd0bdddf860bc`，RTX 4090，Torch
+  `2.13.0+cu130`，strict deterministic random-tensor model/AdamW probe 通过。
+- 唯一终态 `DONE.json`；与 `preflight_manifest.json` 完全一致；状态
+  `PREFLIGHT_PASSED`。
+- TRAIN 3,240 samples / 72 subjects；VAL 855 samples / 19 subjects；fold_1、
+  seed 42、ResUNet-lite；best epoch 22。
+- wall `155.32885087199975 s <= 900 s`；peak CUDA `368.764416 MiB <= 8192 MiB`。
+- best checkpoint SHA-256：
+  `51db02cf6e26a11cef27b6627437cedaafe269357ca214d4662b7941a57c2506`；
+  checkpoint reload prediction hash 一致。
+- OOF 855 unique samples / 19 subjects，predictions/targets coverage 完整；TEST=0。
+- R01/R02/R03 archive 已下载并在 Windows 本地只读复核；archive SHA-256：
+  `55aa5a4c708a1ba9b2f9ee89a8d05d937e61f4edcd02bdf83b1f5600b478a298`；
+  `LOCAL_ARCHIVE_AUDIT_PASSED`。archive/checkpoint/OOF 不提交 Git。
 
 ## 冻结运行身份
 
@@ -110,15 +128,15 @@ uv run python scripts/run_slp8_region_full.py \
 
 ## 禁止
 
-- R01/R02 已失败封存，不得执行上述历史命令；R03 尚未获得 Owner GPU 授权。
+- R01/R02 已失败封存；R03 已完成并封存，三者均不得重跑或覆盖。
 - 不得改 candidate/fold/seed/epochs/batch size/budget 后沿用同一 EXP-ID。
 - 不得运行 30-unit Full，不得访问 TEST，不得把 preflight 指标用于排名。
 - 不得覆盖已有 output；失败必须保留并使用新 EXP-ID 重试。
 
-## R03 唯一运行命令模板
+## R03 历史运行命令（已完成，不得重跑）
 
-仅在 checkout 为 clean `02fb364902736a64ee8708440f0dd0bdddf860bc`、
-AutoDL 随机张量 strict-CUDA primitive probe 通过且 Owner 重新授权后运行：
+该命令当时仅在 checkout 为 clean `02fb364902736a64ee8708440f0dd0bdddf860bc`、
+AutoDL 随机张量 strict-CUDA primitive probe 通过且 Owner 明确授权后运行：
 
 ```bash
 uv run python scripts/run_slp8_region_full.py \
@@ -144,10 +162,11 @@ uv run python scripts/run_slp8_region_full.py \
   因此不在本机执行正式 preflight。
 - R01 preflight：`FAILED_BEFORE_FIRST_EPOCH`；实际 GPU training `NOT STARTED`。
 - R02：`FAILED_AT_FIRST_LOSS_FORWARD / ZERO_OPTIMIZER_STEPS`。
-- R03、30-unit Full、TEST：`NOT RUN`。
+- R03：`PREFLIGHT_PASSED / DONE / TEST=0`；本地 archive 审计通过。
+- 30-unit Full、TEST：`NOT RUN / NOT AUTHORIZED`。
 
 ## 下一 Gate
 
-Round 8 修复与测试已 Review，runner 冻结为上述 SHA；下一步制作 R03 bundle，
-并在 AutoDL 做无真实数据的 CUDA loss primitive probe。随后由 Owner 单独决定
-是否授权 R03。授权不得由本文件状态推断。
+B08 runner 与真实 one-fold preflight 已验收。下一 Gate 是单独编写和复核 B09
+Full 运行准备记录；30-unit Full 仍需 Owner 明确授权，不能从 B08 ACCEPT 推断。
+TEST 继续禁止。
