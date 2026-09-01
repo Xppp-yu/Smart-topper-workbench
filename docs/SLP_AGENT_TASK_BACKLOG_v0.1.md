@@ -322,8 +322,13 @@ Reviewer checklist:
 - 2026-08-31 R01 真实 RTX 4090 one-fold 在首 epoch 前失败：real loader 返回
   `RegionSample`，但 guard 错误调用 `.get()`；旧 preflight 外层也未为该异常写根级
   terminal。Round 7 本地修复两项合同并新增回归，B08 **76 passed**；R01 保留，
-  runner 已冻结为 `e0ba25a9aa0b33be971327ca398d822f7c7d1c8a`；R02 尚未
-  授权/运行，Full 与 TEST 仍未授权。
+  runner 已冻结为 `e0ba25a9aa0b33be971327ca398d822f7c7d1c8a`；R02 结果见
+  下一条，Full 与 TEST 仍未授权。
+- 2026-08-31 R02 在 Torch 2.13 strict deterministic CUDA 的首个 NLLLoss2d
+  forward 失败（zero optimizer steps）；唯一 FAILED terminal 生效，但空 OOF
+  stack 二次异常覆盖原始 error。Round 8 已本地实现数学等价 deterministic
+  cross entropy、失败 OOF 保护与 DONE coverage guard；R03 runner 已冻结为
+  `02fb364902736a64ee8708440f0dd0bdddf860bc`，尚未授权/运行。
 - 关键设计决策：
   - Runner 使用 `committed_file_sha256(repo_root, relative_path)` via `git show :path`（committed tree，非工作树 CRLF）
   - `partition_records_for_fold(records, *, val_subject_ids)` 按 B07 fold subject 路由，TRAIN/VAL overlap=0
