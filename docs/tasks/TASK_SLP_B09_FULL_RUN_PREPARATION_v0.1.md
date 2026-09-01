@@ -1,6 +1,6 @@
 # TASK-SLP-B09-FULL-RUN-PREPARATION-v0.1
 
-状态：`ITERATE / CLI_BRIDGE_REQUIRED / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`
+状态：`ACCEPTED / CLI_BRIDGE_ACCEPTED_AT_8b3ebda / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`
 
 > R02 修正：当前 B08 runner CLI 不暴露 30-unit real B01 入口（`main()` 显式拒绝
 > "Real B01 run not executed by this task"），因此本任务最高只能达到
@@ -772,22 +772,23 @@ Codex 独立复核本任务时必须逐项勾选：
 - TEST 已读、已计算、已报告。
 - SLP8 GT 的真值等级已超越 `V221_CORRECTED_SUPPORT_AUTO_ACCEPTED / NOT_REVIEWED`。
 - SLP8 结果已外推到产品、硬件、舒适性、医学、整夜或气囊控制。
-- "RUN_PREPARATION_READY_FOR_REVIEW"（当前 CLI 仍不能执行 30-unit real B01）。
+- 在 bridge 验收前提前声称 "RUN_PREPARATION_READY_FOR_REVIEW"；该历史禁令已由
+  `main@8b3ebda` 的 bridge 验收满足，不再是当前 blocker。
 
-## 19. 当前 Gate
+## 19. 当前 Gate（bridge 验收后更新）
 
-- 本任务 R05 完成后：`ITERATE / CLI_BRIDGE_REQUIRED / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`。
-- 30-unit Full 与 TEST 仍需 Owner 单独授权才能进入 Runner；当前 CLI 不接受 30-unit
-  real B01，所以即便 Owner 显式授权，也必须先完成 bridge 任务才能进入 Runner。
-- 升级到 `RUN_PREPARATION_READY_FOR_REVIEW` 的条件：
-  `TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1` 验收并 commit。
+- `TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1` 已独立验收并合入
+  `main@8b3ebdaa021405790b6137bff581acc490d8a024`。
+- 当前状态：`B09_RUN_PREPARATION_ACCEPTED / FULL_RUNNER_CLI_BRIDGE_ACCEPTED /
+  GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`。
+- 30-unit Full 与 TEST 仍需 Owner 分别独立授权；当前没有正式 EXP-ID 进入
+  `QUEUED` 或 `RUNNING`。
 
 ## 20. 下一 Gate
 
-- Codex 独立 Review 本任务。
-- 由 Owner 签发 `TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1`（**不**在本任务内合并）。
-- bridge 验收 commit 后，本任务 handoff 升级为 `RUN_PREPARATION_READY_FOR_REVIEW`。
-- 由 Owner 单独授权 30-unit Full，签发
-  `EXP-SLP-B09-PM-FULL-30-UNIT-<YYYYMMDD>-AUTODL-R01`。
+- Owner 复核 `TASK-SLP-B09-FULL-RUN-AUTHORIZATION-PREPARATION-v0.1`，并决定
+  `AUTHORIZE / ITERATE / STOP`。
+- 只有 Owner 明确 `AUTHORIZE` 后，才可将冻结的
+  `EXP-SLP-B09-PM-FULL-30-UNIT-20260901-AUTODL-R01` 置为 `QUEUED` 并执行。
 - Full 完成后进入 B10（UNKNOWN/REJECT）、B11（候选冻结）；B09T 一次性 TEST 仍需
   独立任务独立授权。

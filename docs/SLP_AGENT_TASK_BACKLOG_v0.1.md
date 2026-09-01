@@ -344,20 +344,17 @@ Reviewer checklist:
 
 ### TASK-SLP-B09：Full 公平比较
 
-- 状态：`ITERATE / CLI_BRIDGE_REQUIRED / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`
-  （截至 2026-09-01 B09 Full 运行准备任务 R05 窄范围收口后）。B09 准备合同 /
-  validator / 测试 / AutoDL 命令合同 / 资源估算均已落盘并通过 35 项定向
-  测试；当前 Gate 因 B08 runner CLI 不暴露 30-unit real B01 入口而保持
-  ITERATE；30-unit Full 与 TEST 仍未授权。
+- 状态：`B09_RUN_PREPARATION_ACCEPTED / FULL_RUNNER_CLI_BRIDGE_ACCEPTED /
+  GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`（2026-09-01；`main@8b3ebda`）。
+  B09 准备合同、validator、AutoDL 命令合同与资源估算已验收；CLI bridge 已提供
+  唯一受治理的 `--run-full` real-B01 入口。独立复核为 172 passed、Markdown links
+  6 passed、validator 80 OK / 0 ERR、`py_compile` PASS，TEST=0。
 - 目标：真实 subject-isolated Full。
 - 输出：开发期 subject-isolated OOF/VAL predictions、逐区域/受试者、模型和日志；默认 TEST=0。
 - 停止：OOM、NaN、split leak、manifest mismatch、reload mismatch。
-- B09 准备任务（`TASK-SLP-B09-FULL-RUN-PREPARATION-v0.1`）的允许/禁止事项
-  见 `docs/tasks/TASK_SLP_B09_FULL_RUN_PREPARATION_v0.1.md`；运行前必须先解决
-  任务合同 §16 列出的最小 CLI bridge blocker（当前 runner CLI 不暴露 30-unit
-  real B01 入口），并由 Owner 单独签发独立
-  `TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1` 解决 bridge，并通过
-  `EXP-SLP-B09-PM-FULL-30-UNIT-<YYYYMMDD>-AUTODL-R01` 才能进入 Runner。
+- B09 准备与 bridge 已验收；下一 Gate 是 Owner 对
+  `TASK-SLP-B09-FULL-RUN-AUTHORIZATION-PREPARATION-v0.1` 中冻结的 EXP-ID、
+  Git SHA、hash、30-unit 范围与预算作独立授权。授权前不得进入 Runner。
 
 ### TASK-SLP-B10：UNKNOWN/REJECT
 

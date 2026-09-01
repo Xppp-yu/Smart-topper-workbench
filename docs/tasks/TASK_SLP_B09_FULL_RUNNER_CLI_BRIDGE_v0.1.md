@@ -1,6 +1,6 @@
 # TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1
 
-状态：`AUTHORIZED_FOR_IMPLEMENTATION / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED / NOT_COMMITTED / NOT_PUSHED`
+状态：`ACCEPTED / COMMITTED_AND_PUSHED_AT_8b3ebda / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`
 
 ## 1. 任务目标
 
@@ -216,17 +216,20 @@ git diff --check
 - staged / commit / push 状态；
 - 当前 Gate 与下一 Gate。
 
-实现交付后的最高 Gate：
+实现交付后的 Gate：
 
 ```text
 READY_FOR_CODE_REVIEW / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED
 ```
 
-只有 Codex 独立验收并提交 bridge 后，B09 运行准备才可升级为：
+Codex 已独立验收并将 bridge 合入 `main@8b3ebda`，B09 运行准备已升级为：
 
 ```text
-RUN_PREPARATION_READY_FOR_REVIEW / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED
+B09_RUN_PREPARATION_ACCEPTED / FULL_RUNNER_CLI_BRIDGE_ACCEPTED /
+GPU_FULL_NOT_AUTHORIZED / TEST_DENIED
 ```
 
+独立验收结果：bridge + run-preparation + runner `172 passed`，Markdown links
+`6 passed`，validator `80 OK / 0 ERR`，`py_compile` 通过；无 GPU、TEST=0。
 之后仍需 Owner 以独立 EXP-ID、冻结 Git SHA 和预算明确授权，才能实际运行
 30-unit Full。
