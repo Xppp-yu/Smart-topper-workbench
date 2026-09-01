@@ -1,5 +1,6 @@
 """B09 Full Run Preparation validator
-(TASK-SLP-B09-FULL-RUN-PREPARATION-v0.1, R04 revision).
+(TASK-SLP-B09-FULL-RUN-PREPARATION-v0.1, R04 revision; bridge update for
+TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1).
 
 This validator is fail-closed: returns non-zero exit code and reports
 errors whenever any required check fails.  It does NOT create any output
@@ -36,9 +37,26 @@ R04 revision (vs R03):
     - All three must match.
   * No --a06-split-manifest CLI flag (single source = B01 freeze).
   * Real runner schema is the authoritative source for what is auditable.
-    DONE.json / FAILED.json / STOPPED.json are NOT written by the runner;
-    the validator requires them and reports CLI_BRIDGE_ARTIFACT_SCHEMA_INCOMPLETE
-    if missing.  This is recorded in §22 bridge checklist.
+    DONE.json / FAILED.json / STOPPED.json ARE written by the runner via
+    write_terminal_state() and must carry the full frozen identity
+    (status, terminal_state, experiment_id, git_commit, git_dirty +
+    the 4 frozen hashes).
+  * CLI bridge (TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1):
+    - The runner CLI MUST expose --run-full and route it to a unique
+      run_full() dispatch.  Default refuse-and-warn ("Real B01 run not
+      executed by this task") remains for backwards compatibility.
+    - The CLI bridge must enforce the B09_EXP_ID_REGEX template and
+      reject synthetic sentinels.
+    - The CLI bridge must require --run-authorized, --b01-freeze-dir,
+      --dataset-root, --experiment-id, and a clean committed worktree.
+    - The CLI bridge must enforce mutual exclusion with --one-fold-preflight,
+      --validate-only, --no-write, --synthetic-cpu-smoke.
+    - The CLI bridge must use B07 frozen training contract values
+      (max_epochs, min_epochs, patience, candidates, seeds, folds) and
+      B07 resource_budget limits.
+    - status.json must carry the 4 frozen hashes.
+    - candidates/<cand>/candidate_decision.json per-seed block must
+      carry total_subjects == 91.
 """
 
 from __future__ import annotations
@@ -485,16 +503,80 @@ def _check_runner_code(repo_root: Path, log: CheckLog) -> None:
         else:
             log.ok("runner CLI has --run-authorized gate")
         if "Real B01 run not executed by this task" not in cli_text:
-            log.err("runner CLI no longer carries the explicit 30-unit refusal")
+            log.err("runner CLI no longer carries the explicit default 30-unit refusal")
         else:
-            log.ok("runner CLI keeps the explicit 30-unit real-B01 refusal (B09 will need a bridge task)")
-        if (
-            "Real B01 run not executed by this task" in cli_text
-            or "--run-full" not in cli_text
+            log.ok(
+                "runner CLI keeps the default 30-unit real-B01 refusal "
+                "(bridge --run-full provides the governed entry)"
+            )
+        # B09 CLI bridge (TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1):
+        # verify --run-full exists, is wired to a unique run_full() dispatch,
+        # enforces the EXP-ID regex, requires a clean git worktree, and
+        # enforces mutual exclusion with --one-fold-preflight,
+        # --validate-only, --no-write and --synthetic-cpu-smoke.
+        if "--run-full" not in cli_text:
+            log.err("runner CLI missing --run-full B09 entry point")
+        else:
+            log.ok("runner CLI exposes --run-full B09 entry point")
+        if "def run_full_b09" not in cli_text:
+            log.err("runner CLI missing run_full_b09() bridge function")
+        else:
+            log.ok("runner CLI defines run_full_b09() bridge function")
+        if "run_full(full_config)" not in cli_text:
+            log.err("runner CLI bridge must call run_full(full_config) exactly")
+        else:
+            log.ok("runner CLI bridge dispatches run_full(full_config)")
+        if "B09_EXP_ID_REGEX" not in cli_text:
+            log.err("runner CLI missing B09_EXP_ID_REGEX constant")
+        else:
+            log.ok("runner CLI enforces B09_EXP_ID_REGEX for --run-full")
+        if "B09_SYNTHETIC_SENTINELS" not in cli_text:
+            log.err("runner CLI missing B09_SYNTHETIC_SENTINELS set")
+        else:
+            log.ok("runner CLI rejects B09_SYNTHETIC_SENTINELS for --run-full")
+        if "_check_run_full_mutex" not in cli_text:
+            log.err("runner CLI missing _check_run_full_mutex gate")
+        else:
+            log.ok("runner CLI runs _check_run_full_mutex gate")
+        for mutex_label, mutex_flag in (
+            ("--one-fold-preflight", "one_fold_preflight"),
+            ("--validate-only", "validate_only"),
+            ("--no-write", "no_write"),
+            ("--synthetic-cpu-smoke", "synthetic_cpu_smoke"),
         ):
-            log.ok("runner CLI does not expose an unguarded 30-unit real-B01 entry point")
+            if mutex_flag not in cli_text:
+                log.err(
+                    f"runner CLI _check_run_full_mutex must inspect "
+                    f"{mutex_flag!r} (mutex with {mutex_label})"
+                )
+            else:
+                log.ok(
+                    f"runner CLI _check_run_full_mutex inspects {mutex_flag!r}"
+                )
+        if "git_dirty" not in cli_text or "clean committed worktree" not in cli_text:
+            log.err("runner CLI --run-full must require clean committed worktree")
         else:
-            log.err("runner CLI has --run-full flag but no B09 bridge task gate")
+            log.ok("runner CLI --run-full requires clean committed worktree")
+        # R02: strict 40-char lowercase hex SHA regex.
+        if "B09_GIT_SHA_REGEX" not in cli_text:
+            log.err("runner CLI missing B09_GIT_SHA_REGEX constant")
+        else:
+            log.ok("runner CLI enforces strict 40-char hex SHA via B09_GIT_SHA_REGEX")
+        # R02: frozen batch_size = 16 enforcement.
+        if "B09_FROZEN_BATCH_SIZE" not in cli_text or "16" not in cli_text:
+            log.err("runner CLI must define B09_FROZEN_BATCH_SIZE=16")
+        else:
+            log.ok("runner CLI freezes B09_FROZEN_BATCH_SIZE=16")
+        # R02: zero-write rejection path via _log_reject.
+        if "_log_reject" not in cli_text:
+            log.err("runner CLI missing _log_reject (rejection must not touch filesystem)")
+        else:
+            log.ok("runner CLI uses _log_reject for zero-write rejection path")
+        # R02: sealed-terminal names tuple (resume passthrough for non-terminal).
+        if "B09_SEALED_TERMINAL_NAMES" not in cli_text:
+            log.err("runner CLI missing B09_SEALED_TERMINAL_NAMES tuple")
+        else:
+            log.ok("runner CLI uses B09_SEALED_TERMINAL_NAMES for sealed-terminal check")
         if "slp8_training_table_freeze" in cli_text:
             log.ok("runner CLI imports the B01 freeze module")
         else:
@@ -999,6 +1081,15 @@ def _check_audit_only(
             log.err(f"audit-only: status.json {key} must be {expected}")
     if status.get("winner") not in EXPECTED_CANDIDATES:
         log.err(f"audit-only: status.json winner must be in {EXPECTED_CANDIDATES}, got {status.get('winner')!r}")
+    # B09 bridge: status.json must carry the 4 frozen hashes and the
+    # frozen identity fields.  Validators must confirm they exist and
+    # equal the audit-time expected values.
+    for key, expected in expected_id.items():
+        actual = str(status.get(key, ""))
+        if actual != str(expected):
+            log.err(f"audit-only: status.json {key} mismatch (got {actual!r}, expected {expected!r})")
+        else:
+            log.ok(f"audit-only: status.json {key} matches frozen")
 
     # ---- 3. input_manifest_hashes.json: 4 frozen hashes + 6 TEST=0 carriers ----
     imh = _parse_json_object(output_dir / "input_manifest_hashes.json", "input_manifest_hashes.json", log)
@@ -1057,11 +1148,27 @@ def _check_audit_only(
                     f"audit-only: candidates/{c}/seed={seed}/total_samples={ts} "
                     f"!= {EXPECTED_OOF_SAMPLES_PER_SEED}"
                 )
-            # per-seed total_subjects not yet produced by runner; bridge gap
+            # B09 bridge: per-seed total_subjects is now produced by the
+            # runner and must equal EXPECTED_OOF_SUBJECTS_PER_SEED (91).
             if "total_subjects" not in sb:
                 log.err(_schema_gap(
                     f"candidates/{c}/candidate_decision.json seeds.{seed}.total_subjects"
                 ))
+            else:
+                tsubj = sb.get("total_subjects")
+                if not _is_finite_number(tsubj) or int(tsubj) < 0:
+                    log.err(
+                        f"audit-only: candidates/{c}/seed={seed}/total_subjects={tsubj!r} invalid"
+                    )
+                elif int(tsubj) != EXPECTED_OOF_SUBJECTS_PER_SEED:
+                    log.err(
+                        f"audit-only: candidates/{c}/seed={seed}/total_subjects={tsubj} "
+                        f"!= {EXPECTED_OOF_SUBJECTS_PER_SEED}"
+                    )
+                else:
+                    log.ok(
+                        f"audit-only: candidates/{c}/seed={seed}/total_subjects=={EXPECTED_OOF_SUBJECTS_PER_SEED}"
+                    )
 
     # ---- 7. 30 unit complete.json files ----
     units_dir = output_dir / "units"

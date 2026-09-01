@@ -32,6 +32,7 @@ import hashlib
 import json
 import math
 import platform
+import re
 import sys
 import time
 import traceback
@@ -88,6 +89,50 @@ from topper_perception.neural.slp8_region_full import (
     run_full,
 )
 
+
+# ---------------------------------------------------------------------------
+# B09 CLI bridge constants
+# ---------------------------------------------------------------------------
+
+#: Required EXP-ID template for B09 30-unit real-B01 entry.
+B09_EXP_ID_REGEX = r"^EXP-SLP-B09-PM-FULL-30-UNIT-\d{8}-AUTODL-R\d{2}$"
+
+
+#: Sentinel B09 synthetic EXP-IDs that must never be allowed for --run-full.
+B09_SYNTHETIC_SENTINELS: frozenset[str] = frozenset({
+    SYNTHETIC_EXP_ID,
+    "EXP-SLP-B09-SYNTHETIC-SMOKE",
+})
+
+
+#: Frozen training contract values that --run-full must not allow
+#: callers to override.  Sources:
+#:   - B07 protocol: ``configs/experiments/slp8_pm_full_protocol_v0.1.json``
+#:     (max_epochs / min_epochs / early_stopping_patience / seeds /
+#:      candidates / folds / total_units / resource_budget).
+#:   - B09 preparation §15: per-unit batch_size 16 (runner default,
+#:     matches B08 R03).
+B09_FROZEN_MAX_EPOCHS: int = 30
+B09_FROZEN_MIN_EPOCHS: int = 5
+B09_FROZEN_EARLY_STOPPING_PATIENCE: int = 4
+B09_FROZEN_BATCH_SIZE: int = 16
+B09_FROZEN_MAX_WALL_MINUTES_PER_UNIT: int = 15
+B09_FROZEN_MAX_PEAK_CUDA_MB: int = 8192
+B09_FROZEN_TOTAL_UNITS: int = 30
+
+
+#: Strict 40-character lowercase hexadecimal SHA pattern.
+B09_GIT_SHA_REGEX = r"^[0-9a-f]{40}$"
+
+
+#: Terminal file names that seal a B09 experiment and must not be
+#: overwritten by a fresh ``--run-full`` dispatch.  Anything else
+#: inside ``output_dir`` is treated as resumable intermediate state
+#: and is forwarded to ``run_full()`` for identity / per-unit /
+#: checkpoint / budget-state verification.
+B09_SEALED_TERMINAL_NAMES: tuple[str, ...] = ("DONE.json", "FAILED.json", "STOPPED.json")
+B09_RESUME_IDENTITY_FILENAME = "resume_identity.json"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -132,6 +177,105 @@ def _log(msg: str, log_path: Path | None = None) -> None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+
+def _log_reject(msg: str) -> None:
+    """B09 bridge rejection log: print to stdout ONLY; never touch the filesystem.
+
+    The bridge contract requires that all authorization / parameter /
+    EXP-ID / git / protocol / identity / frozen-contract / terminal
+    / output-collision gates complete before any experiment directory
+    is created.  Rejection therefore uses this helper instead of
+    :func:`_log`, which would otherwise ``mkdir(parents=True)`` the
+    experiment's ``logs/`` tree.
+    """
+    ts = _now_iso()
+    print(f"[{ts}] REJECT: {msg}", file=sys.stderr)
+
+
+def _canonical_resume_identity(payload: dict, *, nested: bool = False) -> dict:
+    """Return the frozen experiment identity from a persisted carrier."""
+    identity = payload.get("identity") if nested else payload
+    if not isinstance(identity, dict):
+        raise FullProtocolError("resume identity carrier has no JSON object identity")
+    return {
+        "experiment_id": identity.get("experiment_id", identity.get("exp_id")),
+        "git_commit": identity.get("git_commit"),
+        "config_sha256": identity.get("config_sha256"),
+        "data_manifest_sha256": identity.get("data_manifest_sha256"),
+        "fold_manifest_sha256": identity.get("fold_manifest_sha256"),
+        "split_sha256": identity.get(
+            "split_sha256", identity.get("a06_split_sha256")
+        ),
+    }
+
+
+def _read_resume_identity_carrier(path: Path, *, nested: bool = False) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FullProtocolError(f"resume identity carrier {path} is unreadable: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise FullProtocolError(f"resume identity carrier {path} is not a JSON object")
+    return _canonical_resume_identity(payload, nested=nested)
+
+
+def _validate_b09_partial_resume_identity(
+    output_dir: Path,
+    expected_identity: dict,
+) -> bool:
+    """Fail closed before touching a non-terminal partial experiment.
+
+    Returns ``True`` when an existing partial directory was validated and
+    ``False`` for a fresh/empty output directory. Every persisted identity
+    carrier that is present must match; a non-empty directory with no identity
+    carrier is not a governed resume and is rejected.
+    """
+    if not output_dir.exists() or not any(output_dir.iterdir()):
+        return False
+
+    carriers: list[tuple[Path, bool]] = []
+    for name in (B09_RESUME_IDENTITY_FILENAME, "manifest.json", "status.json"):
+        path = output_dir / name
+        if path.is_file():
+            carriers.append((path, False))
+    budget_path = output_dir / "budget_state.json"
+    if budget_path.is_file():
+        carriers.append((budget_path, True))
+    carriers.extend(
+        (path, True) for path in sorted((output_dir / "units").glob("*/complete.json"))
+    )
+
+    if not carriers:
+        raise FullProtocolError(
+            f"non-terminal output directory {output_dir} has no governed "
+            "resume identity carrier"
+        )
+
+    for path, nested in carriers:
+        actual = _read_resume_identity_carrier(path, nested=nested)
+        for key, expected_value in expected_identity.items():
+            if actual.get(key) != expected_value:
+                raise FullProtocolError(
+                    f"resume identity mismatch in {path} on {key!r}: "
+                    f"expected {expected_value!r}, got {actual.get(key)!r}"
+                )
+    return True
+
+
+def _write_b09_resume_identity_atomic(output_dir: Path, identity: dict) -> None:
+    """Persist an early identity carrier so first-unit interruption is resumable."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / B09_RESUME_IDENTITY_FILENAME
+    if path.is_file():
+        return
+    payload = {**identity, "git_dirty": False, "written_at_utc": _now_iso()}
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +342,24 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--one-fold-preflight",
         action="store_true",
         help="Run exactly one real B01 fold/candidate/seed preflight; never runs the 30-unit Full plan",
+    )
+    # B09 CLI bridge (TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1):
+    # exclusive with --one-fold-preflight / --validate-only / --no-write /
+    # --synthetic-cpu-smoke.  Requires --run-authorized, real --b01-freeze-dir,
+    # --dataset-root, --experiment-id matching B09_EXP_ID_REGEX and a clean
+    # committed worktree.  This is the only entry point that calls
+    # run_full() with synthetic_mode=False, no_write_mode=False.
+    p.add_argument(
+        "--run-full",
+        action="store_true",
+        help=(
+            "B09: execute the entire 30-unit real B01 Full plan by "
+            "constructing the resolved FullConfig from the frozen B07 "
+            "protocol and dispatching it to run_full() exactly once. "
+            "Requires --run-authorized, --b01-freeze-dir, --dataset-root, "
+            "--experiment-id and a clean committed worktree; refuses "
+            "without explicit Owner authorization."
+        ),
     )
     p.add_argument("--candidate", choices=list(B07_CANDIDATES), default=None)
     p.add_argument("--fold-id", choices=[f"fold_{i}" for i in range(1, 6)], default=None)
@@ -467,6 +629,370 @@ def run_one_fold_preflight(
 
 
 # ---------------------------------------------------------------------------
+# B09 CLI bridge: --run-full entry (TASK-SLP-B09-FULL-RUNNER-CLI-BRIDGE-v0.1)
+# ---------------------------------------------------------------------------
+
+
+def _check_run_full_mutex(
+    args: argparse.Namespace,
+    log_path: Path,
+) -> tuple[bool, str]:
+    """Verify the B09 --run-full mutex contract.
+
+    Returns (ok, error_message).  Logs all decisions to ``log_path`` so
+    the audit trail is preserved if the caller later proceeds.
+    """
+    mutex_failures: list[str] = []
+
+    if getattr(args, "one_fold_preflight", False):
+        mutex_failures.append("--run-full cannot be combined with --one-fold-preflight")
+    if getattr(args, "validate_only", False):
+        mutex_failures.append("--run-full cannot be combined with --validate-only")
+    if getattr(args, "no_write", False):
+        mutex_failures.append("--run-full cannot be combined with --no-write")
+    if getattr(args, "synthetic_cpu_smoke", False):
+        mutex_failures.append("--run-full cannot be combined with --synthetic-cpu-smoke")
+
+    if mutex_failures:
+        return False, "; ".join(mutex_failures)
+
+    # Required real B01 inputs.
+    if not getattr(args, "b01_freeze_dir", None):
+        mutex_failures.append("--b01-freeze-dir is required for --run-full")
+    if not getattr(args, "dataset_root", None):
+        mutex_failures.append("--dataset-root is required for --run-full")
+    if not getattr(args, "run_authorized", False):
+        mutex_failures.append("--run-authorized is required for --run-full")
+    if not getattr(args, "experiment_id", None):
+        mutex_failures.append("--experiment-id is required for --run-full")
+
+    if mutex_failures:
+        return False, "; ".join(mutex_failures)
+
+    return True, ""
+
+
+def run_full_b09(
+    config: Path,
+    output_dir: Path,
+    *,
+    repo_root: Path,
+    b01_freeze_dir: Path,
+    dataset_root: Path,
+    experiment_id: str,
+    device: str,
+    batch_size: int,
+    max_epochs: int,
+) -> int:
+    """B09 CLI bridge: dispatch the 30-unit real B01 Full plan.
+
+    The function performs every fail-closed gate required by the B09
+    bridge contract, then constructs a single ``FullConfig`` and calls
+    :func:`run_full` exactly once.  No training loop is duplicated.
+
+    R02 invariants:
+
+    * Every rejection path uses :func:`_log_reject`, which prints to
+      stderr but does NOT touch the filesystem.  The experiment
+      directory is created only after all gates have passed and the
+      resolved :class:`FullConfig` has been built.
+    * Sealed-terminal directories (DONE.json / FAILED.json /
+      STOPPED.json) are refused; non-terminal partial output is
+      forwarded to :func:`run_full` which performs the existing
+      per-unit / identity / checkpoint / budget-state resume
+      verification.
+    * The CLI-supplied ``batch_size`` must equal the frozen
+      ``B09_FROZEN_BATCH_SIZE``; any drift is rejected before
+      ``output_dir`` is created.
+
+    Gates (all must pass before ``output_dir`` is created and before
+    any training begins):
+
+    1. EXP-ID must match ``B09_EXP_ID_REGEX``; synthetic sentinels are
+       rejected.
+    2. Worktree must be a clean committed git tree
+       (``git_dirty=False``); the resolved commit must be a strict
+       40-character lowercase hex SHA.
+    3. ``output_dir`` must not contain a sealed terminal artifact
+       (DONE.json / FAILED.json / STOPPED.json).  Any other
+       intermediate state is forwarded to ``run_full`` for resume.
+    4. Frozen B07 protocol must load; the resolved protocol must use
+       exactly the frozen training contract values
+       (max_epochs, min_epochs, patience, candidates, seeds, folds,
+       total_units, resource_budget).
+    5. ``batch_size`` must equal ``B09_FROZEN_BATCH_SIZE`` (16).
+    6. ``build_full_config`` must succeed with
+       ``synthetic_mode=False`` and ``load_test=False`` (enforced
+       via the real B01 path inside ``build_full_config``).
+    7. ``run_full()`` is invoked exactly once with
+       ``synthetic_mode=False`` and ``no_write_mode=False``; the
+       function is forbidden from re-parsing, mutating, or
+       duplicating the 30-unit plan.
+    """
+    output_dir = Path(output_dir).resolve()
+    b01_freeze_dir = Path(b01_freeze_dir).resolve()
+    dataset_root = Path(dataset_root).resolve()
+
+    # ------------------------------------------------------------------
+    # Gate 1: EXP-ID must match B09 template; reject synthetic sentinels.
+    # ------------------------------------------------------------------
+    if experiment_id in B09_SYNTHETIC_SENTINELS:
+        _log_reject(
+            f"--run-full refuses synthetic EXP-ID {experiment_id!r}"
+        )
+        return 2
+    if not re.match(B09_EXP_ID_REGEX, experiment_id):
+        _log_reject(
+            f"--experiment-id {experiment_id!r} does not match "
+            f"required template {B09_EXP_ID_REGEX}"
+        )
+        return 2
+
+    # ------------------------------------------------------------------
+    # Gate 2: Git identity must be a clean, parseable 40-char hex SHA.
+    # ------------------------------------------------------------------
+    try:
+        git_commit, git_dirty = resolve_git_identity(repo_root)
+    except FullExperimentIdentityError as exc:
+        _log_reject(f"git identity unresolvable: {exc}")
+        return 2
+    if git_dirty:
+        _log_reject(
+            "--run-full requires a clean committed worktree; "
+            f"git_dirty=True (commit={git_commit})"
+        )
+        return 2
+    if not isinstance(git_commit, str) or not re.fullmatch(
+        B09_GIT_SHA_REGEX, git_commit
+    ):
+        _log_reject(
+            f"--run-full requires a 40-char lowercase hex SHA, "
+            f"got {git_commit!r}"
+        )
+        return 2
+
+    # ------------------------------------------------------------------
+    # Gate 3: Output dir must not already have a sealed terminal state.
+    # Non-terminal partial output is forwarded to run_full() for
+    # resume; the runner's own per-unit / identity / budget state
+    # verification (load_resume_state + atomic complete.json) is
+    # the single source of truth.
+    # ------------------------------------------------------------------
+    for terminal_name in B09_SEALED_TERMINAL_NAMES:
+        if (output_dir / terminal_name).is_file():
+            _log_reject(
+                f"--run-full refuses to overwrite sealed terminal "
+                f"{terminal_name} in {output_dir}"
+            )
+            return 3
+
+    # ------------------------------------------------------------------
+    # Gate 4: Load frozen B07 protocol and verify frozen values match
+    # the CLI / bridge contract.
+    # ------------------------------------------------------------------
+    try:
+        protocol = load_frozen_full_protocol(config, repo_root=repo_root)
+    except FullProtocolError as exc:
+        _log_reject(f"protocol load failed: {exc}")
+        return 2
+
+    raw_protocol = json.loads(config.read_text(encoding="utf-8"))
+    frozen_training = raw_protocol["training_contract"]
+    frozen_budget = raw_protocol["resource_budget"]
+    frozen_matrix = raw_protocol["execution_matrix"]
+
+    if int(frozen_training["max_epochs"]) != B09_FROZEN_MAX_EPOCHS:
+        _log_reject(
+            f"frozen B07 max_epochs={frozen_training['max_epochs']} "
+            f"!= bridge constant {B09_FROZEN_MAX_EPOCHS}"
+        )
+        return 2
+    if max_epochs != B09_FROZEN_MAX_EPOCHS:
+        _log_reject(
+            f"--max-epochs={max_epochs} does not match frozen "
+            f"B07 value {B09_FROZEN_MAX_EPOCHS}"
+        )
+        return 2
+    if int(frozen_training["min_epochs"]) != B09_FROZEN_MIN_EPOCHS:
+        _log_reject(
+            f"frozen B07 min_epochs={frozen_training['min_epochs']} "
+            f"!= bridge constant {B09_FROZEN_MIN_EPOCHS}"
+        )
+        return 2
+    if int(frozen_training["early_stopping_patience"]) != B09_FROZEN_EARLY_STOPPING_PATIENCE:
+        _log_reject(
+            f"frozen B07 early_stopping_patience="
+            f"{frozen_training['early_stopping_patience']} != bridge constant "
+            f"{B09_FROZEN_EARLY_STOPPING_PATIENCE}"
+        )
+        return 2
+    if set(tuple(frozen_training["seeds"])) != set(protocol.seeds):
+        _log_reject(
+            f"frozen B07 seeds {frozen_training['seeds']} differ from "
+            f"resolved protocol seeds {protocol.seeds}"
+        )
+        return 2
+    if int(frozen_matrix.get("candidates", 0)) != len(protocol.candidates):
+        _log_reject(
+            f"frozen execution_matrix.candidates="
+            f"{frozen_matrix.get('candidates')} differs from "
+            f"resolved candidates={len(protocol.candidates)}"
+        )
+        return 2
+    if int(frozen_matrix.get("folds", 0)) != len(protocol.fold_subjects):
+        _log_reject(
+            f"frozen execution_matrix.folds={frozen_matrix.get('folds')} "
+            f"differs from resolved folds={len(protocol.fold_subjects)}"
+        )
+        return 2
+    if int(frozen_matrix.get("total_units", 0)) != B09_FROZEN_TOTAL_UNITS:
+        _log_reject(
+            f"frozen execution_matrix.total_units="
+            f"{frozen_matrix.get('total_units')} is not "
+            f"{B09_FROZEN_TOTAL_UNITS}"
+        )
+        return 2
+    if int(frozen_budget.get("max_wall_minutes_per_fold_seed_unit", -1)) != B09_FROZEN_MAX_WALL_MINUTES_PER_UNIT:
+        _log_reject(
+            f"frozen resource_budget.max_wall_minutes_per_fold_seed_unit="
+            f"{frozen_budget.get('max_wall_minutes_per_fold_seed_unit')} != "
+            f"{B09_FROZEN_MAX_WALL_MINUTES_PER_UNIT}"
+        )
+        return 2
+    if int(frozen_budget.get("max_peak_cuda_mb", -1)) != B09_FROZEN_MAX_PEAK_CUDA_MB:
+        _log_reject(
+            f"frozen resource_budget.max_peak_cuda_mb="
+            f"{frozen_budget.get('max_peak_cuda_mb')} != "
+            f"{B09_FROZEN_MAX_PEAK_CUDA_MB}"
+        )
+        return 2
+
+    # ------------------------------------------------------------------
+    # Gate 5: Frozen CLI batch_size (= 16, B08 R03 default + B09 §15).
+    # ------------------------------------------------------------------
+    if batch_size != B09_FROZEN_BATCH_SIZE:
+        _log_reject(
+            f"--batch-size={batch_size} does not match frozen "
+            f"B09 value {B09_FROZEN_BATCH_SIZE}"
+        )
+        return 2
+
+    # ------------------------------------------------------------------
+    # Gate 6: Build the resolved FullConfig.  This step does not write
+    # to ``output_dir``; it only reads the protocol and freeze manifest
+    # and constructs an in-memory FullConfig.  If it fails, the bridge
+    # exits without ever creating the experiment directory.
+    # ------------------------------------------------------------------
+    try:
+        full_config = build_full_config(
+            protocol_path=config,
+            output_dir=output_dir,
+            experiment_id=experiment_id,
+            git_commit=git_commit,
+            git_dirty=False,
+            b01_freeze_dir=b01_freeze_dir,
+            data_root=dataset_root,
+            device=device,
+            batch_size=batch_size,
+            max_epochs=B09_FROZEN_MAX_EPOCHS,
+            min_epochs=B09_FROZEN_MIN_EPOCHS,
+            early_stopping_patience=B09_FROZEN_EARLY_STOPPING_PATIENCE,
+            synthetic_mode=False,
+            no_write_mode=False,
+            repo_root=repo_root,
+        )
+    except (FullProtocolError, FullConfigValidationError) as exc:
+        _log_reject(f"build_full_config failed: {exc}")
+        return 2
+
+    expected_resume_identity = {
+        "experiment_id": experiment_id,
+        "git_commit": git_commit,
+        "config_sha256": full_config.config_sha256,
+        "data_manifest_sha256": full_config.data_manifest_sha256,
+        "fold_manifest_sha256": full_config.fold_manifest_sha256,
+        "split_sha256": full_config.a06_split_sha256,
+    }
+    try:
+        _validate_b09_partial_resume_identity(output_dir, expected_resume_identity)
+    except FullProtocolError as exc:
+        _log_reject(f"partial resume identity rejected: {exc}")
+        return 4
+
+    # ------------------------------------------------------------------
+    # All gates passed.  Now it is safe to create the experiment
+    # directory tree and start the structured run log.
+    # ------------------------------------------------------------------
+    _write_b09_resume_identity_atomic(output_dir, expected_resume_identity)
+    log_path = output_dir / "logs" / "run.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    _log(
+        f"=== B09 --run-full BRIDGE ===",
+        log_path,
+    )
+    _log(f"experiment_id={experiment_id}", log_path)
+    _log(f"git_commit={git_commit} dirty=False", log_path)
+    _log(f"output_dir={output_dir}", log_path)
+    _log(f"b01_freeze_dir={b01_freeze_dir}", log_path)
+    _log(f"dataset_root={dataset_root}", log_path)
+    _log(f"device={device} batch_size={batch_size}", log_path)
+    _log(
+        f"frozen candidates={list(protocol.candidates)} "
+        f"seeds={list(protocol.seeds)} "
+        f"folds={list(protocol.fold_subjects.keys())}",
+        log_path,
+    )
+
+    # ------------------------------------------------------------------
+    # Dispatch run_full() exactly once.  This is the single source of
+    # truth for the 30-unit plan; no parallel writer may be added by
+    # the bridge contract.  run_full() handles interruption / resume
+    # (load_resume_state + atomic complete.json) and identity drift.
+    # ------------------------------------------------------------------
+    try:
+        result = run_full(full_config)
+    except FullOutputCollisionError as exc:
+        _log(f"OUTPUT COLLISION: {exc}", log_path)
+        return 4
+    except FullProtocolError as exc:
+        _log(f"PROTOCOL ERROR: {exc}", log_path)
+        return 4
+    except FullRunAuthorizationError as exc:
+        _log(f"AUTHORIZATION ERROR: {exc}", log_path)
+        return 4
+    except Exception as exc:
+        _log(f"UNEXPECTED ERROR: {type(exc).__name__}: {exc}", log_path)
+        traceback.print_exc()
+        return 4
+
+    # ------------------------------------------------------------------
+    # Summary report (mirrors the B08 synthetic smoke output style).
+    # ------------------------------------------------------------------
+    print("B09_RUN_FULL_RESULT:")
+    print(f"  terminal_state: {result.terminal_state}")
+    print(f"  total_units: {result.unit_count_total}")
+    print(f"  unit_count_done: {result.unit_count_done}")
+    print(f"  unit_count_failed: {result.unit_count_failed}")
+    print(f"  unit_count_stopped: {result.unit_count_stopped}")
+    print(f"  total_wall_seconds: {round(result.total_wall_seconds, 2)}")
+    print(f"  winner: {result.winner}")
+    print(f"  winner_mean_pooled_iou: {result.winner_mean_pooled_iou}")
+    print(f"  budget_ok: {result.budget_report.get('budget_ok')}")
+    print(f"  config_sha256: {result.config_sha256}")
+    print(f"  data_manifest_sha256: {result.data_manifest_sha256}")
+    print(f"  fold_manifest_sha256: {result.fold_manifest_sha256}")
+    print(f"  a06_split_sha256: {result.a06_split_sha256}")
+
+    if result.terminal_state == "DONE" and result.unit_count_done == result.unit_count_total:
+        return 0
+    if result.terminal_state == "FAILED":
+        return 5
+    if result.terminal_state == "STOPPED":
+        return 6
+    return 4
+
+
+# ---------------------------------------------------------------------------
 # Synthetic CPU smoke mode
 # ---------------------------------------------------------------------------
 
@@ -609,14 +1135,19 @@ def main() -> int:
     b01_freeze_dir = getattr(args, "b01_freeze_dir", None)
     experiment_id = getattr(args, "experiment_id", None)
     one_fold = getattr(args, "one_fold_preflight", False)
+    run_full_flag = getattr(args, "run_full", False)
 
     # Check authorization
     is_real_b01 = (b01_freeze_dir is not None)
-    if is_real_b01 and not run_authorized:
+    if is_real_b01 and not run_authorized and not run_full_flag:
+        # Existing preflight contract: refusing real B01 without
+        # --run-authorized.  The --run-full branch performs its own
+        # exhaustive authorization check below; keep this short-circuit
+        # for one-fold to avoid mutating its semantic.
         print("ERROR: real B01 run requires --run-authorized")
         return 1
 
-    if is_real_b01 and run_authorized:
+    if is_real_b01 and run_authorized and not run_full_flag:
         if not experiment_id:
             print("ERROR: --experiment-id is required for real B01 runs")
             return 1
@@ -626,6 +1157,37 @@ def main() -> int:
         if not Path(b01_freeze_dir).exists():
             print(f"ERROR: --b01-freeze-dir not found: {b01_freeze_dir}")
             return 1
+
+    if run_full_flag:
+        # B09 CLI bridge entry point.  The bridge performs every
+        # fail-closed gate (mutex, EXP-ID regex, git identity, frozen
+        # contract, output dir, then a single run_full() dispatch).
+        mutex_ok, mutex_msg = _check_run_full_mutex(args, Path(output_dir) / "logs" / "run.log")
+        if not mutex_ok:
+            print(f"ERROR: {mutex_msg}")
+            return 2
+        if not Path(b01_freeze_dir).exists():
+            print(f"ERROR: --b01-freeze-dir not found: {b01_freeze_dir}")
+            return 2
+        if not Path(args.dataset_root).exists():
+            print(f"ERROR: --dataset-root not found: {args.dataset_root}")
+            return 2
+        try:
+            return run_full_b09(
+                config=config,
+                output_dir=output_dir,
+                repo_root=repo_root,
+                b01_freeze_dir=Path(b01_freeze_dir),
+                dataset_root=Path(args.dataset_root),
+                experiment_id=experiment_id,
+                device=args.device,
+                batch_size=args.batch_size,
+                max_epochs=args.max_epochs,
+            )
+        except (FullProtocolError, FullExperimentIdentityError,
+                FullConfigValidationError, FullRunAuthorizationError) as e:
+            print(f"ERROR: {e}")
+            return 2
 
     if one_fold:
         if not (is_real_b01 and run_authorized and args.dataset_root and experiment_id):

@@ -2827,12 +2827,21 @@ def write_run_artifacts(
     })
 
     # input_manifest_hashes.json
+    # B09 audit (R05 / bridge): six strict TEST=0 carriers are required.
+    # `test_access` is a strict bool False; the other five are strict int 0.
+    # No other field whose name contains "test" may be added (validator ERR).
     write_json(output_dir / "input_manifest_hashes.json", {
         "config_sha256": config.config_sha256,
         "data_manifest_sha256": config.data_manifest_sha256,
         "fold_manifest_sha256": config.fold_manifest_sha256,
         "split_sha256": config.a06_split_sha256,
         "a06_split_sha256": config.a06_split_sha256,
+        "test_access": False,
+        "test_rows": 0,
+        "test_labels": 0,
+        "test_onehot": 0,
+        "test_predictions": 0,
+        "test_metrics": 0,
     })
 
     # environment.json
@@ -2842,10 +2851,19 @@ def write_run_artifacts(
     shutil.copy2(config.protocol.fold_path, output_dir / "fold_manifest.json")
 
     # status.json
+    # B09 audit (bridge): include the 4 frozen hashes that bind the run
+    # to the B07 protocol / B01 freeze / fold manifest / A06 split.
+    # `terminal_state` may be DONE / FAILED / STOPPED; frozen identity
+    # fields appear on all terminal carriers via write_terminal_state too.
     write_json(output_dir / "status.json", {
         "experiment_id": config.experiment_id,
         "git_commit": config.git_commit,
         "git_dirty": config.git_dirty,
+        "config_sha256": config.config_sha256,
+        "data_manifest_sha256": config.data_manifest_sha256,
+        "fold_manifest_sha256": config.fold_manifest_sha256,
+        "split_sha256": config.a06_split_sha256,
+        "a06_split_sha256": config.a06_split_sha256,
         "terminal_state": full_result.terminal_state,
         "total_units": len(unit_results),
         "unit_count_done": full_result.unit_count_done,
@@ -2877,6 +2895,13 @@ def write_run_artifacts(
                 str(seed): {
                     "status": sr.status,
                     "total_samples": sr.total_samples,
+                    # B09 audit (bridge): per-seed total_subjects is
+                    # required for fail-closed subject coverage = 91.
+                    # Sourced from SeedOOFResult.total_subjects which
+                    # counts unique subjects in the 5-fold OOF merge.
+                    "total_subjects": sr.total_subjects,
+                    "duplicate_count": sr.duplicate_count,
+                    "missing_count": sr.missing_count,
                     "pooled_fixed_fg_macro_iou": sr.pooled_fixed_fg_macro_iou,
                     "pooled_fixed_fg_macro_dice": sr.pooled_fixed_fg_macro_dice,
                     "worst_subject_iou": sr.worst_subject_iou,
@@ -3434,9 +3459,20 @@ def run_full(
                 config.output_dir,
                 overall_status,
                 extra={
+                # B09 audit (bridge): every terminal carrier must carry the
+                # full frozen identity (status, terminal_state,
+                # experiment_id, git_commit, git_dirty + the 4 frozen hashes).
+                # `status` mirrors `terminal_state` for the audit contract
+                # that already requires either field; both must be present.
+                "status": overall_status,
                 "experiment_id": config.experiment_id,
                 "git_commit": config.git_commit,
                 "git_dirty": config.git_dirty,
+                "config_sha256": config.config_sha256,
+                "data_manifest_sha256": config.data_manifest_sha256,
+                "fold_manifest_sha256": config.fold_manifest_sha256,
+                "split_sha256": config.a06_split_sha256,
+                "a06_split_sha256": config.a06_split_sha256,
                 "total_units": len(unit_results),
                 "unit_count_done": unit_done,
                 "unit_count_failed": unit_failed,
