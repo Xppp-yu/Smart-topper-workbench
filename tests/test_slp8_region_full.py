@@ -64,6 +64,7 @@ from topper_perception.neural.slp8_region_full import (
     check_budget_and_update,
     committed_file_sha256,
     create_budget_accumulator,
+    deterministic_cross_entropy_2d,
     file_sha256,
     load_frozen_full_protocol,
     load_real_b01_fold,
@@ -75,7 +76,7 @@ from topper_perception.neural.slp8_region_full import (
     validate_oof_rows,
     write_unit_complete_atomic,
 )
-from topper_perception.neural.slp8_region_dataset import RegionSample
+from topper_perception.neural.slp8_region_dataset import N_CLASSES, RegionSample
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2413,6 +2414,154 @@ def test_round7_one_fold_exception_writes_failed_terminal(
     assert failed["unit_status"] == "FAILED"
     assert "AttributeError" in failed["error"]
     assert failed["test_access"] is False
+
+
+@pytest.mark.parametrize("weighted", [False, True])
+def test_round8_deterministic_cross_entropy_matches_pytorch(weighted: bool) -> None:
+    """The deterministic formulation matches frozen CrossEntropyLoss math."""
+    import torch
+    import torch.nn.functional as torch_f
+
+    generator = torch.Generator().manual_seed(20260831)
+    logits_reference = torch.randn(
+        (2, N_CLASSES, 5, 4), generator=generator, dtype=torch.float64,
+        requires_grad=True,
+    )
+    logits_actual = logits_reference.detach().clone().requires_grad_(True)
+    targets = torch.randint(
+        0, N_CLASSES, (2, 5, 4), generator=generator, dtype=torch.long,
+    )
+    weight = (
+        torch.linspace(0.25, 4.0, N_CLASSES, dtype=torch.float64)
+        if weighted else None
+    )
+
+    expected = torch_f.cross_entropy(
+        logits_reference, targets, weight=weight, reduction="mean",
+    )
+    actual = deterministic_cross_entropy_2d(
+        logits_actual, targets, weight=weight,
+    )
+    expected.backward()
+    actual.backward()
+
+    torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+    torch.testing.assert_close(
+        logits_actual.grad, logits_reference.grad, rtol=1e-12, atol=1e-12,
+    )
+
+
+def test_round8_failed_unit_does_not_stack_empty_oof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A primary training error is returned intact and writes no empty OOF."""
+    import torch
+    import topper_perception.neural.slp8_region_full as full_mod
+
+    config = _build_synthetic_config()
+    config.synthetic_mode = False
+    config.output_dir = tmp_path / "failed-real"
+    config.data_root = tmp_path
+    unit = FullUnit(B07_CANDIDATES[0], "fold_1", 42)
+    sample = RegionSample(
+        sample_id="real_1", subject_id="subject_1", ml_split="train",
+        posture="SUPINE", pressure_path="pressure.npy", label_path="label.npy",
+        onehot_path="onehot.npy",
+    )
+    val_sample = RegionSample(
+        sample_id="real_2", subject_id="subject_2", ml_split="val",
+        posture="SUPINE", pressure_path="pressure.npy", label_path="label.npy",
+        onehot_path="onehot.npy",
+    )
+    monkeypatch.setattr(full_mod, "build_model", lambda *a, **k: torch.nn.Conv2d(1, N_CLASSES, 1))
+    monkeypatch.setattr(full_mod, "apply_settings", lambda *a, **k: None)
+    monkeypatch.setattr(full_mod, "Slp8RegionDataset", lambda **kwargs: object())
+    monkeypatch.setattr(
+        full_mod, "build_dataloader",
+        lambda *a, **k: [{
+            "pressure": torch.zeros((1, 1, 2, 2), dtype=torch.float32),
+            "label": torch.zeros((1, 2, 2), dtype=torch.long),
+        }],
+    )
+    monkeypatch.setattr(full_mod, "assert_class_weight_invariants", lambda result: None)
+    monkeypatch.setattr(
+        full_mod, "class_weights_to_tensor",
+        lambda result: np.ones(N_CLASSES, dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        full_mod, "deterministic_cross_entropy_2d",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("primary deterministic CUDA failure")
+        ),
+    )
+
+    result = full_mod.train_one_unit(
+        unit=unit,
+        train_records=[sample],
+        val_records=[val_sample],
+        config=config,
+        unit_output_dir=config.output_dir / "unit",
+        normalization=object(),
+        class_weight_result=object(),
+        data_root=tmp_path,
+        val_sample_ids=[val_sample.sample_id],
+        val_subject_ids_list=[val_sample.subject_id],
+        val_postures=[val_sample.posture],
+    )
+    assert result.status == "FAILED"
+    assert result.error_message == "RuntimeError: primary deterministic CUDA failure"
+    assert result.oof_csv_path is None
+    assert not list(config.output_dir.rglob("unit_oof.npz"))
+
+
+def test_round8_done_without_exact_oof_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A nominal DONE state cannot stack or publish incomplete real OOF."""
+    import torch
+    import topper_perception.neural.slp8_region_full as full_mod
+
+    config = _build_synthetic_config()
+    config.synthetic_mode = False
+    config.max_epochs = 0
+    config.output_dir = tmp_path / "empty-oof"
+    config.data_root = tmp_path
+    unit = FullUnit(B07_CANDIDATES[0], "fold_1", 42)
+    train_sample = RegionSample(
+        sample_id="real_train", subject_id="subject_train", ml_split="train",
+        posture="SUPINE", pressure_path="pressure.npy", label_path="label.npy",
+        onehot_path="onehot.npy",
+    )
+    val_sample = RegionSample(
+        sample_id="real_val", subject_id="subject_val", ml_split="val",
+        posture="SUPINE", pressure_path="pressure.npy", label_path="label.npy",
+        onehot_path="onehot.npy",
+    )
+    monkeypatch.setattr(full_mod, "build_model", lambda *a, **k: torch.nn.Conv2d(1, N_CLASSES, 1))
+    monkeypatch.setattr(full_mod, "apply_settings", lambda *a, **k: None)
+    monkeypatch.setattr(full_mod, "Slp8RegionDataset", lambda **kwargs: object())
+    monkeypatch.setattr(full_mod, "build_dataloader", lambda *a, **k: [])
+    monkeypatch.setattr(full_mod, "assert_class_weight_invariants", lambda result: None)
+    monkeypatch.setattr(
+        full_mod, "class_weights_to_tensor",
+        lambda result: np.ones(N_CLASSES, dtype=np.float32),
+    )
+
+    result = full_mod.train_one_unit(
+        unit=unit, train_records=[train_sample], val_records=[val_sample],
+        config=config, unit_output_dir=config.output_dir / "unit",
+        normalization=object(), class_weight_result=object(), data_root=tmp_path,
+        val_sample_ids=[val_sample.sample_id],
+        val_subject_ids_list=[val_sample.subject_id],
+        val_postures=[val_sample.posture],
+    )
+    assert result.status == "FAILED"
+    assert result.error_message == (
+        "real unit completed without exact OOF coverage: "
+        "predictions=0, targets=0, expected=1"
+    )
+    assert result.oof_csv_path is None
+    assert not list(config.output_dir.rglob("unit_oof.npz"))
 
 
 # ---------------------------------------------------------------------------

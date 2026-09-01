@@ -1215,6 +1215,46 @@ def _validate_real_region_records(
         )
 
 
+def deterministic_cross_entropy_2d(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    weight: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Compute mean 2-D cross entropy without CUDA NLLLoss kernels.
+
+    ``torch.nn.functional.cross_entropy`` dispatches to a CUDA NLLLoss2d
+    kernel that PyTorch 2.13 rejects when strict deterministic algorithms are
+    enabled.  This is the same weighted-mean objective, expressed through
+    log-softmax, one-hot targets, elementwise multiplication and reductions.
+    Those primitives remain subject to the global strict deterministic guard;
+    no warn-only or determinism relaxation is used.
+    """
+    if logits.ndim != 4 or targets.ndim != 3:
+        raise FullProtocolError(
+            "deterministic cross entropy expects logits [N,C,H,W] and "
+            "targets [N,H,W]"
+        )
+    if logits.shape[0] != targets.shape[0] or logits.shape[2:] != targets.shape[1:]:
+        raise FullProtocolError("deterministic cross entropy shape mismatch")
+    if targets.dtype != torch.long:
+        raise FullProtocolError("deterministic cross entropy targets must be int64")
+
+    log_probs = F.log_softmax(logits, dim=1)
+    target_mask = F.one_hot(
+        targets, num_classes=logits.shape[1]
+    ).movedim(-1, 1).to(dtype=logits.dtype)
+    if weight is not None:
+        if weight.ndim != 1 or weight.numel() != logits.shape[1]:
+            raise FullProtocolError("deterministic cross entropy weight shape mismatch")
+        class_weight = weight.to(device=logits.device, dtype=logits.dtype).view(
+            1, -1, 1, 1
+        )
+        target_mask = target_mask * class_weight
+    numerator = -(log_probs * target_mask).sum()
+    denominator = target_mask.sum()
+    return numerator / denominator
+
+
 def train_one_unit(
     unit: FullUnit,
     train_records: Sequence[Mapping[str, Any] | RegionSample],
@@ -1457,10 +1497,9 @@ def train_one_unit(
                 optimizer.zero_grad()
                 outputs = model(inputs)
 
-                if weight_tensor is not None:
-                    loss = F.cross_entropy(outputs, labels, weight=weight_tensor, reduction="mean")
-                else:
-                    loss = F.cross_entropy(outputs, labels, reduction="mean")
+                loss = deterministic_cross_entropy_2d(
+                    outputs, labels, weight=weight_tensor,
+                )
 
                 loss.backward()
                 optimizer.step()
@@ -1490,7 +1529,7 @@ def train_one_unit(
                     labels = labels.to(device)
 
                     outputs = model(inputs)
-                    loss = F.cross_entropy(outputs, labels, reduction="mean")
+                    loss = deterministic_cross_entropy_2d(outputs, labels)
                     epoch_val_loss += float(loss.item())
                     val_steps += 1
 
@@ -1664,7 +1703,18 @@ def train_one_unit(
     # Write per-unit OOF NPZ (real B01 mode only)
     oof_csv_path: Path | None = None
     oof_npz_path: Path | None = None
-    if (oof_predictions is not None
+    if status == "DONE" and not config.synthetic_mode:
+        oof_count = len(oof_predictions) if oof_predictions is not None else 0
+        target_count = len(oof_targets) if oof_targets is not None else 0
+        if oof_count != len(val_records) or target_count != len(val_records):
+            status = "FAILED"
+            error_msg = (
+                "real unit completed without exact OOF coverage: "
+                f"predictions={oof_count}, targets={target_count}, "
+                f"expected={len(val_records)}"
+            )
+    if (status == "DONE"
+            and oof_predictions is not None
             and oof_targets is not None
             and not config.no_write_mode):
         # Real B01: write collected per-sample H×W predictions + targets
