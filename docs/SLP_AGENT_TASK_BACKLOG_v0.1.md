@@ -363,9 +363,14 @@ Reviewer checklist:
 
 ### TASK-SLP-B10：UNKNOWN/REJECT
 
-- 状态：`READY_TO_DRAFT / BLOCKED_BY_TASK_CONTRACT`。
-- 目标：区域不确定、alignment failure、OOD 和低置信拒识。
-- 输出：coverage-risk、最差受试者、高置信错误。
+- 状态：`ACCEPT_WITH_LIMITATIONS / HARD-CONSENSUS-ONLY / TEST_DENIED`。
+- B09 OOF 只含三 seed hard masks，不含 logits/probabilities；因此本轮严格命名为
+  seed-consensus，不声称概率 confidence、校准、alignment failure 或真实 OOD。
+- 3/3 一致覆盖 87.3766%，错误率 8.7916%；拒绝 12.6234% 分歧像素捕获
+  44.5922% 的多数票错误，但 55.4078% 的错误仍为三 seed 一致错判。
+- 输出：`stage_reports/S2_B10_SLP8_OOF_CONSENSUS_REJECT_v0.1.md`；ignored
+  `outputs/analysis/slp_b10_consensus_r01/` 下含 summary、91-subject 与 top-50
+  高一致性错误表。
 
 ### TASK-SLP-B11：SLP 研究候选冻结
 
