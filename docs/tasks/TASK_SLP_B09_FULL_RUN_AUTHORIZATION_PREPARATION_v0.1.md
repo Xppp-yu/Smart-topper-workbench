@@ -1,6 +1,6 @@
 # TASK-SLP-B09-FULL-RUN-AUTHORIZATION-PREPARATION-v0.1
 
-状态：`READY_FOR_OWNER_AUTHORIZATION / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`
+状态：`OWNER_AUTHORIZED / READY_FOR_AUTODL_PREFLIGHT / TEST_DENIED`
 
 ## 1. 目的
 
@@ -72,10 +72,9 @@ AutoDL RTX 4090 TRAIN+VAL Full。任何字段变化都必须新建 EXP-ID 并重
 
 ## 6. Owner 决策栏
 
-- 当前决定：`PENDING`。
+- 当前决定：`AUTHORIZE`（Owner 于 2026-09-02 明确回复“授权”）。
 - 可选决定：`AUTHORIZE / ITERATE / STOP`。
-- 授权必须由 Owner 在本任务之外明确给出；Agent 不得从“继续推进”推断 GPU Full
-  已获授权。
+- 授权范围严格限定为 §3–§5 冻结对象；TEST 仍未授权。
 
 ## 7. 运行前 Gate
 
@@ -88,5 +87,6 @@ Owner 决策为明确的 `AUTHORIZE`。
 
 - Verified：协议、runner、bridge、TEST=0 合同与本地复核通过。
 - Unverified：30-unit wall/peak、完整 OOF、候选选择结果；因为 Full 尚未运行。
-- 当前 Gate：`READY_FOR_OWNER_AUTHORIZATION / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`。
-- 下一 Gate：Owner 明确 `AUTHORIZE` 后，由 Runner 以冻结 EXP-ID 执行；否则保持停止。
+- 当前 Gate：`OWNER_AUTHORIZED / READY_FOR_AUTODL_PREFLIGHT / TEST_DENIED`。
+- 下一 Gate：AutoDL clean checkout、CUDA、输入 hash 与 validator 全部通过后，由 Runner
+  以冻结 EXP-ID 执行；任一预检失败则保持停止。

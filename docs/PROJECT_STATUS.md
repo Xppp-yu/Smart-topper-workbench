@@ -3,7 +3,8 @@
 最后更新：2026-09-01（B09 运行准备与 Full Runner CLI bridge 已独立验收并合入
 `main@8b3ebda`；当前 Gate 为 `B09_RUN_PREPARATION_ACCEPTED /
 FULL_RUNNER_CLI_BRIDGE_ACCEPTED / GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`；
-30-unit Full 与任何 TEST 均未运行或授权）
+Owner 已于 2026-09-02 授权冻结的 B09 30-unit TRAIN+VAL Full；当前等待 AutoDL
+Preflight，TEST 仍未授权）
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成；验收前保持 `READY_FOR_REVIEW`。
 
 ## 当前一句话状态
