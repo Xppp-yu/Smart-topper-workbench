@@ -2,13 +2,13 @@
 
 最后更新：2026-09-02（B09 R01 30-unit TRAIN+VAL Full 已完成；原始证据 30/30
 DONE、TEST=0，但 30 个 unit completion identity 均漏写 `git_dirty=false`，只读
-audit 为 27 OK / 30 ERR。writer 修复与 178 项相关回归通过；Owner 已确认
-`ACCEPT_WITH_LIMITATIONS`，B09 完成，下一 Gate 为 B10，TEST 仍未授权）
+audit 为 27 OK / 30 ERR。Owner 已接受该限制；B10 hard-consensus 分析及 B11
+研究候选合同已验收。下一 Gate 为 B11F 最终开发集拟合准备，GPU 与 TEST 均未授权）
 状态口径：只把已运行且存在可追溯产物的步骤标记为 `COMPLETE`；代码、计划或空目录不等于完成；验收前保持 `READY_FOR_REVIEW`。
 
 ## 当前一句话状态
 
-PoPu P5.2-C 已接受 `small_resnet` 为固定睡姿五分类总体研究候选模型族；P6/P6.1 已完成 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟；P7 Full 软件扰动证据已完成并复核（14 conditions × 5 seeds × 15 folds），但不构成硬件、产品、整夜睡眠或控制安全验证。SLP A09R、B01–B04 已验收；B04A R03 已在冻结 SHA `f0fac823`、TEST=0 下完成并由 Owner `ACCEPT_WITH_LIMITATIONS`，晋级 DeepLabV3+-lite 与 ResUNet-lite；原始 budget carrier 缺陷及 Reviewer 重算永久披露，writer 修复已合入 `main@ae24d96`。B07 已接受开发期 91-subject、5-fold、3-seed、2-candidate、30-unit Full 协议；B08 runner 与真实 RTX 4090 one-fold preflight已验收。B09 R01 已在 `8b3ebda`、RTX 4090、TEST=0 下完成 30/30 units；DeepLabV3+-lite 以 mean pooled IoU `0.494134` 胜过 ResUNet-lite 的 `0.456795`。原始 unit completion identity 系统性漏写 `git_dirty=false`，audit 为 27 OK / 30 ERR；run-level identity 正常，writer 修复与相关回归 178 passed。Owner 已确认 `ACCEPT_WITH_LIMITATIONS`；当前 Gate 为 `B09_COMPLETE / TASK-SLP-B10-UNKNOWN-REJECT-READY-TO-DRAFT / TEST_DENIED`。
+PoPu P5.2-C 已接受 `small_resnet` 为固定睡姿五分类总体研究候选模型族；P6/P6.1 已完成 UNKNOWN/REJECT、错误复核、温度校准与三模型一致性模拟；P7 Full 软件扰动证据已完成并复核，但不构成硬件、产品、整夜睡眠或控制安全验证。SLP B09 R01 已在 `8b3ebda`、RTX 4090、TEST=0 下完成 30/30 units；DeepLabV3+-lite 以 mean pooled IoU `0.494134` 胜过 ResUNet-lite 的 `0.456795`，Owner 已接受 unit identity 永久限制。B10 hard-consensus 分析显示拒绝 12.6234% 分歧像素可捕获 44.5922% 错误，但 55.4078% 错误仍为三 seed 一致错判。B11 已冻结 `slp8_pm_research_candidate_v0.1`：DeepLabV3+-lite、三 seed final-fit epochs 15/20/12、hard-majority 与有限 3/3 reject 语义；final fit 尚未运行。当前 Gate 为 `B11F_FINAL_DEVELOPMENT_FIT_PREPARATION / GPU_NOT_AUTHORIZED / TEST_DENIED`。
 
 ## 阶段看板
 
@@ -46,6 +46,7 @@ PoPu P5.2-C 已接受 `small_resnet` 为固定睡姿五分类总体研究候选�
 | S2_B07 | SLP8 PM-only Full 协议冻结 | PROTOCOL_ACCEPTED / COMPUTE_NOT_RUN | [B07 任务](tasks/TASK_SLP_B07_FULL_PROTOCOL_FREEZE_v0.1.md)、[阶段报告](stage_reports/S2_B07_SLP8_PM_ONLY_FULL_PROTOCOL_v0.1.md)、冻结 folds/config；91 subjects × 5-fold，2 candidates × 3 seeds = 30 units，TEST=0；validator/failure-injection/links 18 passed | B08 Runner 实现完成待 Review；GPU preflight 未授权 |
 | S2_B09 | SLP8 PM-only 30-unit Full 公平比较 | COMPLETE / OWNER_ACCEPTED_WITH_LIMITATIONS / TEST_DENIED | [R01 结果、审计与修复报告](stage_reports/S2_B09_SLP8_PM_ONLY_FULL_R01_RESULTS_AND_IDENTITY_FIX_v0.1.md)；`8b3ebda`、RTX 4090、30/30 DONE、TEST=0、budget OK；winner=`slp8_deeplabv3plus_lite_v0.1`，mean pooled IoU `0.494134`；原始 unit identity 漏 `git_dirty`，audit 27 OK / 30 ERR；writer 修复与相关回归 178 passed；Owner 接受永久 provenance 限制，不要求 R02 | B10 起草 UNKNOWN/REJECT 与高置信错误分析合同；不得修改 R01 原始证据；TEST 继续禁止 |
 | S2_B10 | SLP8 OOF seed-consensus 拒识与错误分析 | ACCEPT_WITH_LIMITATIONS / HARD-CONSENSUS-ONLY / TEST_DENIED | [B10 报告](stage_reports/S2_B10_SLP8_OOF_CONSENSUS_REJECT_v0.1.md)；winner 三 seed、4,095 OOF；3/3 coverage 87.3766%，accepted error 8.7916%，分歧拒识捕获 44.5922% 错误；55.4078% 错误仍为三 seed 一致 | 进入 B11 候选冻结。概率校准需未来保存 logits/probabilities 的新证据，不能从 hard masks 补造 |
+| S2_B11 | SLP8 研究候选合同冻结 | CANDIDATE_CONTRACT_ACCEPTED / FINAL_FIT_NOT_RUN / TEST_DENIED | [B11 报告](stage_reports/S2_B11_SLP8_RESEARCH_CANDIDATE_FREEZE_v0.1.md)、[冻结配置](../configs/experiments/slp8_pm_research_candidate_v0.1.json)；DeepLabV3+-lite；全开发集三 seed final-fit epochs 15/20/12；hard majority + 可选 3/3 `UNKNOWN_REGION` | 另立 B11F 最终开发集拟合准备和 GPU 授权；三个 final checkpoint 完成审计前不得进入 B09T；TEST 继续禁止 |
 | S2_B08 | SLP8 PM-only Full Runner 与 one-fold preflight runner | ACCEPT / R03_PREFLIGHT_PASSED / TEST_DENIED | runner=`02fb364902736a64ee8708440f0dd0bdddf860bc`；B08 80 passed、links 6 passed；RTX 4090/Torch 2.13 strict probe 与真实 fold_1/seed42/ResUNet-lite R03 DONE；best epoch 22，wall 155.329s，peak 368.764 MiB，reload consistent，OOF 855 samples/19 subjects，TEST=0；本地 archive SHA 匹配并审计通过；R01/R02 失败永久披露 | B09 Full 运行准备可开始，但 30-unit Full 与 TEST 仍需独立 Owner 授权 |
 | S2 | Canonical Sample 与受试者拆分冻结 | COMPLETE_WITH_A06_SPLIT_FROZEN | [A06 Split Freeze](stage_reports/S1_4_SLP_SUBJECT_SPLIT_FREEZE_v0.1.md)、manifest JSON、SHA-256 `024f5abe`；109 subjects split 81/10/18 (danaLab 81/10/11，simLab 0/0/7 TEST held-out)；quarantine 90 frames 单独统计；6 isolation tests PASS；A06 split 与 SLP8 GT 完全兼容（102 主体，0 overlap） | A18 节点基线使用此 split；B01 使用 A06 split 作为训练基础；fold 设计由 B07 Full 协议另行冻结 |
 | S3 | RGB/IR/Depth/PM 单模态关节基线 | BLOCKED_BY_S2 | 尚未开始 | 每模态保留 1–2 个候选，分开报告原始与映射标签 |

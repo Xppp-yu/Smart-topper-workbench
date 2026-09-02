@@ -374,13 +374,17 @@ Reviewer checklist:
 
 ### TASK-SLP-B11：SLP 研究候选冻结
 
-- 状态：`BLOCKED_BY_B09_B10`。
-- 目标：冻结模型族、接口、限制和自研数据迁移合同。
+- 状态：`CANDIDATE_CONTRACT_ACCEPTED / FINAL_FIT_NOT_RUN / TEST_DENIED`。
+- 已冻结 `slp8_pm_research_candidate_v0.1`：DeepLabV3+-lite、danaLab/uncover
+  pressure-only、192×84 九类 mask。未来 B11F 在全部 91 development subjects 上
+  训练 seeds 42/123/2026，固定 epochs 15/20/12；当前 GPU/final checkpoint 均未运行。
+- primary 为三模型 hard majority；3/3 可选 `UNKNOWN_REGION` 拒识仅为有限研究信号，
+  不是概率 confidence、OOD 或安全机制。
 - 禁止：宣称气囊控制、舒适性或产品效果。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 
-- 状态：`BLOCKED_BY_B11`。
+- 状态：`BLOCKED_BY_B11F_FINAL_FIT_AND_SEPARATE_OWNER_AUTHORIZATION`。
 - 目标：候选、代码、超参数、阈值、选择规则和报告模板全部冻结后，对 B01 TEST subjects 执行一次最终评价。
 - 授权：必须由 Owner 单独授权 `purpose="final_evaluation"`，并由 Runner 显式 `load_test=True` 重新加载。
 - 禁止：根据 TEST 结果回到 B04A/B07 调参或改候选；如发现协议/实现缺陷，原 TEST 结果标记 INVALID，修复和任何重测必须新 TASK/EXP 并单独说明污染风险。

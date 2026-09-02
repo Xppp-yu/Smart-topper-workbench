@@ -1,0 +1,65 @@
+{
+  "candidate_id": "slp8_pm_research_candidate_v0.1",
+  "status": "RESEARCH_CANDIDATE_FROZEN_WITH_LIMITATIONS",
+  "model_family": "slp8_deeplabv3plus_lite_v0.1",
+  "input_contract": {
+    "modality": "PMarray_response",
+    "setting": "danaLab",
+    "cover_condition": "uncover",
+    "pressure_unit": "raw_response_not_kPa",
+    "shape": [192, 84]
+  },
+  "output_contract": {
+    "shape": [192, 84],
+    "classes": 9,
+    "background_class": 0,
+    "foreground_regions": 8,
+    "unknown_value": "UNKNOWN_REGION"
+  },
+  "development_evidence": {
+    "experiment_id": "EXP-SLP-B09-PM-FULL-30-UNIT-20260901-AUTODL-R01",
+    "runner_git_commit": "8b3ebdaa021405790b6137bff581acc490d8a024",
+    "archive_sha256": "68156598a47ae65ba33d26f4005f9d9fdc8ec67ff24d43ffd605c19847ca5918",
+    "subjects": 91,
+    "samples": 4095,
+    "test_access": false,
+    "winner_mean_pooled_iou": 0.4941338059837653,
+    "winner_mean_pooled_dice": 0.6577591175456546,
+    "winner_mean_worst_subject_iou": 0.35091069450999085,
+    "r01_limitation": "unit complete.json identity omits git_dirty; run-level carriers bind clean SHA"
+  },
+  "consensus_evidence": {
+    "summary_sha256": "548bb1a798bc49dcd6a591197b4abf61e2dd2c7733ac51e8070519e9b90a166a",
+    "semantics": "three_seed_hard_prediction_consensus_not_probability",
+    "unanimous_coverage": 0.8737659923299804,
+    "unanimous_error_rate": 0.087915947872032,
+    "rejected_error_capture_rate": 0.4459220696616172,
+    "unanimous_error_fraction_of_raw_errors": 0.5540779303383828
+  },
+  "final_development_fit": {
+    "status": "NOT_RUN_SEPARATE_GPU_GATE",
+    "training_subjects": 91,
+    "training_samples": 4095,
+    "seeds": [42, 123, 2026],
+    "fixed_epochs_by_seed": {"42": 15, "123": 20, "2026": 12},
+    "epoch_rule": "median_B09_best_epoch_across_5_folds_per_seed",
+    "models_required": 3
+  },
+  "inference_contract": {
+    "primary_prediction": "per_pixel_majority_vote_across_three_seed_models",
+    "optional_reject_rule": "UNKNOWN_REGION_unless_all_three_hard_predictions_agree",
+    "reject_rule_status": "RESEARCH_OPTION_WITH_LIMITATIONS",
+    "probability_calibration": "NOT_AVAILABLE",
+    "ood_detection": "NOT_AVAILABLE"
+  },
+  "prohibited_conclusions": [
+    "human_pixel_level_ground_truth",
+    "covered_condition_generalization",
+    "product_or_hardware_validation",
+    "comfort_or_medical_effect",
+    "overnight_stability",
+    "airbag_control_safety"
+  ],
+  "next_gate": "B11F_FINAL_DEVELOPMENT_FIT_PREPARATION",
+  "test_gate": "B09T_SEPARATE_ONE_TIME_OWNER_AUTHORIZATION_REQUIRED"
+}
