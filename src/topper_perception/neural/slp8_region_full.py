@@ -3127,6 +3127,7 @@ def run_full(
         # -------------------------------------------------------------------
         unit_expected_identity: dict[str, Any] = {
             **experiment_identity,
+            "git_dirty": config.git_dirty,
             "candidate": unit.candidate,
             "fold_id": unit.fold_id,
             "seed": int(unit.seed),

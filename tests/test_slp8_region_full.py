@@ -2022,6 +2022,10 @@ def test_round4_two_runner_run_skips_completed() -> None:
         units_dir = out1 / "units"
         complete_files = sorted(units_dir.glob("*/complete.json"))
         assert len(complete_files) == 30
+        for complete_file in complete_files:
+            carrier = json.loads(complete_file.read_text(encoding="utf-8"))
+            assert carrier["identity"]["git_commit"] == head_sha
+            assert carrier["identity"]["git_dirty"] is True
 
         # Snapshot the SHA of every complete.json and budget_state.json
         before_hashes = {

@@ -832,6 +832,9 @@ def test_resume_does_not_re_train_complete_units(
     first_unit_id = f"{B07_CANDIDATES[0]}__fold_1__seed_0042"
     first_complete = output_dir / "units" / first_unit_id / "complete.json"
     assert first_complete.is_file(), f"missing: {first_complete}"
+    first_carrier = json.loads(first_complete.read_text(encoding="utf-8"))
+    assert first_carrier["identity"]["git_commit"] == "0" * 40
+    assert first_carrier["identity"]["git_dirty"] is False
     first_bytes = first_complete.read_bytes()
 
     # Spy on train_one_unit to count second-run invocations.

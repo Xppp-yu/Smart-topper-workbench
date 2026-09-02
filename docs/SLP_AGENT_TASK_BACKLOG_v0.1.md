@@ -344,21 +344,26 @@ Reviewer checklist:
 
 ### TASK-SLP-B09：Full 公平比较
 
-- 状态：`B09_RUN_PREPARATION_ACCEPTED / FULL_RUNNER_CLI_BRIDGE_ACCEPTED /
-  GPU_FULL_NOT_AUTHORIZED / TEST_DENIED`（2026-09-01；`main@8b3ebda`）。
-  B09 准备合同、validator、AutoDL 命令合同与资源估算已验收；CLI bridge 已提供
-  唯一受治理的 `--run-full` real-B01 入口。独立复核为 172 passed、Markdown links
-  6 passed、validator 80 OK / 0 ERR、`py_compile` PASS，TEST=0。
+- 状态：`COMPLETE / OWNER_ACCEPTED_WITH_LIMITATIONS / TEST_DENIED`
+  （2026-09-02）。
+- R01：`8b3ebda`、RTX 4090、30/30 DONE、TEST=0、budget OK；开发期 winner 为
+  `slp8_deeplabv3plus_lite_v0.1`（mean pooled IoU `0.494134`），ResUNet-lite 为
+  `0.456795`。
+- 原始证据限制：30 个 `units/*/complete.json.identity` 均漏写
+  `git_dirty=false`；冻结 SHA 上 audit-only 为 27 OK / 30 ERR。run-level identity
+  正常，缺陷不进入训练/OOF/指标计算；原始证据不得修补。
+- writer 已补入冻结 `config.git_dirty`，30-unit carrier 与 resume 回归覆盖；B08/B09
+  相关测试 178 passed。详见
+  `stage_reports/S2_B09_SLP8_PM_ONLY_FULL_R01_RESULTS_AND_IDENTITY_FIX_v0.1.md`。
 - 目标：真实 subject-isolated Full。
 - 输出：开发期 subject-isolated OOF/VAL predictions、逐区域/受试者、模型和日志；默认 TEST=0。
 - 停止：OOM、NaN、split leak、manifest mismatch、reload mismatch。
-- B09 准备与 bridge 已验收；下一 Gate 是 Owner 对
-  `TASK-SLP-B09-FULL-RUN-AUTHORIZATION-PREPARATION-v0.1` 中冻结的 EXP-ID、
-  Git SHA、hash、30-unit 范围与预算作独立授权。授权前不得进入 Runner。
+- Owner 已接受 R01 的永久 provenance 限制，不要求 R02；下一 Gate 为 B10。
+  TEST 继续禁止。
 
 ### TASK-SLP-B10：UNKNOWN/REJECT
 
-- 状态：`BLOCKED_BY_B09`。
+- 状态：`READY_TO_DRAFT / BLOCKED_BY_TASK_CONTRACT`。
 - 目标：区域不确定、alignment failure、OOD 和低置信拒识。
 - 输出：coverage-risk、最差受试者、高置信错误。
 
