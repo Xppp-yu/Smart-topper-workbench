@@ -382,6 +382,27 @@ Reviewer checklist:
   不是概率 confidence、OOD 或安全机制。
 - 禁止：宣称气囊控制、舒适性或产品效果。
 
+### TASK-SLP-B11F：最终开发集拟合
+
+- 状态：`ACCEPT / IMPLEMENTATION_PREPARATION_COMPLETE / GPU_NOT_AUTHORIZED / TEST_DENIED`。
+- 已实现冻结 DeepLabV3+-lite 在全部 91 development subjects / 4,095 TRAIN+VAL
+  samples 上的三 seed final-fit 入口，固定 epochs 15/20/12，不使用 early stopping，
+  不产生伪 validation 分数。
+- 真实入口要求 clean SHA、Owner `--run-authorized`、新 B11F EXP-ID、全新输出目录
+  和 CUDA；B01 始终 `load_test=False` 且 `_test_rows is None`。
+- 每 checkpoint 携带完整 identity 与 TEST=0 carrier，并经固定 audit batch 独立重载
+  一致性检查。首轮独立审查的 AdamW、B01 binding、determinism、identity/resume、资源
+  载体问题已修。第二轮审查的 resume 状态、显式授权、RNG、CUDA 初始化、环境持久化
+  问题已完成 R02；R03 补 environment SHA 跨 STOPPED/resume/DONE 绑定、篡改拒绝与参数一致性
+  回归；R04 再补 RUNNING 恢复环境 preflight、既有 `final.pt` 拒绝覆盖、单根状态原子迁移、
+  真实 DataLoader shuffle RNG 与 CUDA 顺序回归。R05 持久化并恢复最后 epoch loss、累计
+  wall time 与历史 peak，逐 batch 和 reload 后核验显存上限，并在 completion/DONE 前执行
+  有限值与严格 JSON 门禁。R05 独立只读复审结论为 `ACCEPT`，无 P0/P1/P2；定向
+  31 passed、联合 114 passed，有限 final-epoch resume 与 NaN fail-closed 探针通过；
+  TEST=0，GPU NOT RUN。
+- 下一 Gate：形成 clean release SHA；另立运行准备记录，冻结新 EXP-ID、预算和执行环境，
+  再请求 Owner 单独授权。三个 final checkpoint 审计完成前 B09T 继续阻塞。
+
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 
 - 状态：`BLOCKED_BY_B11F_FINAL_FIT_AND_SEPARATE_OWNER_AUTHORIZATION`。

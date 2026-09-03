@@ -1,0 +1,36 @@
+{
+  "protocol": "B11F_FINAL_DEVELOPMENT_FIT",
+  "version": "v0.1",
+  "status": "PREPARATION_ONLY_GPU_NOT_AUTHORIZED",
+  "execution_authorized": false,
+  "candidate_contract": "configs/experiments/slp8_pm_research_candidate_v0.1.json",
+  "model_family": "slp8_deeplabv3plus_lite_v0.1",
+  "development_pool": {
+    "splits": ["train", "val"],
+    "subjects": 91,
+    "samples": 4095,
+    "test_access": false,
+    "test_rows": 0
+  },
+  "training": {
+    "seeds": [42, 123, 2026],
+    "fixed_epochs_by_seed": {"42": 15, "123": 20, "2026": 12},
+    "batch_size": 16,
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "shuffle": true,
+    "early_stopping": false
+  },
+  "outputs": {
+    "models_required": 3,
+    "checkpoint_name": "final.pt",
+    "training_metrics_are_not_validation": true
+  },
+  "resources": {
+    "max_peak_cuda_mb": 8192,
+    "min_free_disk_bytes": 1073741824
+  },
+  "next_gate": "B11F_FINAL_DEVELOPMENT_FIT_RUN_PREPARATION",
+  "test_gate": "B09T_SEPARATE_ONE_TIME_OWNER_AUTHORIZATION_REQUIRED"
+}
