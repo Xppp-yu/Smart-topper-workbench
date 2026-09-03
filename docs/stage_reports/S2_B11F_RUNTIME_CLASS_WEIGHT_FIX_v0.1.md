@@ -19,9 +19,21 @@ mock 为 Torch tensor，因此未覆盖真实接口。
 ## 边界
 
 - 失败 EXP-ID：`EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01`，必须永久保留且禁止恢复。
-- 训练 batch：`0`（根据 traceback 位置；待根 terminal 载体复核）。
+- 训练 batch：`0`（traceback 位于 weight tensor conversion，早于 DataLoader/training loop）。
 - GPU final fit：`FAILED_BEFORE_TRAINING_LOOP`。
 - TEST：`0`。
+
+## AutoDL 失败终态审计
+
+- 根状态唯一：`FAILED.json=EXISTS`；`RUNNING/STOPPED/DONE=ABSENT`。
+- `test_access=false`；`test_rows/test_labels/test_onehot=0`。
+- `environment_hash_match=true`；持久化与 observed environment SHA-256 均为
+  `feb853112e6acffd736f351b2ac8d13daeb8ec99698765b6dccf0ab1c2635021`。
+- `budget.state=FAILED`；固定 2,700 秒预算在约 `2.035854` 秒时封存，remaining 约
+  `2697.964146` 秒；budget core SHA-256 为
+  `66ef679b0b246e68aeb8593fe297b382f2e8872cf1a1a6212fee33cbff2a7b25`。
+- terminal error 与 traceback 一致：
+  `AttributeError: 'numpy.ndarray' object has no attribute 'to'`。
 
 ## 修复
 
@@ -36,7 +48,6 @@ mock 为 Torch tensor，因此未覆盖真实接口。
 
 ## 尚未验证
 
-- AutoDL `FAILED.json`、environment/budget hash 与唯一根 terminal。
 - clean runner release、新 bundle 与 R02 preflight。
 - 真实 GPU final fit、checkpoint 与 TEST 性能。
 

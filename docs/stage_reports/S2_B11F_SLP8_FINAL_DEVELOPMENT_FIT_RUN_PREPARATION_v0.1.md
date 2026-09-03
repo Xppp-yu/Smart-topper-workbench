@@ -15,6 +15,8 @@ TASK-ID：`TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1`
 - AutoDL no-training preflight 已在 RTX 4090 上完成并审查 `ACCEPT`；未训练、TEST=0。
 - Owner 于 `2026-09-03T18:40:09+08:00` 授权冻结三 seed final fit；R01 在首个 training
   batch 前因 class-weight NumPy→Torch 接口错误失败，该授权已消耗，不得用于恢复或新 run。
+- R01 根状态审计为唯一 `FAILED.json`；RUNNING/STOPPED/DONE 均不存在，environment hash
+  match，budget 在约 2.04 秒时封存为 FAILED，TEST carriers 全为 0。
 
 ## 实际本地核验
 
