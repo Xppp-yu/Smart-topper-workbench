@@ -418,8 +418,16 @@ Reviewer checklist:
   passed。R01 原始 `FAILED/environment/budget` JSON、root inventory、文件 SHA 清单与 operator
   traceback 已同步至 `docs/evidence/b11f_r01_failure`。独立复审确认唯一 FAILED、首 batch
   前 traceback、environment/budget/hash/identity/预算数学关系、TEST=0 与 runtime diff
-  全部通过；证据清单 9/9 SHA 匹配，结论 `ACCEPT`。下一 Gate 为
-  `B11F_PRODUCTION_WIRING_SMOKE_PREPARATION / GPU_NOT_AUTHORIZED / TEST_DENIED`；三个 final
+  全部通过；证据清单 9/9 SHA 匹配，结论 `ACCEPT`。
+- 本地 CPU production-wiring smoke R07 已用真实 B01 development metadata、确定性 128 样本
+  statistics 子集和单样本 microbatch 走通 NumPy→Torch class weight、forward、加权 loss、
+  backward 与恰好一次 AdamW step；冻结正式 batch size 仍为 16。无正式 EXP-ID/checkpoint，
+  TEST=0、GPU NOT RUN、AutoDL 未连接。R06 复审发现 summary publish TOCTOU 覆盖竞争；R07
+  改用 atomic hard-link no-clobber 并通过竞争/同路径重跑反例，脱敏 summary 纳入 Git 证据。
+  技术复审 `ACCEPT`（P0/P1/P2=0，人员独立性限制保留）。Owner 已于 2026-09-04 明确授权
+  R07 closure commit/push；不含 AutoDL 连接或执行。当前 Gate 为
+  `B11F_AUTODL_NO_TRAINING_PREFLIGHT_PREPARATION / AUTODL_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
+  推送新 SHA 后只能另行准备 no-training preflight 授权材料；三个 final
   checkpoint 审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价

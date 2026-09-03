@@ -1,0 +1,92 @@
+{
+  "autodl_connected": false,
+  "candidate_config_sha256": "839c9482c69cf34d3c91c3acb3c7a36cb4d199117d0d6eb2ceb7906bac52b994",
+  "changed_parameter_tensor_count": 28,
+  "checkpoint_created": false,
+  "class_weight_numpy_dtype": "float64",
+  "class_weight_numpy_type": "ndarray",
+  "class_weight_order": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "class_weight_shape": [
+    9
+  ],
+  "class_weight_tensor_device": "cpu",
+  "class_weight_tensor_dtype": "torch.float32",
+  "config_sha256": "a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43",
+  "cuda_visible_devices": "-1",
+  "data_manifest_sha256": "42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04",
+  "determinism": {
+    "cpu_threads": 1,
+    "cublas_workspace_config": ":4096:8",
+    "cublaslt_workspace_config": ":4096:8",
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true,
+    "deterministic_algorithms_warn_only": true,
+    "mkl_num_threads": 1,
+    "numpy_bit_generator": "PCG64",
+    "omp_num_threads": 1,
+    "python_hash_seed": 42,
+    "run_mode": "cpu_synthetic_reproducible",
+    "seed": 42,
+    "use_deterministic_algorithms": true
+  },
+  "development_samples": 4095,
+  "development_splits": [
+    "train",
+    "val"
+  ],
+  "development_subjects": 91,
+  "device": "cpu",
+  "formal_experiment_id": null,
+  "gpu_training_run": false,
+  "gradient_tensor_count": 28,
+  "label_dtype": "torch.int64",
+  "label_shape": [
+    1,
+    192,
+    84
+  ],
+  "learning_rate": 0.001,
+  "logits_shape": [
+    1,
+    9,
+    192,
+    84
+  ],
+  "loss_diagnostic_not_validation_metric": 25.50458335876465,
+  "model": "slp8_deeplabv3plus_lite_v0.1",
+  "optimizer": "AdamW",
+  "optimizer_steps": 1,
+  "parameters_changed": true,
+  "pressure_dtype": "torch.float32",
+  "pressure_shape": [
+    1,
+    1,
+    192,
+    84
+  ],
+  "production_batch_size": 16,
+  "result": "PASS",
+  "resume_used": false,
+  "scope": "LOCAL_CPU_REAL_DATA_ONE_BATCH_ONLY",
+  "seed": 42,
+  "smoke_id": "SMOKE-SLP-B11F-PRODUCTION-WIRING-20260904-R07",
+  "smoke_microbatch_size": 1,
+  "statistics_samples": 128,
+  "statistics_scope": "DETERMINISTIC_REAL_DEVELOPMENT_SUBSET_NOT_PRODUCTION_ESTIMATE",
+  "task_id": "TASK-SLP-B11F-PRODUCTION-WIRING-SMOKE-v0.1",
+  "test_access": false,
+  "test_labels": 0,
+  "test_onehot": 0,
+  "test_rows": 0,
+  "weight_decay": 0.0001
+}
