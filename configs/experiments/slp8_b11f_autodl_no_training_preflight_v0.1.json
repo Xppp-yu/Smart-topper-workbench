@@ -1,0 +1,61 @@
+{
+  "task_id": "TASK-SLP-B11F-AUTODL-NO-TRAINING-PREFLIGHT-PREPARATION-v0.1",
+  "status": "PREPARATION_ONLY_AUTODL_NOT_AUTHORIZED",
+  "execution_authorized": false,
+  "autodl_connection_authorized": false,
+  "runner": {
+    "git_sha": "a6a5d8e6f8db003149169ee48f71d6e41e445a80",
+    "git_dirty_required": false,
+    "must_be_origin_main_ancestor": true
+  },
+  "bundle": {
+    "local_path": "outputs/analysis/smarttopper-b11f-main-a6a5d8e.bundle",
+    "remote_path": "/root/autodl-tmp/smarttopper-b11f-main-a6a5d8e.bundle",
+    "sha256": "5e9d855397face954cac18e3dbadb26449129f828f77d45412b3c4f30d8e6bb2",
+    "size_bytes": 2150560,
+    "ref": "refs/heads/main",
+    "complete_history": true
+  },
+  "inputs": {
+    "config": {
+      "path": "configs/experiments/slp8_pm_final_development_fit_v0.1.json",
+      "sha256": "a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43"
+    },
+    "candidate": {
+      "path": "configs/experiments/slp8_pm_research_candidate_v0.1.json",
+      "sha256": "839c9482c69cf34d3c91c3acb3c7a36cb4d199117d0d6eb2ceb7906bac52b994"
+    },
+    "b01_freeze_manifest": {
+      "local_path": "data/processed/slp8_training_tables_v0.1/freeze_manifest.json",
+      "remote_path": "/root/autodl-tmp/data/processed/slp8_training_tables_v0.1/freeze_manifest.json",
+      "sha256": "42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04"
+    },
+    "remote_dataset_root": "/root/autodl-tmp/datasets/SLP_8Region_Pressure_VAL_v1.1"
+  },
+  "preflight": {
+    "script": "scripts/preflight_slp8_b11f_autodl_no_training.sh",
+    "script_sha256": "e9cdf8240cf5e2fe10020adb5325657b9ef53b1907f079b05edb10cc87cd85bb",
+    "checkout_path": "/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e",
+    "checkout_may_be_created": true,
+    "formal_experiment_id": null,
+    "formal_output_may_be_created": false,
+    "training_may_run": false,
+    "training_data_may_be_loaded": false,
+    "checkpoint_may_be_created": false,
+    "resume_may_run": false,
+    "environment_probe_only": true,
+    "expected_gpu_name": "NVIDIA GeForce RTX 4090",
+    "required_markers": [
+      "B11F_FINAL_FIT_PREPARATION_VALIDATION_PASSED TEST=0 GPU_NOT_AUTHORIZED",
+      "B11F_ENVIRONMENT_PREFLIGHT_PASSED TEST=0 GPU_TRAINING_NOT_RUN",
+      "B11F_AUTODL_NO_TRAINING_PREFLIGHT_PASSED TEST=0 TRAINING_NOT_STARTED"
+    ]
+  },
+  "test_gate": {
+    "test_access": false,
+    "test_rows": 0,
+    "test_labels": 0,
+    "test_onehot": 0
+  },
+  "next_gate": "OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT"
+}
