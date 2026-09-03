@@ -1,6 +1,6 @@
 # S2 B11F SLP8 最终开发集拟合运行准备 v0.1
 
-状态：`P1_FIXES_COMPLETE / READY_FOR_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`
+状态：`PREFLIGHT_ACCEPTED / GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`
 
 TASK-ID：`TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1`
 
@@ -12,8 +12,8 @@ TASK-ID：`TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1`
 - 绑定 config、candidate contract、B01 freeze manifest 与 A06 split hash。
 - 冻结 RTX 4090、8,192 MiB peak、至少 1 GiB 可用空间和 runner 内部 2,700 秒
   EXP-level UTC deadline；恢复不会重置。
-- 提供 AutoDL no-training preflight、正式启动与受限恢复命令；所有命令均未执行。
-- Owner authorization 保持 `PENDING`；TEST 保持 denied / 0。
+- AutoDL no-training preflight 已在 RTX 4090 上完成并审查 `ACCEPT`；未训练、TEST=0。
+- Owner 已于 `2026-09-03T18:40:09+08:00` 授权冻结三 seed final fit；TEST 保持 denied / 0。
 
 ## 实际本地核验
 
@@ -63,6 +63,28 @@ GPU final fit: NOT RUN
 TEST: 0
 ```
 
+## AutoDL no-training preflight
+
+```text
+code transfer: complete-history local Git bundle
+bundle main: 2ac18c8102600bc3504c1f5a9a15ada964990b7e
+bundle SHA-256: 654bba6e6aa10063e3caa5ac6d6b9ae7810249330cc3b54439d29bb0f39b0b50
+runner checkout: 9af268fa168207a269abbef22e522ac04fd6b6c5
+GPU: NVIDIA GeForce RTX 4090
+torch/cuda/cuDNN: 2.13.0+cu130 / 13.0 / 92000
+environment fingerprint: a5a9342b18d00b614355e63ce056a7edd92dd80358d8aead5ef6e8e0ba045669
+run_mode: cuda_determinism_unverified
+validator: PASS
+validate-only: PASS
+environment-preflight: PASS
+gpu_training_run: false
+test_access: false
+test_rows: 0
+formal EXP output before/after: ABSENT
+final exit: 0
+review: ACCEPT; no P0/P1/P2
+```
+
 ## Verified
 
 - R05 implementation review 已 `ACCEPT`；P1 fix release 已推送。
@@ -73,8 +95,10 @@ TEST: 0
 - 本地 B01 freeze manifest 与 dataset root 存在；仅计算 freeze 文件 hash，未加载 TEST
   rows、labels、onehot、统计或预测。
 - proposed EXP-ID 的本地正式输出目录不存在。
-- 运行准备文本保持配置的 `execution_authorized=false`；`--run-authorized` 只允许在后续
-  Owner 对精确对象授权后由 Experiment Runner 使用。
+- AutoDL preflight 绑定的 config/candidate/B01 hash 全部一致；正式 EXP 输出前后均不存在。
+- preflight 与正式入口使用同一 `_environment_record()` canonical fingerprint 算法。
+- 配置继续保持 `execution_authorized=false`；Owner 授权仅允许冻结正式命令以显式
+  `--run-authorized` 启动该精确 EXP-ID，不形成通用或 TEST 授权。
 
 ## Inferred
 
@@ -83,14 +107,15 @@ TEST: 0
 
 ## Unverified
 
-- AutoDL checkout、origin/main、Linux runtime hash、CUDA/cuDNN/GPU identity preflight。
 - 三 seed 真实训练的 wall time、peak CUDA、STOPPED/resume 和 DONE 路径。
 - 三个 `final.pt` 的实际 SHA、独立重载与集成推理。
 - B09T TEST 性能。
 
 ## Limitations
 
-- 本文是待审查运行准备记录，不是 Owner GPU 授权或 QUEUED 状态。
+- AutoDL 无法在线 fetch GitHub；代码通过完整历史 Git bundle 传输并以 SHA-256 绑定，
+  `origin/main` 在 AutoDL 指向该 bundle。此偏差已在 preflight review 中披露并接受。
+- `run_mode=cuda_determinism_unverified` 如实表示尚未由真实训练验证端到端 CUDA 重现性。
 - Windows CRLF candidate hash 只作诊断，不能替代 Linux Git/LF runtime hash。
 - 45 分钟已由 config 与 runner 内部固定为 2,700 秒 EXP wall budget；UTC 前跳会保守
   缩短预算，外部 timeout 仍提供硬停止补充。
@@ -100,4 +125,4 @@ TEST: 0
 
 ## Next Gate
 
-`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`
+`B11F_GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`

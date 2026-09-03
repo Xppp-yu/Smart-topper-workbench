@@ -384,7 +384,7 @@ Reviewer checklist:
 
 ### TASK-SLP-B11F：最终开发集拟合
 
-- 状态：`ACCEPT / IMPLEMENTATION_PREPARATION_COMPLETE / GPU_NOT_AUTHORIZED / TEST_DENIED`。
+- 状态：`PREFLIGHT_ACCEPTED / GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`。
 - 已实现冻结 DeepLabV3+-lite 在全部 91 development subjects / 4,095 TRAIN+VAL
   samples 上的三 seed final-fit 入口，固定 epochs 15/20/12，不使用 early stopping，
   不产生伪 validation 分数。
@@ -406,10 +406,15 @@ Reviewer checklist:
   canonical environment fingerprint 并在首次 output 前 fail-closed 核验；新增原子
   `budget.json`，固定首次 UTC start/deadline/core SHA，停机时间计入且恢复不重置 2,700 秒。
   缺失/漂移授权、budget 篡改、deadline 刷新、过期与时钟回退反例覆盖；定向 40 passed、
-  联合 123 passed。proposed EXP-ID 仍未 QUEUED，Owner authorization=PENDING。
-- 下一 Gate：`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`；
-  R02 ACCEPT 后才可单独授权 AutoDL no-training preflight。三个 final checkpoint 审计完成前
-  B09T 继续阻塞。
+  联合 123 passed。该时点 proposed EXP-ID 尚未 QUEUED，Owner authorization 尚为 PENDING；
+  后续 preflight 与精确授权记录见下项。
+- 运行准备 R02 与 AutoDL no-training preflight 均已 `ACCEPT`。AutoDL 通过完整历史
+  Git bundle（SHA-256 `654bba6e...b0f39b0b50`）取得 runner；RTX 4090、三项输入 hash、
+  正式输出缺失、validator/validate-only、TEST=0 均通过；授权 environment fingerprint 为
+  `a5a9342b...ba045669`。
+- Owner 已于 `2026-09-03T18:40:09+08:00` 授权精确三 seed final fit；下一 Gate：
+  `B11F_GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`。三个 final checkpoint
+  审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 

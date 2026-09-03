@@ -1,6 +1,6 @@
 # TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1
 
-状态：`P1_FIXES_COMPLETE / READY_FOR_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`
+状态：`PREFLIGHT_ACCEPTED / GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`
 
 日期：2026-09-03
 Proposed EXP-ID：`EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01`
@@ -53,7 +53,7 @@ Owner 的“继续推进下去”指令授权创建、验证、提交并推送�
 | Optimizer | AdamW；batch 16；lr 0.001；weight decay 0.0001；shuffle true |
 | Selection | 无 early stopping；无 validation selection；training loss 仅为运行诊断 |
 | Outputs | 三个 `final.pt` 全部独立重载并审计后才允许根 `DONE.json` |
-| Authorized environment | AutoDL preflight 生成 canonical SHA-256；Owner 授权前为 `PENDING` |
+| Authorized environment | `a5a9342b18d00b614355e63ce056a7edd92dd80358d8aead5ef6e8e0ba045669` |
 | EXP wall budget | config/runner 固定 2,700 秒；首次 UTC start/deadline 跨恢复不可变 |
 | TEST | denied；`load_test=False`；`_test_rows is None`；所有 carrier 为 0 |
 
@@ -129,25 +129,27 @@ checkpoint、RUNNING/DONE/FAILED 或正式实验目录写入。完整 transcript
 ## 6. Owner 授权记录
 
 ```text
-Run-preparation independent review: PENDING
-AutoDL no-training preflight review: PENDING
-Owner authorization: PENDING
-Authorization timestamp: PENDING
+Run-preparation independent review: ACCEPT R02; no P0/P1/P2
+AutoDL no-training preflight review: ACCEPT; no P0/P1/P2
+Owner authorization: AUTHORIZED — frozen three-seed B11F final fit only
+Authorization timestamp: 2026-09-03T18:40:09+08:00 (Owner chat authorization)
 Final EXP-ID: EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
 Runner Git SHA: 9af268fa168207a269abbef22e522ac04fd6b6c5
 Git dirty: false required
+Code transfer: complete-history Git bundle; main=2ac18c8102600bc3504c1f5a9a15ada964990b7e
+Git bundle SHA-256: 654bba6e6aa10063e3caa5ac6d6b9ae7810249330cc3b54439d29bb0f39b0b50
 Config SHA-256: a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43
 Candidate SHA-256: 34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b
 B01 freeze manifest SHA-256: 42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
-AutoDL instance / GPU / PyTorch / CUDA / cuDNN: PENDING
-Authorized environment fingerprint SHA-256: PENDING
+AutoDL instance / GPU / PyTorch / CUDA / cuDNN: d48b4dbd13-83e817a0 / RTX 4090 / 2.13.0+cu130 / 13.0 / 92000
+Authorized environment fingerprint SHA-256: a5a9342b18d00b614355e63ce056a7edd92dd80358d8aead5ef6e8e0ba045669
 Peak CUDA budget: 8192 MiB
 Total wall budget: 45 minutes
 TEST access: denied / 0
-Exact launch transcript: PENDING
+Exact launch transcript: AUTHORIZED / NOT RUN
 ```
 
-## 7. 冻结正式命令（禁止在本任务执行）
+## 7. 冻结正式命令（已授权，仅允许一次初始启动）
 
 只有 §6 全部完成且 Owner 明确授权精确 EXP-ID/SHA/环境/预算/命令后，才可执行：
 
@@ -160,14 +162,21 @@ B11F_CONFIG="$B11F_REPO/configs/experiments/slp8_pm_final_development_fit_v0.1.j
 B11F_CANDIDATE="$B11F_REPO/configs/experiments/slp8_pm_research_candidate_v0.1.json"
 B11F_EXP_ID=EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
 B11F_OUTPUT="$B11F_REPO/outputs/experiments/$B11F_EXP_ID"
+B11F_BUNDLE=/root/autodl-tmp/smarttopper-b11f-main-2ac18c8.bundle
+B11F_BUNDLE_MAIN=2ac18c8102600bc3504c1f5a9a15ada964990b7e
+B11F_BUNDLE_SHA=654bba6e6aa10063e3caa5ac6d6b9ae7810249330cc3b54439d29bb0f39b0b50
 B11F_CONFIG_SHA=a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43
 B11F_CANDIDATE_SHA=34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b
 B11F_FREEZE_SHA=42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
-B11F_AUTHORIZED_ENV_SHA=REPLACE_WITH_OWNER_AUTHORIZED_64_CHAR_SHA256
+B11F_AUTHORIZED_ENV_SHA=a5a9342b18d00b614355e63ce056a7edd92dd80358d8aead5ef6e8e0ba045669
 
 cd "$B11F_REPO"
 test -z "$(git status --porcelain)"
 test "$(git rev-parse HEAD)" = "9af268fa168207a269abbef22e522ac04fd6b6c5"
+test "$(git remote get-url origin)" = "$B11F_BUNDLE"
+test "$(git rev-parse origin/main)" = "$B11F_BUNDLE_MAIN"
+git merge-base --is-ancestor HEAD origin/main
+test "$(sha256sum "$B11F_BUNDLE" | cut -d' ' -f1)" = "$B11F_BUNDLE_SHA"
 test "$(sha256sum "$B11F_CONFIG" | cut -d' ' -f1)" = "$B11F_CONFIG_SHA"
 test "$(sha256sum "$B11F_CANDIDATE" | cut -d' ' -f1)" = "$B11F_CANDIDATE_SHA"
 test "$(sha256sum "$B11F_FREEZE_DIR/freeze_manifest.json" | cut -d' ' -f1)" = "$B11F_FREEZE_SHA"
@@ -262,4 +271,4 @@ timeout --signal=INT --kill-after=2m "${B11F_REMAINING_SECONDS}s" \
 
 本准备记录不产生模型性能证据，也不验证真实 wall/peak、跨进程恢复或三个 checkpoint。
 
-下一 Gate：`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`。
+下一 Gate：`B11F_GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`。
