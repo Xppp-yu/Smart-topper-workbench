@@ -16,6 +16,58 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs/experiments/slp8_pm_final_development_fit_v0.1.json"
 
 
+def _authorized_environment_sha256() -> str:
+    ff.apply_settings(42)
+    return ff._canonical_json_sha256(ff._environment_record())
+
+
+def _run_final_fit(**kwargs):
+    kwargs.setdefault("authorized_environment_sha256", _authorized_environment_sha256())
+    return ff.run_final_fit(**kwargs)
+
+
+def _write_resumable_root(
+    protocol,
+    freeze: Path,
+    out: Path,
+    *,
+    state: str,
+    environment_payload=None,
+    experiment_id: str = "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+):
+    authorized_environment_sha256 = _authorized_environment_sha256()
+    identity = ff._identity(
+        protocol,
+        experiment_id,
+        "a" * 40,
+        False,
+        ff.sha256_file(freeze / "freeze_manifest.json"),
+        ff.sha256_file(protocol.candidate_contract),
+        0,
+        0,
+        authorized_environment_sha256=authorized_environment_sha256,
+    )
+    identity.pop("seed")
+    identity.pop("fixed_epochs")
+    environment = ff._environment_record() if environment_payload is None else environment_payload
+    ff.atomic_write_json(out / "environment.json", environment)
+    environment_sha256 = ff.sha256_file(out / "environment.json")
+    budget, budget_core_sha256 = ff._new_budget(identity, protocol.max_total_wall_seconds)
+    budget["state"] = state
+    ff.atomic_write_json(out / "budget.json", budget)
+    carrier = {
+        "terminal_state": state,
+        "identity": identity,
+        "environment_path": "environment.json",
+        "environment_sha256": environment_sha256,
+        "budget_path": "budget.json",
+        "budget_core_sha256": budget_core_sha256,
+        "budget": ff._budget_summary(budget),
+    }
+    ff.atomic_write_json(out / f"{state}.json", carrier)
+    return identity, authorized_environment_sha256, environment_sha256, budget_core_sha256
+
+
 def test_frozen_protocol_and_plan():
     p = ff.load_protocol(CONFIG, ROOT)
     assert ff.build_plan(p) == ((42, 15), (123, 20), (2026, 12))
@@ -31,6 +83,7 @@ def test_frozen_protocol_and_plan():
     (lambda d: d["training"].__setitem__("batch_size", 1), "batch size"),
     (lambda d: d["training"].__setitem__("learning_rate", 9), "learning rate"),
     (lambda d: d["training"].__setitem__("weight_decay", 7), "weight decay"),
+    (lambda d: d["resources"].__setitem__("max_total_wall_seconds", 2701), "resource"),
 ])
 def test_protocol_drift_fails_closed(tmp_path: Path, mutation, match: str):
     d = json.loads(CONFIG.read_text(encoding="utf-8")); mutation(d)
@@ -77,21 +130,21 @@ def test_checkpoint_identity_exact(tmp_path: Path):
 def test_real_run_rejects_bad_exp_before_output(tmp_path: Path):
     protocol = ff.load_protocol(CONFIG, ROOT); out = tmp_path / "out"
     with pytest.raises(ff.FinalFitError, match="EXP-ID"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=tmp_path, data_root=tmp_path, output_dir=out, experiment_id="BAD", git_commit="a" * 40, git_dirty=False)
+        _run_final_fit(protocol=protocol, freeze_dir=tmp_path, data_root=tmp_path, output_dir=out, experiment_id="BAD", git_commit="a" * 40, git_dirty=False)
     assert not out.exists()
 
 
 def test_real_run_rejects_dirty_git_before_output(tmp_path: Path):
     protocol = ff.load_protocol(CONFIG, ROOT); out = tmp_path / "out"
     with pytest.raises(ff.FinalFitError, match="clean frozen"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=tmp_path, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=True)
+        _run_final_fit(protocol=protocol, freeze_dir=tmp_path, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=True)
     assert not out.exists()
 
 
 def test_real_run_refuses_existing_output(tmp_path: Path):
     protocol = ff.load_protocol(CONFIG, ROOT); out = tmp_path / "out"; out.mkdir()
     with pytest.raises(ff.FinalFitError, match="already exists"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=tmp_path, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False)
+        _run_final_fit(protocol=protocol, freeze_dir=tmp_path, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False)
 
 
 def test_three_seed_success_writes_identity_and_reload_evidence(tmp_path: Path, monkeypatch):
@@ -108,7 +161,7 @@ def test_three_seed_success_writes_identity_and_reload_evidence(tmp_path: Path, 
     monkeypatch.setattr(ff, "build_plan", lambda p: ((42, 1), (123, 1), (2026, 1)))
     monkeypatch.setattr(ff, "build_model", lambda *a, **k: torch.nn.Conv2d(1, 9, 1))
     out = tmp_path / "out"
-    done = ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
+    done = _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
     assert done["models_complete"] == 3
     assert done["identity"]["test_access"] is False
     assert done["identity"]["test_rows"] == 0
@@ -116,6 +169,10 @@ def test_three_seed_success_writes_identity_and_reload_evidence(tmp_path: Path, 
     assert (out / "DONE.json").is_file()
     done_disk = json.loads((out / "DONE.json").read_text(encoding="utf-8"))
     assert done_disk["environment_sha256"] == ff.sha256_file(out / "environment.json")
+    assert done_disk["budget_path"] == "budget.json"
+    assert done_disk["budget_sha256"] == ff.sha256_file(out / "budget.json")
+    assert done_disk["budget"]["max_total_wall_seconds"] == 2700
+    assert done_disk["budget"]["state"] == "DONE"
     for seed in (42, 123, 2026):
         result = json.loads((out / f"seed_{seed:04d}" / "complete.json").read_text(encoding="utf-8"))
         assert result["reload_prediction_match"] is True
@@ -133,7 +190,7 @@ def test_failure_writes_failed_terminal(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ff, "build_model", lambda *a, **k: (_ for _ in ()).throw(ff.FinalFitError("injected")))
     out = tmp_path / "out"
     with pytest.raises(ff.FinalFitError, match="injected"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
     failed = json.loads((out / "FAILED.json").read_text(encoding="utf-8"))
     assert failed["terminal_state"] == "FAILED"
     assert failed["identity"]["test_access"] is False
@@ -149,7 +206,7 @@ def test_keyboard_interrupt_writes_stopped_terminal(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(ff, "build_model", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
     out = tmp_path / "out"
     with pytest.raises(KeyboardInterrupt):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
     assert (out / "STOPPED.json").is_file()
     assert not (out / "RUNNING.json").exists()
 
@@ -165,7 +222,7 @@ def test_existing_running_requires_explicit_resume(tmp_path: Path, monkeypatch):
     identity = ff._identity(protocol, "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", "a" * 40, False, ff.sha256_file(freeze / "freeze_manifest.json"), ff.sha256_file(protocol.candidate_contract), 0, 0); identity.pop("seed"); identity.pop("fixed_epochs")
     ff.atomic_write_json(out / "RUNNING.json", {"identity": identity})
     with pytest.raises(ff.FinalFitError, match="explicit resume"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
 
 
 def test_stopped_resume_recreates_running_before_execution(tmp_path: Path, monkeypatch):
@@ -177,11 +234,9 @@ def test_stopped_resume_recreates_running_before_execution(tmp_path: Path, monke
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     monkeypatch.setattr(ff, "build_model", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
     out = tmp_path / "out"; out.mkdir()
-    identity = ff._identity(protocol, "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", "a" * 40, False, ff.sha256_file(freeze / "freeze_manifest.json"), ff.sha256_file(protocol.candidate_contract), 0, 0); identity.pop("seed"); identity.pop("fixed_epochs")
-    ff.atomic_write_json(out / "environment.json", ff._environment_record())
-    ff.atomic_write_json(out / "STOPPED.json", {"terminal_state": "STOPPED", "identity": identity, "environment_path": "environment.json", "environment_sha256": ff.sha256_file(out / "environment.json")})
+    _write_resumable_root(protocol, freeze, out, state="STOPPED")
     with pytest.raises(KeyboardInterrupt):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
     assert (out / "STOPPED.json").is_file()
     assert not (out / "FAILED.json").exists()
 
@@ -194,13 +249,10 @@ def test_stopped_resume_rejects_tampered_environment(tmp_path: Path, monkeypatch
     monkeypatch.setattr(ff, "compute_fold_class_weights_from_samples", lambda *a, **k: object())
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     out = tmp_path / "out"; out.mkdir()
-    identity = ff._identity(protocol, "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", "a" * 40, False, ff.sha256_file(freeze / "freeze_manifest.json"), ff.sha256_file(protocol.candidate_contract), 0, 0); identity.pop("seed"); identity.pop("fixed_epochs")
-    ff.atomic_write_json(out / "environment.json", {"original": True})
-    original_sha = ff.sha256_file(out / "environment.json")
-    ff.atomic_write_json(out / "STOPPED.json", {"terminal_state": "STOPPED", "identity": identity, "environment_path": "environment.json", "environment_sha256": original_sha})
+    _write_resumable_root(protocol, freeze, out, state="STOPPED", environment_payload={"original": True})
     ff.atomic_write_json(out / "environment.json", {"tampered": True})
     with pytest.raises(ff.FinalFitError, match="environment evidence hash mismatch"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
     assert (out / "STOPPED.json").is_file()
 
 
@@ -224,12 +276,12 @@ def test_resumed_training_matches_uninterrupted_parameters(tmp_path: Path, monke
     monkeypatch.setattr(ff, "deterministic_cross_entropy_2d", interrupt_once)
     interrupted = tmp_path / "interrupted"
     kwargs = dict(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
-    with pytest.raises(KeyboardInterrupt): ff.run_final_fit(output_dir=interrupted, **kwargs)
+    with pytest.raises(KeyboardInterrupt): _run_final_fit(output_dir=interrupted, **kwargs)
     monkeypatch.setattr(ff, "deterministic_cross_entropy_2d", original_loss)
-    ff.run_final_fit(output_dir=interrupted, resume=True, **kwargs)
+    _run_final_fit(output_dir=interrupted, resume=True, **kwargs)
     baseline = tmp_path / "baseline"
     baseline_kwargs = {**kwargs, "experiment_id": "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R02"}
-    ff.run_final_fit(output_dir=baseline, **baseline_kwargs)
+    _run_final_fit(output_dir=baseline, **baseline_kwargs)
     for seed in (42, 123, 2026):
         resumed = torch.load(interrupted / f"seed_{seed:04d}" / "final.pt", map_location="cpu", weights_only=False)["model_state_dict"]
         full = torch.load(baseline / f"seed_{seed:04d}" / "final.pt", map_location="cpu", weights_only=False)["model_state_dict"]
@@ -240,14 +292,11 @@ def test_running_resume_rejects_tampered_environment_before_training(tmp_path: P
     protocol = ff.load_protocol(CONFIG, ROOT)
     freeze = tmp_path / "freeze"; freeze.mkdir(); (freeze / "freeze_manifest.json").write_text("{}", encoding="utf-8")
     out = tmp_path / "out"; out.mkdir(); ff.apply_settings(42)
-    identity = ff._identity(protocol, "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", "a" * 40, False, ff.sha256_file(freeze / "freeze_manifest.json"), ff.sha256_file(protocol.candidate_contract), 0, 0); identity.pop("seed"); identity.pop("fixed_epochs")
-    ff.atomic_write_json(out / "environment.json", ff._environment_record())
-    original_sha = ff.sha256_file(out / "environment.json")
-    ff.atomic_write_json(out / "RUNNING.json", {"terminal_state": "RUNNING", "identity": identity, "environment_path": "environment.json", "environment_sha256": original_sha})
+    _write_resumable_root(protocol, freeze, out, state="RUNNING")
     ff.atomic_write_json(out / "environment.json", {"tampered": True})
     monkeypatch.setattr(ff, "load_development_samples", lambda path: pytest.fail("training data loaded before environment rejection"))
     with pytest.raises(ff.FinalFitError, match="environment evidence hash mismatch"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
     assert (out / "RUNNING.json").is_file()
     assert not (out / "FAILED.json").exists()
 
@@ -260,15 +309,12 @@ def test_existing_final_without_completion_is_never_overwritten(tmp_path: Path, 
     monkeypatch.setattr(ff, "compute_fold_class_weights_from_samples", lambda *a, **k: object())
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     out = tmp_path / "out"; out.mkdir(); ff.apply_settings(42)
-    identity = ff._identity(protocol, "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", "a" * 40, False, ff.sha256_file(freeze / "freeze_manifest.json"), ff.sha256_file(protocol.candidate_contract), 0, 0); identity.pop("seed"); identity.pop("fixed_epochs")
-    ff.atomic_write_json(out / "environment.json", ff._environment_record())
-    environment_sha = ff.sha256_file(out / "environment.json")
-    ff.atomic_write_json(out / "STOPPED.json", {"terminal_state": "STOPPED", "identity": identity, "environment_path": "environment.json", "environment_sha256": environment_sha})
+    _write_resumable_root(protocol, freeze, out, state="STOPPED")
     seed_dir = out / "seed_0042"; seed_dir.mkdir(); final_path = seed_dir / "final.pt"; final_path.write_bytes(b"crash-window-checkpoint")
     before = ff.sha256_file(final_path)
     monkeypatch.setattr(ff, "build_model", lambda *a, **k: pytest.fail("model built before final checkpoint collision rejection"))
     with pytest.raises(ff.FinalFitError, match="refusing overwrite"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
     assert ff.sha256_file(final_path) == before
     assert (out / "FAILED.json").is_file()
     assert not (out / "RUNNING.json").exists()
@@ -314,7 +360,7 @@ def test_apply_settings_precedes_every_cuda_probe(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     monkeypatch.setattr(ff, "build_model", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
     with pytest.raises(KeyboardInterrupt):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=tmp_path / "out", experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=tmp_path / "out", experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
     assert events[0] == ("apply_settings", 42)
     assert next(i for i, event in enumerate(events) if event[0] == "cuda_is_available") > 0
 
@@ -334,17 +380,15 @@ def test_resume_after_final_epoch_restores_finite_cumulative_diagnostics(tmp_pat
     out = tmp_path / "out"; out.mkdir(); ff.apply_settings(42)
     data_sha = ff.sha256_file(freeze / "freeze_manifest.json")
     candidate_sha = ff.sha256_file(protocol.candidate_contract)
-    environment_path = out / "environment.json"; ff.atomic_write_json(environment_path, ff._environment_record())
-    environment_sha = ff.sha256_file(environment_path)
     experiment_id = "EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01"
-    run_identity = ff._identity(protocol, experiment_id, "a" * 40, False, data_sha, candidate_sha, 0, 0); run_identity.pop("seed"); run_identity.pop("fixed_epochs")
-    ff.atomic_write_json(out / "STOPPED.json", {"terminal_state": "STOPPED", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha})
+    _, authorized_environment_sha256, environment_sha, _ = _write_resumable_root(protocol, freeze, out, state="STOPPED", experiment_id=experiment_id)
     ff.apply_settings(42)
     model = torch.nn.Conv2d(1, 9, 1); optimizer = torch.optim.AdamW(model.parameters(), lr=protocol.lr, weight_decay=protocol.weight_decay)
-    identity = ff._identity(protocol, experiment_id, "a" * 40, False, data_sha, candidate_sha, 42, 1); identity["environment_sha256"] = environment_sha
+    identity = ff._identity(protocol, experiment_id, "a" * 40, False, data_sha, candidate_sha, 42, 1, authorized_environment_sha256=authorized_environment_sha256); identity["environment_sha256"] = environment_sha
+    identity["budget_core_sha256"] = json.loads((out / "budget.json").read_text(encoding="utf-8"))["budget_core_sha256"]
     seed_dir = out / "seed_0042"; seed_dir.mkdir()
     torch.save({"model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "epoch": 1, "training_loss_last_epoch": 0.375, "elapsed_wall_seconds": 12.5, "peak_cuda_mb": 0.0, "rng_state": ff._capture_rng_state(), "identity": identity}, seed_dir / "last.pt")
-    done = ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id=experiment_id, git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
+    done = _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id=experiment_id, git_commit="a" * 40, git_dirty=False, device="cpu", resume=True)
     resumed = done["results"][0]
     assert resumed["training_loss_last_epoch"] == 0.375
     assert math.isfinite(resumed["wall_seconds"]) and resumed["wall_seconds"] >= 12.5
@@ -373,6 +417,185 @@ def test_reload_audit_peak_is_checked_before_completion(tmp_path: Path, monkeypa
     monkeypatch.setattr(ff, "_current_peak_cuda_mb", lambda device: next(peaks))
     out = tmp_path / "out"
     with pytest.raises(ff.FinalFitError, match="CUDA peak memory exceeded"):
-        ff.run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
+        _run_final_fit(protocol=protocol, freeze_dir=freeze, data_root=tmp_path, output_dir=out, experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01", git_commit="a" * 40, git_dirty=False, device="cpu")
     assert (out / "FAILED.json").is_file()
     assert not (out / "DONE.json").exists()
+
+
+def test_missing_authorized_environment_rejected_before_output(tmp_path: Path):
+    protocol = ff.load_protocol(CONFIG, ROOT)
+    out = tmp_path / "out"
+    with pytest.raises(ff.FinalFitError, match="authorized environment fingerprint"):
+        ff.run_final_fit(
+            protocol=protocol,
+            freeze_dir=tmp_path,
+            data_root=tmp_path,
+            output_dir=out,
+            experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+            git_commit="a" * 40,
+            git_dirty=False,
+            device="cpu",
+        )
+    assert not out.exists()
+
+
+def test_first_start_environment_mismatch_is_zero_output(tmp_path: Path, monkeypatch):
+    protocol = ff.load_protocol(CONFIG, ROOT)
+    out = tmp_path / "out"
+    monkeypatch.setattr(ff, "load_development_samples", lambda path: pytest.fail("data loaded before environment authorization"))
+    with pytest.raises(ff.FinalFitError, match="Owner-authorized fingerprint"):
+        ff.run_final_fit(
+            protocol=protocol,
+            freeze_dir=tmp_path,
+            data_root=tmp_path,
+            output_dir=out,
+            experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+            git_commit="a" * 40,
+            git_dirty=False,
+            authorized_environment_sha256="0" * 64,
+            device="cpu",
+        )
+    assert not out.exists()
+
+
+def test_environment_preflight_payload_is_no_training_authorization_input(monkeypatch):
+    monkeypatch.setattr(ff, "load_development_samples", lambda path: pytest.fail("environment preflight loaded data"))
+    payload = ff.environment_preflight_payload()
+    assert payload["environment_fingerprint_sha256"] == ff._canonical_json_sha256(payload["environment"])
+    assert payload["test_access"] is False and payload["test_rows"] == 0
+    assert payload["gpu_training_run"] is False
+
+
+def test_resume_rejects_owner_authorization_environment_drift(tmp_path: Path, monkeypatch):
+    protocol = ff.load_protocol(CONFIG, ROOT)
+    freeze = tmp_path / "freeze"; freeze.mkdir(); (freeze / "freeze_manifest.json").write_text("{}", encoding="utf-8")
+    out = tmp_path / "out"; out.mkdir()
+    monkeypatch.setattr(ff, "_environment_record", lambda: {"authorized_environment": "one"})
+    _write_resumable_root(protocol, freeze, out, state="STOPPED")
+    second_environment = {"authorized_environment": "two"}
+    second_sha = ff._canonical_json_sha256(second_environment)
+    monkeypatch.setattr(ff, "_environment_record", lambda: second_environment)
+    monkeypatch.setattr(ff, "load_development_samples", lambda path: pytest.fail("data loaded before authorization drift rejection"))
+    with pytest.raises(ff.FinalFitError, match="identity mismatch"):
+        ff.run_final_fit(
+            protocol=protocol,
+            freeze_dir=freeze,
+            data_root=tmp_path,
+            output_dir=out,
+            experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+            git_commit="a" * 40,
+            git_dirty=False,
+            authorized_environment_sha256=second_sha,
+            device="cpu",
+            resume=True,
+        )
+    assert (out / "STOPPED.json").is_file()
+
+
+def test_resume_rejects_budget_deadline_tamper_before_data(tmp_path: Path, monkeypatch):
+    protocol = ff.load_protocol(CONFIG, ROOT)
+    freeze = tmp_path / "freeze"; freeze.mkdir(); (freeze / "freeze_manifest.json").write_text("{}", encoding="utf-8")
+    out = tmp_path / "out"; out.mkdir()
+    _write_resumable_root(protocol, freeze, out, state="STOPPED")
+    budget_path = out / "budget.json"
+    budget = json.loads(budget_path.read_text(encoding="utf-8"))
+    budget["deadline_utc_epoch_seconds"] += 60
+    ff.atomic_write_json(budget_path, budget)
+    monkeypatch.setattr(ff, "load_development_samples", lambda path: pytest.fail("data loaded before budget tamper rejection"))
+    with pytest.raises(ff.FinalFitError, match="immutable core mismatch"):
+        _run_final_fit(
+            protocol=protocol,
+            freeze_dir=freeze,
+            data_root=tmp_path,
+            output_dir=out,
+            experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+            git_commit="a" * 40,
+            git_dirty=False,
+            device="cpu",
+            resume=True,
+        )
+    assert (out / "STOPPED.json").is_file()
+
+
+def test_resume_cannot_reset_experiment_deadline(tmp_path: Path, monkeypatch):
+    protocol = ff.load_protocol(CONFIG, ROOT)
+    freeze = tmp_path / "freeze"; freeze.mkdir(); (freeze / "freeze_manifest.json").write_text("{}", encoding="utf-8")
+    out = tmp_path / "out"; out.mkdir()
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(ff.time, "time", lambda: clock["now"])
+    _write_resumable_root(protocol, freeze, out, state="STOPPED")
+    original = json.loads((out / "budget.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(ff, "load_development_samples", lambda path: [object()])
+    monkeypatch.setattr(ff, "compute_fold_normalization_from_samples", lambda *a, **k: object())
+    monkeypatch.setattr(ff, "compute_fold_class_weights_from_samples", lambda *a, **k: object())
+    monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
+    monkeypatch.setattr(ff, "build_model", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
+    for now in (1100.0, 1200.0):
+        clock["now"] = now
+        with pytest.raises(KeyboardInterrupt):
+            _run_final_fit(
+                protocol=protocol,
+                freeze_dir=freeze,
+                data_root=tmp_path,
+                output_dir=out,
+                experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+                git_commit="a" * 40,
+                git_dirty=False,
+                device="cpu",
+                resume=True,
+            )
+        current = json.loads((out / "budget.json").read_text(encoding="utf-8"))
+        assert current["started_at_utc_epoch_seconds"] == original["started_at_utc_epoch_seconds"]
+        assert current["deadline_utc_epoch_seconds"] == original["deadline_utc_epoch_seconds"]
+        assert current["budget_core_sha256"] == original["budget_core_sha256"]
+        assert current["elapsed_wall_seconds"] == now - 1000.0
+
+
+def test_expired_budget_rejects_resume_before_data(tmp_path: Path, monkeypatch):
+    protocol = ff.load_protocol(CONFIG, ROOT)
+    freeze = tmp_path / "freeze"; freeze.mkdir(); (freeze / "freeze_manifest.json").write_text("{}", encoding="utf-8")
+    out = tmp_path / "out"; out.mkdir()
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(ff.time, "time", lambda: clock["now"])
+    _write_resumable_root(protocol, freeze, out, state="STOPPED")
+    clock["now"] = 3701.0
+    monkeypatch.setattr(ff, "load_development_samples", lambda path: pytest.fail("data loaded after budget expiry"))
+    with pytest.raises(ff.FinalFitError, match="budget exhausted"):
+        _run_final_fit(
+            protocol=protocol,
+            freeze_dir=freeze,
+            data_root=tmp_path,
+            output_dir=out,
+            experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+            git_commit="a" * 40,
+            git_dirty=False,
+            device="cpu",
+            resume=True,
+        )
+    assert (out / "STOPPED.json").is_file()
+    budget = json.loads((out / "budget.json").read_text(encoding="utf-8"))
+    assert budget["remaining_wall_seconds"] == 0.0
+
+
+def test_clock_rollback_rejects_resume_before_data(tmp_path: Path, monkeypatch):
+    protocol = ff.load_protocol(CONFIG, ROOT)
+    freeze = tmp_path / "freeze"; freeze.mkdir(); (freeze / "freeze_manifest.json").write_text("{}", encoding="utf-8")
+    out = tmp_path / "out"; out.mkdir()
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(ff.time, "time", lambda: clock["now"])
+    _write_resumable_root(protocol, freeze, out, state="STOPPED")
+    clock["now"] = 999.0
+    monkeypatch.setattr(ff, "load_development_samples", lambda path: pytest.fail("data loaded after clock rollback"))
+    with pytest.raises(ff.FinalFitError, match="clock moved backwards"):
+        _run_final_fit(
+            protocol=protocol,
+            freeze_dir=freeze,
+            data_root=tmp_path,
+            output_dir=out,
+            experiment_id="EXP-SLP-B11F-PM-FINAL-FIT-20260902-AUTODL-R01",
+            git_commit="a" * 40,
+            git_dirty=False,
+            device="cpu",
+            resume=True,
+        )
+    assert (out / "STOPPED.json").is_file()

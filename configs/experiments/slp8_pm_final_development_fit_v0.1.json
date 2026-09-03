@@ -29,7 +29,8 @@
   },
   "resources": {
     "max_peak_cuda_mb": 8192,
-    "min_free_disk_bytes": 1073741824
+    "min_free_disk_bytes": 1073741824,
+    "max_total_wall_seconds": 2700
   },
   "next_gate": "B11F_FINAL_DEVELOPMENT_FIT_RUN_PREPARATION",
   "test_gate": "B09T_SEPARATE_ONE_TIME_OWNER_AUTHORIZATION_REQUIRED"

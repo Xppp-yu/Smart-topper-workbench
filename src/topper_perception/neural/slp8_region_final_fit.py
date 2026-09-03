@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -43,7 +44,9 @@ OPTIMIZER = "AdamW"
 BATCH_SIZE = 16
 LEARNING_RATE = 0.001
 WEIGHT_DECAY = 0.0001
+MAX_TOTAL_WALL_SECONDS = 2700
 EXP_ID_RE = re.compile(r"^EXP-SLP-B11F-PM-FINAL-FIT-\d{8}-AUTODL-R\d{2}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class FinalFitError(RuntimeError):
@@ -64,6 +67,7 @@ class FinalFitProtocol:
     optimizer: str
     max_peak_cuda_mb: int
     min_free_disk_bytes: int
+    max_total_wall_seconds: int
 
 
 def sha256_file(path: Path) -> str:
@@ -97,7 +101,7 @@ def load_protocol(path: Path, repo_root: Path) -> FinalFitProtocol:
     if training.get("weight_decay") != WEIGHT_DECAY: errors.append("weight decay mismatch")
     if training.get("shuffle") is not True: errors.append("shuffle must be strict true")
     if outputs.get("checkpoint_name") != "final.pt": errors.append("checkpoint name mismatch")
-    if resources.get("max_peak_cuda_mb") != 8192 or resources.get("min_free_disk_bytes") != 1073741824: errors.append("resource contract mismatch")
+    if resources.get("max_peak_cuda_mb") != 8192 or resources.get("min_free_disk_bytes") != 1073741824 or resources.get("max_total_wall_seconds") != MAX_TOTAL_WALL_SECONDS: errors.append("resource contract mismatch")
     if outputs.get("models_required") != 3 or outputs.get("training_metrics_are_not_validation") is not True: errors.append("output contract mismatch")
     if raw.get("test_gate") != "B09T_SEPARATE_ONE_TIME_OWNER_AUTHORIZATION_REQUIRED": errors.append("TEST gate mismatch")
     candidate_rel = raw.get("candidate_contract")
@@ -117,6 +121,7 @@ def load_protocol(path: Path, repo_root: Path) -> FinalFitProtocol:
         batch_size=int(training["batch_size"]), lr=float(training["learning_rate"]),
         weight_decay=float(training["weight_decay"]), optimizer=OPTIMIZER,
         max_peak_cuda_mb=8192, min_free_disk_bytes=1073741824,
+        max_total_wall_seconds=MAX_TOTAL_WALL_SECONDS,
     )
 
 
@@ -159,15 +164,30 @@ def load_development_samples(freeze_dir: Path) -> list[RegionSample]:
     return samples
 
 
-def _identity(protocol: FinalFitProtocol, experiment_id: str, git_commit: str, git_dirty: bool, data_hash: str, candidate_hash: str, seed: int, epochs: int) -> dict[str, Any]:
-    return {
+def _identity(
+    protocol: FinalFitProtocol,
+    experiment_id: str,
+    git_commit: str,
+    git_dirty: bool,
+    data_hash: str,
+    candidate_hash: str,
+    seed: int,
+    epochs: int,
+    *,
+    authorized_environment_sha256: str | None = None,
+) -> dict[str, Any]:
+    identity = {
         "task_id": TASK_ID, "experiment_id": experiment_id, "git_commit": git_commit,
         "git_dirty": git_dirty, "config_sha256": protocol.sha256,
         "candidate_config_sha256": candidate_hash,
         "data_manifest_sha256": data_hash, "model_version": MODEL,
         "seed": seed, "fixed_epochs": epochs, "test_access": False,
         "test_rows": 0, "test_labels": 0, "test_onehot": 0,
+        "max_total_wall_seconds": protocol.max_total_wall_seconds,
     }
+    if authorized_environment_sha256 is not None:
+        identity["authorized_environment_sha256"] = authorized_environment_sha256
+    return identity
 
 
 def _checkpoint_matches(path: Path, expected: Mapping[str, Any]) -> dict[str, Any]:
@@ -241,6 +261,117 @@ def _finite_nonnegative(value: Any, description: str) -> float:
     return result
 
 
+def _canonical_json_sha256(payload: Mapping[str, Any]) -> str:
+    _require_strict_json(payload, "canonical hash payload")
+    encoded = json.dumps(payload, allow_nan=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def environment_preflight_payload() -> dict[str, Any]:
+    """Collect the exact no-training environment input for Owner authorization."""
+    apply_settings(SEEDS[0])
+    environment = _environment_record()
+    payload = {
+        "environment": environment,
+        "environment_fingerprint_sha256": _canonical_json_sha256(environment),
+        "test_access": False,
+        "test_rows": 0,
+        "gpu_training_run": False,
+    }
+    _require_strict_json(payload, "environment preflight payload")
+    return payload
+
+
+def _budget_core(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": payload.get("schema"),
+        "identity": payload.get("identity"),
+        "max_total_wall_seconds": payload.get("max_total_wall_seconds"),
+        "started_at_utc_epoch_seconds": payload.get("started_at_utc_epoch_seconds"),
+        "deadline_utc_epoch_seconds": payload.get("deadline_utc_epoch_seconds"),
+    }
+
+
+def _new_budget(identity: Mapping[str, Any], max_total_wall_seconds: int) -> tuple[dict[str, Any], str]:
+    now = float(time.time())
+    if not math.isfinite(now) or now < 0:
+        raise FinalFitError("wall clock is invalid before budget creation")
+    payload: dict[str, Any] = {
+        "schema": "B11F_EXP_WALL_BUDGET_v0.1",
+        "identity": dict(identity),
+        "max_total_wall_seconds": int(max_total_wall_seconds),
+        "started_at_utc_epoch_seconds": now,
+        "deadline_utc_epoch_seconds": now + int(max_total_wall_seconds),
+        "observed_at_utc_epoch_seconds": now,
+        "elapsed_wall_seconds": 0.0,
+        "remaining_wall_seconds": float(max_total_wall_seconds),
+        "state": "RUNNING",
+    }
+    core_sha = _canonical_json_sha256(_budget_core(payload))
+    payload["budget_core_sha256"] = core_sha
+    _require_strict_json(payload, "new experiment budget")
+    return payload, core_sha
+
+
+def _refresh_budget(
+    path: Path,
+    expected_identity: Mapping[str, Any],
+    expected_core_sha256: str,
+    *,
+    state: str,
+    fail_if_exhausted: bool = True,
+) -> dict[str, Any]:
+    payload = _read_json_object(path, "experiment wall budget")
+    if payload.get("schema") != "B11F_EXP_WALL_BUDGET_v0.1":
+        raise FinalFitError("experiment wall budget schema mismatch")
+    if payload.get("identity") != dict(expected_identity):
+        raise FinalFitError("experiment wall budget identity mismatch")
+    if payload.get("max_total_wall_seconds") != MAX_TOTAL_WALL_SECONDS:
+        raise FinalFitError("experiment wall budget maximum mismatch")
+    if not SHA256_RE.fullmatch(str(expected_core_sha256)):
+        raise FinalFitError("experiment wall budget carrier hash is invalid")
+    observed_core_sha = _canonical_json_sha256(_budget_core(payload))
+    if payload.get("budget_core_sha256") != observed_core_sha or observed_core_sha != expected_core_sha256:
+        raise FinalFitError("experiment wall budget immutable core mismatch")
+    started = _finite_nonnegative(payload.get("started_at_utc_epoch_seconds"), "budget start time")
+    deadline = _finite_nonnegative(payload.get("deadline_utc_epoch_seconds"), "budget deadline")
+    observed = _finite_nonnegative(payload.get("observed_at_utc_epoch_seconds"), "budget observation time")
+    elapsed = _finite_nonnegative(payload.get("elapsed_wall_seconds"), "budget elapsed wall time")
+    remaining = _finite_nonnegative(payload.get("remaining_wall_seconds"), "budget remaining wall time")
+    if abs(deadline - (started + MAX_TOTAL_WALL_SECONDS)) > 1e-6:
+        raise FinalFitError("experiment wall budget deadline drift")
+    if observed < started or abs(elapsed - (observed - started)) > 1e-3:
+        raise FinalFitError("experiment wall budget elapsed carrier mismatch")
+    if abs(remaining - max(0.0, deadline - observed)) > 1e-3:
+        raise FinalFitError("experiment wall budget remaining carrier mismatch")
+    now = float(time.time())
+    if not math.isfinite(now) or now + 1e-6 < observed:
+        raise FinalFitError("wall clock moved backwards during experiment")
+    payload.update({
+        "observed_at_utc_epoch_seconds": now,
+        "elapsed_wall_seconds": now - started,
+        "remaining_wall_seconds": max(0.0, deadline - now),
+        "state": state,
+    })
+    _require_strict_json(payload, "experiment wall budget")
+    atomic_write_json(path, payload)
+    if fail_if_exhausted and payload["remaining_wall_seconds"] <= 0:
+        raise FinalFitError("experiment total wall budget exhausted")
+    return payload
+
+
+def _budget_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "budget_core_sha256": payload.get("budget_core_sha256"),
+        "max_total_wall_seconds": payload.get("max_total_wall_seconds"),
+        "started_at_utc_epoch_seconds": payload.get("started_at_utc_epoch_seconds"),
+        "deadline_utc_epoch_seconds": payload.get("deadline_utc_epoch_seconds"),
+        "elapsed_wall_seconds": payload.get("elapsed_wall_seconds"),
+        "remaining_wall_seconds": payload.get("remaining_wall_seconds"),
+        "state": payload.get("state"),
+    }
+
+
 def _current_peak_cuda_mb(device: str) -> float:
     return float(torch.cuda.max_memory_allocated()) / 1e6 if device == "cuda" else 0.0
 
@@ -290,11 +421,17 @@ def _write_terminal(output_dir: Path, name: str, payload: dict[str, Any]) -> Non
     os.replace(running, output_dir / name)
 
 
-def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Path, output_dir: Path, experiment_id: str, git_commit: str, git_dirty: bool, device: str = "cuda", resume: bool = False) -> dict[str, Any]:
+def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Path, output_dir: Path, experiment_id: str, git_commit: str, git_dirty: bool, authorized_environment_sha256: str | None = None, device: str = "cuda", resume: bool = False) -> dict[str, Any]:
     if not EXP_ID_RE.fullmatch(experiment_id): raise FinalFitError("invalid B11F EXP-ID")
     if not re.fullmatch(r"[0-9a-f]{40}", git_commit) or git_dirty is not False: raise FinalFitError("real final fit requires a clean frozen 40-char Git SHA")
+    if not isinstance(authorized_environment_sha256, str) or not SHA256_RE.fullmatch(authorized_environment_sha256):
+        raise FinalFitError("real final fit requires a 64-char authorized environment fingerprint")
     # Establish cuBLAS environment before *any* CUDA probe.
     apply_settings(SEEDS[0])
+    observed_environment = _environment_record()
+    observed_environment_fingerprint = _canonical_json_sha256(observed_environment)
+    if observed_environment_fingerprint != authorized_environment_sha256:
+        raise FinalFitError("current environment does not match Owner-authorized fingerprint")
     if output_dir.exists() and resume:
         _reconcile_interrupted_terminal_transition(output_dir)
     if output_dir.exists() and any((output_dir / name).exists() for name in ("DONE.json", "FAILED.json")):
@@ -310,17 +447,20 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
     if not manifest_path.is_file(): raise FinalFitError("B01 freeze manifest missing")
     data_hash = sha256_file(manifest_path)
     candidate_hash = sha256_file(protocol.candidate_contract)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    run_identity = _identity(protocol, experiment_id, git_commit, git_dirty, data_hash, candidate_hash, 0, 0)
+    run_identity = _identity(protocol, experiment_id, git_commit, git_dirty, data_hash, candidate_hash, 0, 0, authorized_environment_sha256=authorized_environment_sha256)
     run_identity.pop("seed"); run_identity.pop("fixed_epochs")
     running_path = output_dir / "RUNNING.json"
     environment_file = output_dir / "environment.json"
+    budget_file = output_dir / "budget.json"
     if resume and (output_dir / "STOPPED.json").is_file():
         stopped_path = output_dir / "STOPPED.json"
         stopped = _read_json_object(stopped_path, "STOPPED carrier")
         if stopped.get("identity") != run_identity: raise FinalFitError("resume STOPPED identity mismatch")
         environment_sha = _validate_resume_environment(stopped, environment_file)
-        running_payload = {"terminal_state": "RUNNING", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha, "resumed_from": "STOPPED.json"}
+        budget_core_sha = str(stopped.get("budget_core_sha256", ""))
+        budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="STOPPED")
+        budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="RUNNING")
+        running_payload = {"terminal_state": "RUNNING", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha, "budget_path": "budget.json", "budget_core_sha256": budget_core_sha, "budget": _budget_summary(budget), "resumed_from": "STOPPED.json"}
         atomic_write_json(stopped_path, running_payload)
         os.replace(stopped_path, running_path)
     elif running_path.is_file():
@@ -329,13 +469,19 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
         if persisted.get("terminal_state") != "RUNNING": raise FinalFitError("RUNNING carrier state mismatch")
         if persisted.get("identity") != run_identity: raise FinalFitError("resume RUNNING identity mismatch")
         environment_sha = _validate_resume_environment(persisted, environment_file)
-        atomic_write_json(running_path, {"terminal_state": "RUNNING", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha, "resumed_from": "RUNNING.json"})
+        budget_core_sha = str(persisted.get("budget_core_sha256", ""))
+        budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="RUNNING")
+        atomic_write_json(running_path, {"terminal_state": "RUNNING", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha, "budget_path": "budget.json", "budget_core_sha256": budget_core_sha, "budget": _budget_summary(budget), "resumed_from": "RUNNING.json"})
     else:
-        atomic_write_json(environment_file, _environment_record())
+        output_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(environment_file, observed_environment)
         environment_sha = sha256_file(environment_file)
-        atomic_write_json(running_path, {"terminal_state": "RUNNING", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha})
+        budget, budget_core_sha = _new_budget(run_identity, protocol.max_total_wall_seconds)
+        atomic_write_json(budget_file, budget)
+        atomic_write_json(running_path, {"terminal_state": "RUNNING", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha, "budget_path": "budget.json", "budget_core_sha256": budget_core_sha, "budget": _budget_summary(budget)})
     results: list[dict[str, Any]] = []
     try:
+        budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="RUNNING")
         samples = load_development_samples(freeze_dir)
         normalization = compute_fold_normalization_from_samples(samples, data_root=data_root)
         class_weights = compute_fold_class_weights_from_samples(samples, data_root=data_root)
@@ -344,8 +490,9 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
             settings = apply_settings(seed)
             if device == "cuda": torch.cuda.reset_peak_memory_stats()
             seed_dir = output_dir / f"seed_{seed:04d}"; seed_dir.mkdir(exist_ok=True)
-            ident = _identity(protocol, experiment_id, git_commit, git_dirty, data_hash, candidate_hash, seed, epochs)
+            ident = _identity(protocol, experiment_id, git_commit, git_dirty, data_hash, candidate_hash, seed, epochs, authorized_environment_sha256=authorized_environment_sha256)
             ident["environment_sha256"] = environment_sha
+            ident["budget_core_sha256"] = budget_core_sha
             final_path, last_path = seed_dir / "final.pt", seed_dir / "last.pt"
             complete_path = seed_dir / "complete.json"
             if complete_path.is_file():
@@ -381,10 +528,12 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
                 model.train()
                 losses = []
                 for batch in loader:
+                    budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="RUNNING")
                     x, y = batch["pressure"].to(device), batch["label"].to(device)
                     optimizer.zero_grad(); loss = deterministic_cross_entropy_2d(model(x), y, weight=weights)
                     if not torch.isfinite(loss): raise FinalFitError(f"non-finite loss for seed {seed}")
                     loss.backward(); optimizer.step(); losses.append(float(loss.item()))
+                    budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="RUNNING")
                     if _current_peak_cuda_mb(device) > protocol.max_peak_cuda_mb:
                         raise FinalFitError(f"CUDA peak memory exceeded for seed {seed}")
                 last_loss = float(np.mean(losses))
@@ -393,7 +542,8 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
                 elapsed_wall_seconds = accumulated_wall_seconds + (time.monotonic() - segment_started)
                 peak_cuda_mb = max(historical_peak_cuda_mb, _current_peak_cuda_mb(device))
                 tmp_last = seed_dir / "last.pt.tmp"
-                torch.save({"model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "epoch": _epoch, "training_loss_last_epoch": last_loss, "elapsed_wall_seconds": elapsed_wall_seconds, "peak_cuda_mb": peak_cuda_mb, "rng_state": _capture_rng_state(), "identity": ident}, tmp_last)
+                budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="RUNNING")
+                torch.save({"model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "epoch": _epoch, "training_loss_last_epoch": last_loss, "elapsed_wall_seconds": elapsed_wall_seconds, "peak_cuda_mb": peak_cuda_mb, "rng_state": _capture_rng_state(), "experiment_budget": _budget_summary(budget), "identity": ident}, tmp_last)
                 os.replace(tmp_last, last_path)
             if last_loss is None or not np.isfinite(last_loss) or last_loss < 0:
                 raise FinalFitError(f"seed {seed} has no finite final training loss")
@@ -409,7 +559,8 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
             final_peak_cuda_mb = max(historical_peak_cuda_mb, _current_peak_cuda_mb(device))
             if final_peak_cuda_mb > protocol.max_peak_cuda_mb:
                 raise FinalFitError(f"CUDA peak memory exceeded for seed {seed}")
-            result = {"seed": seed, "fixed_epochs": epochs, "training_loss_last_epoch": last_loss, "training_loss_is_not_validation": True, "wall_seconds": accumulated_wall_seconds + (time.monotonic() - segment_started), "peak_cuda_mb": final_peak_cuda_mb, "checkpoint": str(final_path), "checkpoint_sha256": sha256_file(final_path), "reload_prediction_match": True, "determinism": settings.as_dict(), "identity": ident}
+            budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="RUNNING")
+            result = {"seed": seed, "fixed_epochs": epochs, "training_loss_last_epoch": last_loss, "training_loss_is_not_validation": True, "wall_seconds": accumulated_wall_seconds + (time.monotonic() - segment_started), "peak_cuda_mb": final_peak_cuda_mb, "checkpoint": str(final_path), "checkpoint_sha256": sha256_file(final_path), "reload_prediction_match": True, "determinism": settings.as_dict(), "experiment_budget": _budget_summary(budget), "identity": ident}
             _require_strict_json(result, f"seed {seed} completion payload")
             atomic_write_json(seed_dir / "complete.json", result); results.append(result)
         if len(results) != 3:
@@ -427,13 +578,21 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
         environment_sha = sha256_file(environment_file)
         if running.get("environment_sha256") != environment_sha:
             raise FinalFitError("environment evidence changed during run")
-        done = {"terminal_state": "DONE", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha, "models_complete": len(results), "models_required": 3, "results": results}
+        budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state="DONE")
+        budget_sha = sha256_file(budget_file)
+        done = {"terminal_state": "DONE", "identity": run_identity, "environment_path": "environment.json", "environment_sha256": environment_sha, "budget_path": "budget.json", "budget_sha256": budget_sha, "budget_core_sha256": budget_core_sha, "budget": _budget_summary(budget), "models_complete": len(results), "models_required": 3, "results": results}
         _require_strict_json(done, "DONE payload")
         _write_terminal(output_dir, "DONE.json", done)
         return done
     except BaseException as exc:
         state = "STOPPED" if isinstance(exc, KeyboardInterrupt) else "FAILED"
         observed_environment_sha = sha256_file(environment_file) if environment_file.is_file() else None
+        budget_error = None
+        try:
+            budget = _refresh_budget(budget_file, run_identity, budget_core_sha, state=state, fail_if_exhausted=False)
+        except BaseException as budget_exc:
+            budget_error = f"{type(budget_exc).__name__}: {budget_exc}"
+        observed_budget_sha = sha256_file(budget_file) if budget_file.is_file() else None
         failed = {
             "terminal_state": state,
             "identity": run_identity,
@@ -441,6 +600,11 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
             "environment_sha256": environment_sha,
             "observed_environment_sha256": observed_environment_sha,
             "environment_hash_match": observed_environment_sha == environment_sha,
+            "budget_path": "budget.json",
+            "budget_sha256": observed_budget_sha,
+            "budget_core_sha256": budget_core_sha,
+            "budget": _budget_summary(budget) if budget_error is None else None,
+            "budget_error": budget_error,
             "error": f"{type(exc).__name__}: {exc}",
         }
         _write_terminal(output_dir, f"{state}.json", failed)
