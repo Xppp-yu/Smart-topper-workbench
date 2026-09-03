@@ -15,7 +15,9 @@ CPU 回归中复现真实返回类型的反例。不得恢复或覆盖失败 EXP
   `a5a9342b18d00b614355e63ce056a7edd92dd80358d8aead5ef6e8e0ba045669`。
 - 异常：`AttributeError: 'numpy.ndarray' object has no attribute 'to'`。
 - 位置：`slp8_region_final_fit.py` 的 class-weight device conversion。
-- 训练循环未开始；TEST=0。根 terminal 载体仍须从 AutoDL 独立核验。
+- 训练循环未开始；TEST=0。AutoDL 原始 `FAILED.json`、environment/budget carriers、
+  root marker 清单、文件 SHA 清单与 operator traceback 已同步到
+  [`docs/evidence/b11f_r01_failure`](../evidence/b11f_r01_failure/README.md)，等待独立复审。
 
 ## 允许修改
 
@@ -37,4 +39,4 @@ CPU 回归中复现真实返回类型的反例。不得恢复或覆盖失败 EXP
 
 ## 下一 Gate
 
-`B11F_RUNTIME_FIX_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`
+`B11F_RUNTIME_FIX_EVIDENCE_READY_FOR_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`

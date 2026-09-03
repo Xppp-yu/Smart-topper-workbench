@@ -415,7 +415,9 @@ Reviewer checklist:
 - Owner 已于 `2026-09-03T18:40:09+08:00` 授权精确三 seed final fit；下一 Gate：
   R01 在首个 training batch 前因 class-weight NumPy→Torch 接口错误失败；旧 EXP-ID 与授权
   均不可复用。修复已与 B09 转换路径对齐并以真实 NumPy mock 回归，定向 40、联合 123
-  passed。下一 Gate 为 `B11F_RUNTIME_FIX_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`；三个
+  passed。R01 原始 `FAILED/environment/budget` JSON、root inventory、文件 SHA 清单与 operator
+  traceback 已同步至 `docs/evidence/b11f_r01_failure`，等待独立复审。下一 Gate 为
+  `B11F_RUNTIME_FIX_EVIDENCE_READY_FOR_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`；三个
   final checkpoint 审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价

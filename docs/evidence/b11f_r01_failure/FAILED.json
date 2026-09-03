@@ -1,0 +1,37 @@
+{
+  "terminal_state": "FAILED",
+  "identity": {
+    "task_id": "TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-PREPARATION-v0.1",
+    "experiment_id": "EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01",
+    "git_commit": "9af268fa168207a269abbef22e522ac04fd6b6c5",
+    "git_dirty": false,
+    "config_sha256": "a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43",
+    "candidate_config_sha256": "34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b",
+    "data_manifest_sha256": "42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04",
+    "model_version": "slp8_deeplabv3plus_lite_v0.1",
+    "test_access": false,
+    "test_rows": 0,
+    "test_labels": 0,
+    "test_onehot": 0,
+    "max_total_wall_seconds": 2700,
+    "authorized_environment_sha256": "a5a9342b18d00b614355e63ce056a7edd92dd80358d8aead5ef6e8e0ba045669"
+  },
+  "environment_path": "environment.json",
+  "environment_sha256": "feb853112e6acffd736f351b2ac8d13daeb8ec99698765b6dccf0ab1c2635021",
+  "observed_environment_sha256": "feb853112e6acffd736f351b2ac8d13daeb8ec99698765b6dccf0ab1c2635021",
+  "environment_hash_match": true,
+  "budget_path": "budget.json",
+  "budget_sha256": "c88df3ba0591354793ea7bc273229efe756f5d9de37befc883b5385db4f0d7df",
+  "budget_core_sha256": "66ef679b0b246e68aeb8593fe297b382f2e8872cf1a1a6212fee33cbff2a7b25",
+  "budget": {
+    "budget_core_sha256": "66ef679b0b246e68aeb8593fe297b382f2e8872cf1a1a6212fee33cbff2a7b25",
+    "max_total_wall_seconds": 2700,
+    "started_at_utc_epoch_seconds": 1788432330.1322918,
+    "deadline_utc_epoch_seconds": 1788435030.1322918,
+    "elapsed_wall_seconds": 2.035853624343872,
+    "remaining_wall_seconds": 2697.964146375656,
+    "state": "FAILED"
+  },
+  "budget_error": null,
+  "error": "AttributeError: 'numpy.ndarray' object has no attribute 'to'"
+}

@@ -1,0 +1,9 @@
+EXP=/root/autodl-tmp/smarttopper-team-workbench/outputs/experiments/EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
+RUNNING=ABSENT
+STOPPED=ABSENT
+FAILED=EXISTS
+DONE=ABSENT
+--- files ---
+FAILED.json
+budget.json
+environment.json

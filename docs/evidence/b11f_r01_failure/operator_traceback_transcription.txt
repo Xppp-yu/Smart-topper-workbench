@@ -1,0 +1,13 @@
+Operator-captured traceback transcription from operator_traceback.png
+
+Traceback (most recent call last):
+  File "/root/autodl-tmp/smarttopper-team-workbench/scripts/run_slp8_region_final_fit.py", line 60, in <module>
+    if __name__ == "__main__": raise SystemExit(main())
+  File "/root/autodl-tmp/smarttopper-team-workbench/scripts/run_slp8_region_final_fit.py", line 54, in main
+    run_final_fit(protocol=protocol, freeze_dir=args.b01_freeze_dir, data_root=args.dataset_root, output_dir=args.output_dir, experiment_id=args.experiment_id, git_commit=sha, git_dirty=dirty, authorized_environment_sha256=args.authorized_environment_sha256, resume=args.resume_authorized)
+  File "/root/autodl-tmp/smarttopper-team-workbench/src/topper_perception/neural/slp8_region_final_fit.py", line 508, in run_final_fit
+    weights = class_weights_to_tensor(class_weights).to(device)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'numpy.ndarray' object has no attribute 'to'
+B11F_INITIAL_RUN_FAILED line=47 exit=1
+SSH_SHELL_STILL_ACTIVE exit=1

@@ -1,0 +1,4 @@
+# Preserve byte-identical exported audit carriers whose SHA-256 values are evidence.
+docs/evidence/b11f_r01_failure/*.json -text
+docs/evidence/b11f_r01_failure/*.txt -text
+docs/evidence/b11f_r01_failure/SHA256SUMS -text

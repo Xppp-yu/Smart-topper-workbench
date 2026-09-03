@@ -25,6 +25,12 @@ mock 为 Torch tensor，因此未覆盖真实接口。
 
 ## AutoDL 失败终态审计
 
+原始 machine-readable 载体、root inventory、SHA-256 manifest 与 operator traceback 已
+版本化至 [`docs/evidence/b11f_r01_failure`](../evidence/b11f_r01_failure/README.md)。归档在
+AutoDL 与本地的 SHA-256 均为
+`ab5d97a2d9a6cf703e36efc1dc9815f2fdb4ff80fc819654c6fe318277731c98`；包内七个文件经
+本地独立重算全部匹配 `SHA256SUMS`。
+
 - 根状态唯一：`FAILED.json=EXISTS`；`RUNNING/STOPPED/DONE=ABSENT`。
 - `test_access=false`；`test_rows/test_labels/test_onehot=0`。
 - `environment_hash_match=true`；持久化与 observed environment SHA-256 均为
@@ -53,4 +59,4 @@ mock 为 Torch tensor，因此未覆盖真实接口。
 
 ## 下一 Gate
 
-`B11F_RUNTIME_FIX_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`
+`B11F_RUNTIME_FIX_EVIDENCE_READY_FOR_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`

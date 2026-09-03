@@ -1,0 +1,20 @@
+{
+  "platform": "Linux-5.15.0-97-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "torch_version": "2.13.0+cu130",
+  "numpy_version": "2.5.2",
+  "cuda_available": true,
+  "cuda_device_count": 1,
+  "python_hash_seed": "42",
+  "omp_num_threads": "1",
+  "mkl_num_threads": "1",
+  "torch_num_threads": 1,
+  "cublas_workspace_config": ":4096:8",
+  "cublaslt_workspace_config": ":4096:8",
+  "run_mode": "cuda_determinism_unverified",
+  "cuda_runtime": "13.0",
+  "cudnn_version": 92000,
+  "gpu_names": [
+    "NVIDIA GeForce RTX 4090"
+  ]
+}
