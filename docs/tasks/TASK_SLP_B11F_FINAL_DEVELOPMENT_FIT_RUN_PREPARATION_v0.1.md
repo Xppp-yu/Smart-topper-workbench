@@ -1,6 +1,6 @@
 # TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1
 
-状态：`DRAFT_COMPLETE / READY_FOR_INDEPENDENT_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`
+状态：`P1_FIXES_COMPLETE / READY_FOR_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`
 
 日期：2026-09-03
 Proposed EXP-ID：`EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01`
@@ -26,8 +26,10 @@ Owner 的“继续推进下去”指令授权创建、验证、提交并推送�
 
 - B11 candidate contract：`CANDIDATE_CONTRACT_ACCEPTED / FINAL_FIT_NOT_RUN / TEST_DENIED`。
 - B11F implementation R05：独立只读复审 `ACCEPT`，无 P0/P1/P2。
-- release commit 已推送：`main == origin/main == 0f3fb936653460a4fb81093f0e95cc1014e366db`。
-- B11F 定向 `31 passed`；B11F+B11+B08/B09 联合回归 `114 passed`；Markdown
+- R01 独立运行准备审查结论为 `ITERATE`：首次启动缺 Owner 授权环境绑定，恢复的
+  45 分钟累计预算不可审计。本轮两项 P1 已实现并补反例。
+- 修复 release commit 已推送：`9af268fa168207a269abbef22e522ac04fd6b6c5`。
+- B11F 定向 `40 passed`；B11F+B11+B08/B09 联合回归 `123 passed`；Markdown
   links `6 passed`；validator、validate-only、`py_compile`、`git diff --check` 通过。
 - 所有验证均为 TEST=0；GPU final fit `NOT RUN`。
 
@@ -37,10 +39,10 @@ Owner 的“继续推进下去”指令授权创建、验证、提交并推送�
 |---|---|
 | TASK-ID | `TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1` |
 | Proposed EXP-ID | `EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01` |
-| Runner Git SHA | `0f3fb936653460a4fb81093f0e95cc1014e366db` |
+| Runner Git SHA | `9af268fa168207a269abbef22e522ac04fd6b6c5` |
 | Git dirty | 必须为 `false` |
 | Config | `configs/experiments/slp8_pm_final_development_fit_v0.1.json` |
-| Config SHA-256（Git/LF、AutoDL runtime） | `8c1f93e27f7547831cf5ac6da945257f1de653c0d9054bd0b4dee59647992621` |
+| Config SHA-256（Git/LF、AutoDL runtime） | `a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43` |
 | Candidate contract | `configs/experiments/slp8_pm_research_candidate_v0.1.json` |
 | Candidate SHA-256（Git/LF、AutoDL runtime） | `34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b` |
 | B01 freeze manifest SHA-256 | `42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04` |
@@ -51,6 +53,8 @@ Owner 的“继续推进下去”指令授权创建、验证、提交并推送�
 | Optimizer | AdamW；batch 16；lr 0.001；weight decay 0.0001；shuffle true |
 | Selection | 无 early stopping；无 validation selection；training loss 仅为运行诊断 |
 | Outputs | 三个 `final.pt` 全部独立重载并审计后才允许根 `DONE.json` |
+| Authorized environment | AutoDL preflight 生成 canonical SHA-256；Owner 授权前为 `PENDING` |
+| EXP wall budget | config/runner 固定 2,700 秒；首次 UTC start/deadline 跨恢复不可变 |
 | TEST | denied；`load_test=False`；`_test_rows is None`；所有 carrier 为 0 |
 
 Windows 当前工作树的 candidate 文件可能因 CRLF materialization 得到诊断 hash
@@ -63,13 +67,17 @@ AutoDL Linux 运行身份。AutoDL 必须从上述 release SHA checkout，并以
 - 目标：AutoDL RTX 4090 24 GB，至少 8 vCPU / 32 GB RAM。
 - peak CUDA memory 硬上限：8,192 MiB；runner 逐 batch 与重载后检查。
 - 启动前输出卷可用空间至少 1 GiB；runner fail closed 检查。
-- proposed total wall budget：45 分钟；正式命令由外部
+- EXP total wall budget：runner 内部固定 2,700 秒，从首次启动 UTC 时间开始连续计时，
+  中断后的停机时间也保守计入；`budget.json` 的 start/deadline/core SHA 跨恢复不可变。
+- 正式命令另由外部
   `timeout --signal=INT --kill-after=2m 45m` 约束，另留最多 2 分钟只用于 terminal
   落盘/强制回收。收到 SIGINT 后应形成 `STOPPED.json`，不得误报 DONE；若清理失败被
   SIGKILL，遗留 RUNNING 必须按显式恢复合同审计，不能视为完成。
 - OOM、NaN/Inf、超显存、磁盘不足、identity/hash 漂移、TEST 非零、checkpoint
   重载不一致、缺任一 seed completion 或多根 terminal，均停止并保留证据。
-- 若 45 分钟耗尽，同一 EXP-ID 不得增加预算继续；变更预算必须新 EXP-ID 和重新授权。
+- runner 在数据加载前、每 batch、每 epoch、completion 和 DONE 前重算 EXP elapsed/
+  remaining；预算耗尽或 budget core/deadline/时钟漂移即 fail closed。
+- 若 45 分钟耗尽，同一 EXP-ID 不得增加预算或继续恢复；变更预算必须新 EXP-ID 和重新授权。
 
 ## 5. AutoDL no-training preflight（本任务不执行）
 
@@ -84,8 +92,8 @@ B11F_DATA_ROOT=/root/autodl-tmp/datasets/SLP_8Region_Pressure_VAL_v1.1
 B11F_CONFIG="$B11F_REPO/configs/experiments/slp8_pm_final_development_fit_v0.1.json"
 B11F_CANDIDATE="$B11F_REPO/configs/experiments/slp8_pm_research_candidate_v0.1.json"
 B11F_EXP_ID=EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
-B11F_GIT_SHA=0f3fb936653460a4fb81093f0e95cc1014e366db
-B11F_CONFIG_SHA=8c1f93e27f7547831cf5ac6da945257f1de653c0d9054bd0b4dee59647992621
+B11F_GIT_SHA=9af268fa168207a269abbef22e522ac04fd6b6c5
+B11F_CONFIG_SHA=a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43
 B11F_CANDIDATE_SHA=34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b
 B11F_FREEZE_SHA=42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
 
@@ -110,10 +118,12 @@ print({"torch": torch.__version__, "cuda": torch.version.cuda,
 PY
 uv run python scripts/validate_slp8_b11f_final_fit_preparation.py "$B11F_CONFIG"
 uv run python scripts/run_slp8_region_final_fit.py --config "$B11F_CONFIG" --validate-only
+uv run python scripts/run_slp8_region_final_fit.py --config "$B11F_CONFIG" --environment-preflight
 ```
 
 Pass 要求：checkout clean 且 exact SHA；release SHA 是 origin/main ancestor；三项文件 hash 一致；GPU 身份
-符合；目标 EXP-ID 目录不存在；validator 与 validate-only 明确输出 TEST=0；没有训练、
+符合；目标 EXP-ID 目录不存在；validator/validate-only/environment-preflight 明确输出 TEST=0；
+environment JSON 与 canonical fingerprint 完整保存在 transcript 中供 Owner 授权；没有训练、
 checkpoint、RUNNING/DONE/FAILED 或正式实验目录写入。完整 transcript 必须回传独立审查。
 
 ## 6. Owner 授权记录
@@ -124,12 +134,13 @@ AutoDL no-training preflight review: PENDING
 Owner authorization: PENDING
 Authorization timestamp: PENDING
 Final EXP-ID: EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
-Runner Git SHA: 0f3fb936653460a4fb81093f0e95cc1014e366db
+Runner Git SHA: 9af268fa168207a269abbef22e522ac04fd6b6c5
 Git dirty: false required
-Config SHA-256: 8c1f93e27f7547831cf5ac6da945257f1de653c0d9054bd0b4dee59647992621
+Config SHA-256: a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43
 Candidate SHA-256: 34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b
 B01 freeze manifest SHA-256: 42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
 AutoDL instance / GPU / PyTorch / CUDA / cuDNN: PENDING
+Authorized environment fingerprint SHA-256: PENDING
 Peak CUDA budget: 8192 MiB
 Total wall budget: 45 minutes
 TEST access: denied / 0
@@ -149,24 +160,27 @@ B11F_CONFIG="$B11F_REPO/configs/experiments/slp8_pm_final_development_fit_v0.1.j
 B11F_CANDIDATE="$B11F_REPO/configs/experiments/slp8_pm_research_candidate_v0.1.json"
 B11F_EXP_ID=EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
 B11F_OUTPUT="$B11F_REPO/outputs/experiments/$B11F_EXP_ID"
-B11F_CONFIG_SHA=8c1f93e27f7547831cf5ac6da945257f1de653c0d9054bd0b4dee59647992621
+B11F_CONFIG_SHA=a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43
 B11F_CANDIDATE_SHA=34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b
 B11F_FREEZE_SHA=42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
+B11F_AUTHORIZED_ENV_SHA=REPLACE_WITH_OWNER_AUTHORIZED_64_CHAR_SHA256
 
 cd "$B11F_REPO"
 test -z "$(git status --porcelain)"
-test "$(git rev-parse HEAD)" = "0f3fb936653460a4fb81093f0e95cc1014e366db"
+test "$(git rev-parse HEAD)" = "9af268fa168207a269abbef22e522ac04fd6b6c5"
 test "$(sha256sum "$B11F_CONFIG" | cut -d' ' -f1)" = "$B11F_CONFIG_SHA"
 test "$(sha256sum "$B11F_CANDIDATE" | cut -d' ' -f1)" = "$B11F_CANDIDATE_SHA"
 test "$(sha256sum "$B11F_FREEZE_DIR/freeze_manifest.json" | cut -d' ' -f1)" = "$B11F_FREEZE_SHA"
 test -d "$B11F_DATA_ROOT"
 test ! -e "$B11F_OUTPUT"
+test "${#B11F_AUTHORIZED_ENV_SHA}" -eq 64
 timeout --signal=INT --kill-after=2m 45m uv run python scripts/run_slp8_region_final_fit.py \
   --config "$B11F_CONFIG" \
   --output-dir "$B11F_OUTPUT" \
   --b01-freeze-dir "$B11F_FREEZE_DIR" \
   --dataset-root "$B11F_DATA_ROOT" \
   --experiment-id "$B11F_EXP_ID" \
+  --authorized-environment-sha256 "$B11F_AUTHORIZED_ENV_SHA" \
   --run-authorized
 ```
 
@@ -182,36 +196,53 @@ B11F_CONFIG="$B11F_REPO/configs/experiments/slp8_pm_final_development_fit_v0.1.j
 B11F_CANDIDATE="$B11F_REPO/configs/experiments/slp8_pm_research_candidate_v0.1.json"
 B11F_EXP_ID=EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
 B11F_OUTPUT="$B11F_REPO/outputs/experiments/$B11F_EXP_ID"
-B11F_CONFIG_SHA=8c1f93e27f7547831cf5ac6da945257f1de653c0d9054bd0b4dee59647992621
+B11F_CONFIG_SHA=a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43
 B11F_CANDIDATE_SHA=34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b
 B11F_FREEZE_SHA=42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04
-B11F_REMAINING_MINUTES=REPLACE_WITH_OWNER_AUTHORIZED_INTEGER_1_TO_44
+B11F_AUTHORIZED_ENV_SHA=REPLACE_WITH_ORIGINAL_OWNER_AUTHORIZED_64_CHAR_SHA256
 
 cd "$B11F_REPO"
-test "$B11F_REMAINING_MINUTES" -ge 1
-test "$B11F_REMAINING_MINUTES" -le 44
 test -z "$(git status --porcelain)"
-test "$(git rev-parse HEAD)" = "0f3fb936653460a4fb81093f0e95cc1014e366db"
+test "$(git rev-parse HEAD)" = "9af268fa168207a269abbef22e522ac04fd6b6c5"
 test "$(sha256sum "$B11F_CONFIG" | cut -d' ' -f1)" = "$B11F_CONFIG_SHA"
 test "$(sha256sum "$B11F_CANDIDATE" | cut -d' ' -f1)" = "$B11F_CANDIDATE_SHA"
 test "$(sha256sum "$B11F_FREEZE_DIR/freeze_manifest.json" | cut -d' ' -f1)" = "$B11F_FREEZE_SHA"
 test -d "$B11F_DATA_ROOT"
+test "${#B11F_AUTHORIZED_ENV_SHA}" -eq 64
 test ! -e "$B11F_OUTPUT/DONE.json"
 test ! -e "$B11F_OUTPUT/FAILED.json"
 if test -e "$B11F_OUTPUT/RUNNING.json" && test -e "$B11F_OUTPUT/STOPPED.json"; then exit 1; fi
 test -e "$B11F_OUTPUT/RUNNING.json" || test -e "$B11F_OUTPUT/STOPPED.json"
-timeout --signal=INT --kill-after=2m "${B11F_REMAINING_MINUTES}m" \
+B11F_REMAINING_SECONDS="$(
+  uv run python - "$B11F_OUTPUT/budget.json" <<'PY'
+import json
+import math
+import sys
+import time
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    budget = json.load(handle)
+remaining = math.floor(float(budget["deadline_utc_epoch_seconds"]) - time.time())
+if not 1 <= remaining <= 2700:
+    raise SystemExit("no valid EXP wall budget remains")
+print(remaining)
+PY
+)"
+timeout --signal=INT --kill-after=2m "${B11F_REMAINING_SECONDS}s" \
   uv run python scripts/run_slp8_region_final_fit.py \
   --config "$B11F_CONFIG" \
   --output-dir "$B11F_OUTPUT" \
   --b01-freeze-dir "$B11F_FREEZE_DIR" \
   --dataset-root "$B11F_DATA_ROOT" \
   --experiment-id "$B11F_EXP_ID" \
+  --authorized-environment-sha256 "$B11F_AUTHORIZED_ENV_SHA" \
   --run-authorized --resume-authorized
 ```
 
-恢复命令中的 timeout 必须改为原预算实际剩余值，不能重新获得 45 分钟。DONE/FAILED、
-身份不一致、环境漂移或预算耗尽均禁止恢复；不得使用 `--force` 或覆盖已有文件。
+恢复的外部 timeout 直接从原 `budget.json` 固定 deadline 计算剩余秒数；runner 随后独立
+核验 budget identity/core/start/deadline/elapsed/remaining，并在每 batch 继续计时。因此
+恢复不会重新获得 45 分钟。DONE/FAILED、身份不一致、环境漂移或预算耗尽均禁止恢复；
+不得使用 `--force` 或覆盖已有文件。
 
 ## 8. Reviewer checklist 与下一 Gate
 
@@ -220,10 +251,15 @@ timeout --signal=INT --kill-after=2m "${B11F_REMAINING_MINUTES}m" \
 - [ ] B01 只加载 TRAIN+VAL；`load_test=False`、`_test_rows is None`、TEST=0。
 - [ ] 模型、seeds/epochs、AdamW 与全部超参数和 B11/B09 冻结合同一致。
 - [ ] no-training preflight 不创建正式输出、不训练、不读取 TEST。
+- [ ] preflight canonical environment fingerprint 被完整留存；首次启动与每次恢复只接受
+  Owner 明确授权的同一 fingerprint，漂移时在创建输出或加载数据前拒绝。
 - [ ] 正式命令具备外部 wall timeout、显存/磁盘门禁与唯一 EXP-ID 输出路径。
-- [ ] Owner 授权时间早于 RUNNING，且精确覆盖 SHA/EXP-ID/环境/预算/命令。
+- [ ] `budget.json` 的首次 start/deadline/core SHA 跨 STOPPED/RUNNING/resume 不变；停机时间
+  计入 2,700 秒，过期、篡改、时钟回退及增加预算均 fail closed。
+- [ ] Owner 授权时间早于首次 RUNNING，且精确覆盖 SHA/EXP-ID/environment fingerprint/
+  2,700 秒预算/正式及恢复命令。
 - [ ] 三个 checkpoint 与 DONE 的 identity/SHA/reload/terminal 审计完整后才进入 B09T。
 
 本准备记录不产生模型性能证据，也不验证真实 wall/peak、跨进程恢复或三个 checkpoint。
 
-下一 Gate：`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`。
+下一 Gate：`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`。

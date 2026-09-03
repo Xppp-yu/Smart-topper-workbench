@@ -1,6 +1,6 @@
 # S2 B11F 运行准备 P1 修复 v0.1
 
-状态：`FIXES_COMPLETE / READY_FOR_RELEASE_BINDING / GPU_NOT_AUTHORIZED / TEST_DENIED`
+状态：`FIXES_COMPLETE / READY_FOR_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`
 
 TASK-ID：`TASK-SLP-B11F-RUN-PREPARATION-P1-FIX-v0.1`
 
@@ -43,6 +43,8 @@ TEST: 0
 
 ## Verified
 
+- 修复 release `9af268fa168207a269abbef22e522ac04fd6b6c5` 已推送；Git/LF config
+  SHA-256 为 `a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43`。
 - 环境 fingerprint 缺失或不匹配时，在 output directory 创建和数据加载之前拒绝。
 - resume authorization 环境漂移、budget core/deadline 篡改、过期与时钟回退均在数据
   加载前拒绝。
@@ -69,5 +71,4 @@ TEST: 0
 
 ## Next Gate
 
-形成新的 clean/pushed runner release SHA，回填运行准备合同后执行独立只读复审；当前
-保持 `B11F_RUN_PREPARATION_P1_FIX / GPU_NOT_AUTHORIZED / TEST_DENIED`。
+`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`。

@@ -400,13 +400,16 @@ Reviewer checklist:
   有限值与严格 JSON 门禁。R05 独立只读复审结论为 `ACCEPT`，无 P0/P1/P2；定向
   31 passed、联合 114 passed，有限 final-epoch resume 与 NaN fail-closed 探针通过；
   TEST=0，GPU NOT RUN。
-- implementation release `0f3fb936653460a4fb81093f0e95cc1014e366db` 已推送，
-  `HEAD == origin/main`。运行准备草案绑定 proposed EXP-ID
-  `EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01`、config/candidate/B01 hash、RTX 4090、
-  8,192 MiB peak 与 proposed 45 分钟 total wall budget；Owner authorization 仍为 PENDING。
-- 下一 Gate：`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`；
-  通过后只运行 AutoDL no-training preflight，再请求 Owner 单独授权。三个 final checkpoint
-  审计完成前 B09T 继续阻塞。
+- 运行准备 R01 独立审查结论 `ITERATE`：首次启动未绑定 Owner-authorized environment，
+  手工剩余分钟不能证明跨恢复累计 45 分钟。当前不授权 AutoDL preflight/GPU/TEST。
+- 两项 P1 已在 release `9af268fa168207a269abbef22e522ac04fd6b6c5` 修复：新增 no-training
+  canonical environment fingerprint 并在首次 output 前 fail-closed 核验；新增原子
+  `budget.json`，固定首次 UTC start/deadline/core SHA，停机时间计入且恢复不重置 2,700 秒。
+  缺失/漂移授权、budget 篡改、deadline 刷新、过期与时钟回退反例覆盖；定向 40 passed、
+  联合 123 passed。proposed EXP-ID 仍未 QUEUED，Owner authorization=PENDING。
+- 下一 Gate：`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW_R02 / GPU_NOT_AUTHORIZED / TEST_DENIED`；
+  R02 ACCEPT 后才可单独授权 AutoDL no-training preflight。三个 final checkpoint 审计完成前
+  B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 
