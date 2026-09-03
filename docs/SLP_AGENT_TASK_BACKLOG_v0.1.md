@@ -425,9 +425,13 @@ Reviewer checklist:
   TEST=0、GPU NOT RUN、AutoDL 未连接。R06 复审发现 summary publish TOCTOU 覆盖竞争；R07
   改用 atomic hard-link no-clobber 并通过竞争/同路径重跑反例，脱敏 summary 纳入 Git 证据。
   技术复审 `ACCEPT`（P0/P1/P2=0，人员独立性限制保留）。Owner 已于 2026-09-04 明确授权
-  R07 closure commit/push；不含 AutoDL 连接或执行。当前 Gate 为
-  `B11F_AUTODL_NO_TRAINING_PREFLIGHT_PREPARATION / AUTODL_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
-  推送新 SHA 后只能另行准备 no-training preflight 授权材料；三个 final
+  R07 closure commit/push；不含 AutoDL 连接或执行。新的 no-training preflight 准备包已
+  固定 runner `a6a5d8e6f8db003149169ee48f71d6e41e445a80`、完整历史 bundle、preflight
+  script、config、candidate 与 B01 manifest SHA；不预留正式 EXP-ID，本地组合回归
+  142 passed。直接技术复审结论 `ACCEPT`（P0/P1/P2=0，人员独立性不声明），Owner 已授权
+  closure commit/push。当前 Gate 为
+  `OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT / AUTODL_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
+  closure push 后才可由 Owner 单独授权精确 no-training preflight。三个 final
   checkpoint 审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
