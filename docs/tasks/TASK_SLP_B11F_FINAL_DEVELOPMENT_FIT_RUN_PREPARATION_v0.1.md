@@ -1,6 +1,6 @@
 # TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1
 
-状态：`PREFLIGHT_ACCEPTED / GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`
+状态：`R01_FAILED_BEFORE_TRAINING_LOOP / AUTHORIZATION_CONSUMED / RUNTIME_FIX_REVIEW_REQUIRED / GPU_NOT_AUTHORIZED / TEST_DENIED`
 
 日期：2026-09-03
 Proposed EXP-ID：`EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01`
@@ -31,7 +31,7 @@ Owner 的“继续推进下去”指令授权创建、验证、提交并推送�
 - 修复 release commit 已推送：`9af268fa168207a269abbef22e522ac04fd6b6c5`。
 - B11F 定向 `40 passed`；B11F+B11+B08/B09 联合回归 `123 passed`；Markdown
   links `6 passed`；validator、validate-only、`py_compile`、`git diff --check` 通过。
-- 所有验证均为 TEST=0；GPU final fit `NOT RUN`。
+- 所有验证与 R01 失败路径均为 TEST=0；GPU final fit 在首个 training batch 前失败。
 
 ## 3. 待审查的冻结对象
 
@@ -131,7 +131,7 @@ checkpoint、RUNNING/DONE/FAILED 或正式实验目录写入。完整 transcript
 ```text
 Run-preparation independent review: ACCEPT R02; no P0/P1/P2
 AutoDL no-training preflight review: ACCEPT; no P0/P1/P2
-Owner authorization: AUTHORIZED — frozen three-seed B11F final fit only
+Owner authorization: CONSUMED BY FAILED R01 — not valid for any new runner or EXP-ID
 Authorization timestamp: 2026-09-03T18:40:09+08:00 (Owner chat authorization)
 Final EXP-ID: EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01
 Runner Git SHA: 9af268fa168207a269abbef22e522ac04fd6b6c5
@@ -146,10 +146,10 @@ Authorized environment fingerprint SHA-256: a5a9342b18d00b614355e63ce056a7edd92d
 Peak CUDA budget: 8192 MiB
 Total wall budget: 45 minutes
 TEST access: denied / 0
-Exact launch transcript: AUTHORIZED / NOT RUN
+Exact launch transcript: RUN / FAILED before first training batch
 ```
 
-## 7. 冻结正式命令（已授权，仅允许一次初始启动）
+## 7. 冻结正式命令（历史 R01；已执行并失败，禁止重跑或恢复）
 
 只有 §6 全部完成且 Owner 明确授权精确 EXP-ID/SHA/环境/预算/命令后，才可执行：
 
@@ -271,4 +271,4 @@ timeout --signal=INT --kill-after=2m "${B11F_REMAINING_SECONDS}s" \
 
 本准备记录不产生模型性能证据，也不验证真实 wall/peak、跨进程恢复或三个 checkpoint。
 
-下一 Gate：`B11F_GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`。
+下一 Gate：`B11F_RUNTIME_FIX_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`。

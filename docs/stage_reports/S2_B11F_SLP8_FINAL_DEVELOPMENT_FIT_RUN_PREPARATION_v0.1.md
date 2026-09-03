@@ -1,6 +1,6 @@
 # S2 B11F SLP8 最终开发集拟合运行准备 v0.1
 
-状态：`PREFLIGHT_ACCEPTED / GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`
+状态：`R01_FAILED_BEFORE_TRAINING_LOOP / AUTHORIZATION_CONSUMED / RUNTIME_FIX_REVIEW_REQUIRED / GPU_NOT_AUTHORIZED / TEST_DENIED`
 
 TASK-ID：`TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1`
 
@@ -13,7 +13,8 @@ TASK-ID：`TASK-SLP-B11F-FINAL-DEVELOPMENT-FIT-RUN-PREPARATION-v0.1`
 - 冻结 RTX 4090、8,192 MiB peak、至少 1 GiB 可用空间和 runner 内部 2,700 秒
   EXP-level UTC deadline；恢复不会重置。
 - AutoDL no-training preflight 已在 RTX 4090 上完成并审查 `ACCEPT`；未训练、TEST=0。
-- Owner 已于 `2026-09-03T18:40:09+08:00` 授权冻结三 seed final fit；TEST 保持 denied / 0。
+- Owner 于 `2026-09-03T18:40:09+08:00` 授权冻结三 seed final fit；R01 在首个 training
+  batch 前因 class-weight NumPy→Torch 接口错误失败，该授权已消耗，不得用于恢复或新 run。
 
 ## 实际本地核验
 
@@ -58,8 +59,8 @@ PASS
 
 three bash command blocks: syntax PASS (`bash -n`)
 
-GPU/CUDA preflight: NOT RUN
-GPU final fit: NOT RUN
+GPU/CUDA preflight: PASS（后续 AutoDL transcript）
+GPU final fit: FAILED_BEFORE_FIRST_TRAINING_BATCH
 TEST: 0
 ```
 
@@ -125,4 +126,4 @@ review: ACCEPT; no P0/P1/P2
 
 ## Next Gate
 
-`B11F_GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`
+`B11F_RUNTIME_FIX_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`

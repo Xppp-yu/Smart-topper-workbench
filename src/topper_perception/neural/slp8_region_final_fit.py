@@ -505,7 +505,9 @@ def run_final_fit(*, protocol: FinalFitProtocol, freeze_dir: Path, data_root: Pa
                 raise FinalFitError(f"seed {seed} final checkpoint exists without completion carrier; refusing overwrite")
             model = build_model(MODEL, device)
             optimizer = optim.AdamW(model.parameters(), lr=protocol.lr, weight_decay=protocol.weight_decay)
-            weights = class_weights_to_tensor(class_weights).to(device)
+            weights = torch.from_numpy(
+                class_weights_to_tensor(class_weights)
+            ).to(device).to(torch.float32)
             loader = build_dataloader(dataset, batch_size=protocol.batch_size, shuffle=True)
             segment_started = time.monotonic()
             accumulated_wall_seconds = 0.0

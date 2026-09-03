@@ -384,7 +384,7 @@ Reviewer checklist:
 
 ### TASK-SLP-B11F：最终开发集拟合
 
-- 状态：`PREFLIGHT_ACCEPTED / GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`。
+- 状态：`R01_FAILED_BEFORE_TRAINING_LOOP / RUNTIME_FIX_READY_FOR_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`。
 - 已实现冻结 DeepLabV3+-lite 在全部 91 development subjects / 4,095 TRAIN+VAL
   samples 上的三 seed final-fit 入口，固定 epochs 15/20/12，不使用 early stopping，
   不产生伪 validation 分数。
@@ -413,8 +413,10 @@ Reviewer checklist:
   正式输出缺失、validator/validate-only、TEST=0 均通过；授权 environment fingerprint 为
   `a5a9342b...ba045669`。
 - Owner 已于 `2026-09-03T18:40:09+08:00` 授权精确三 seed final fit；下一 Gate：
-  `B11F_GPU_FINAL_FIT_AUTHORIZED / READY_FOR_INITIAL_RUN / TEST_DENIED`。三个 final checkpoint
-  审计完成前 B09T 继续阻塞。
+  R01 在首个 training batch 前因 class-weight NumPy→Torch 接口错误失败；旧 EXP-ID 与授权
+  均不可复用。修复已与 B09 转换路径对齐并以真实 NumPy mock 回归，定向 40、联合 123
+  passed。下一 Gate 为 `B11F_RUNTIME_FIX_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`；三个
+  final checkpoint 审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 

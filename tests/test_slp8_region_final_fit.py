@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -154,7 +155,7 @@ def test_three_seed_success_writes_identity_and_reload_evidence(tmp_path: Path, 
     monkeypatch.setattr(ff, "load_development_samples", lambda path: [sample])
     monkeypatch.setattr(ff, "compute_fold_normalization_from_samples", lambda *a, **k: object())
     monkeypatch.setattr(ff, "compute_fold_class_weights_from_samples", lambda *a, **k: object())
-    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: torch.ones(9))
+    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: np.ones(9, dtype=np.float64))
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     batches = [{"pressure": torch.ones(1, 1, 4, 4), "label": torch.zeros(1, 4, 4, dtype=torch.long)}]
     monkeypatch.setattr(ff, "build_dataloader", lambda *a, **k: batches)
@@ -263,7 +264,7 @@ def test_resumed_training_matches_uninterrupted_parameters(tmp_path: Path, monke
     monkeypatch.setattr(ff, "load_development_samples", lambda path: [sample])
     monkeypatch.setattr(ff, "compute_fold_normalization_from_samples", lambda *a, **k: object())
     monkeypatch.setattr(ff, "compute_fold_class_weights_from_samples", lambda *a, **k: object())
-    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: torch.ones(9))
+    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: np.ones(9, dtype=np.float64))
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     monkeypatch.setattr(ff, "build_dataloader", lambda *a, **k: batches)
     monkeypatch.setattr(ff, "build_plan", lambda p: ((42, 2), (123, 2), (2026, 2)))
@@ -371,7 +372,7 @@ def test_resume_after_final_epoch_restores_finite_cumulative_diagnostics(tmp_pat
     monkeypatch.setattr(ff, "load_development_samples", lambda path: [object()])
     monkeypatch.setattr(ff, "compute_fold_normalization_from_samples", lambda *a, **k: object())
     monkeypatch.setattr(ff, "compute_fold_class_weights_from_samples", lambda *a, **k: object())
-    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: torch.ones(9))
+    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: np.ones(9, dtype=np.float64))
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     batches = [{"pressure": torch.ones(1, 1, 1, 1), "label": torch.zeros(1, 1, 1, dtype=torch.long)}]
     monkeypatch.setattr(ff, "build_dataloader", lambda *a, **k: batches)
@@ -407,7 +408,7 @@ def test_reload_audit_peak_is_checked_before_completion(tmp_path: Path, monkeypa
     monkeypatch.setattr(ff, "load_development_samples", lambda path: [object()])
     monkeypatch.setattr(ff, "compute_fold_normalization_from_samples", lambda *a, **k: object())
     monkeypatch.setattr(ff, "compute_fold_class_weights_from_samples", lambda *a, **k: object())
-    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: torch.ones(9))
+    monkeypatch.setattr(ff, "class_weights_to_tensor", lambda value: np.ones(9, dtype=np.float64))
     monkeypatch.setattr(ff, "Slp8RegionDataset", lambda *a, **k: object())
     batches = [{"pressure": torch.ones(1, 1, 1, 1), "label": torch.zeros(1, 1, 1, dtype=torch.long)}]
     monkeypatch.setattr(ff, "build_dataloader", lambda *a, **k: batches)
