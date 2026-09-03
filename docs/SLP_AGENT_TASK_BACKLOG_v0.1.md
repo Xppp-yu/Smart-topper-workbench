@@ -400,8 +400,13 @@ Reviewer checklist:
   有限值与严格 JSON 门禁。R05 独立只读复审结论为 `ACCEPT`，无 P0/P1/P2；定向
   31 passed、联合 114 passed，有限 final-epoch resume 与 NaN fail-closed 探针通过；
   TEST=0，GPU NOT RUN。
-- 下一 Gate：形成 clean release SHA；另立运行准备记录，冻结新 EXP-ID、预算和执行环境，
-  再请求 Owner 单独授权。三个 final checkpoint 审计完成前 B09T 继续阻塞。
+- implementation release `0f3fb936653460a4fb81093f0e95cc1014e366db` 已推送，
+  `HEAD == origin/main`。运行准备草案绑定 proposed EXP-ID
+  `EXP-SLP-B11F-PM-FINAL-FIT-20260903-AUTODL-R01`、config/candidate/B01 hash、RTX 4090、
+  8,192 MiB peak 与 proposed 45 分钟 total wall budget；Owner authorization 仍为 PENDING。
+- 下一 Gate：`B11F_RUN_PREPARATION_INDEPENDENT_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`；
+  通过后只运行 AutoDL no-training preflight，再请求 Owner 单独授权。三个 final checkpoint
+  审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 
