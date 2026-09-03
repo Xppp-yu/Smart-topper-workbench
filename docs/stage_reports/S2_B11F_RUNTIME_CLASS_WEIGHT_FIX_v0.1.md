@@ -59,4 +59,8 @@ AutoDL 与本地的 SHA-256 均为
 
 ## 下一 Gate
 
-`B11F_RUNTIME_FIX_EVIDENCE_READY_FOR_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`
+独立复审已于 2026-09-03 `ACCEPT`：P0/P1/P2 均为 0；R01 唯一 FAILED、首 batch
+前 traceback、environment/budget/hash/identity/预算数学关系、TEST=0 carriers 与仅限
+NumPy→Torch 的 runtime diff 均复核通过。证据清单补齐后 9/9 文件 SHA-256 匹配。
+
+`B11F_PRODUCTION_WIRING_SMOKE_PREPARATION / GPU_NOT_AUTHORIZED / TEST_DENIED`

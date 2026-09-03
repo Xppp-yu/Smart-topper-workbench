@@ -384,7 +384,7 @@ Reviewer checklist:
 
 ### TASK-SLP-B11F：最终开发集拟合
 
-- 状态：`R01_FAILED_BEFORE_TRAINING_LOOP / RUNTIME_FIX_READY_FOR_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`。
+- 状态：`R01_FAILED_BEFORE_TRAINING_LOOP / RUNTIME_FIX_ACCEPTED / PRODUCTION_WIRING_SMOKE_NEXT / GPU_NOT_AUTHORIZED / TEST_DENIED`。
 - 已实现冻结 DeepLabV3+-lite 在全部 91 development subjects / 4,095 TRAIN+VAL
   samples 上的三 seed final-fit 入口，固定 epochs 15/20/12，不使用 early stopping，
   不产生伪 validation 分数。
@@ -416,9 +416,11 @@ Reviewer checklist:
   R01 在首个 training batch 前因 class-weight NumPy→Torch 接口错误失败；旧 EXP-ID 与授权
   均不可复用。修复已与 B09 转换路径对齐并以真实 NumPy mock 回归，定向 40、联合 123
   passed。R01 原始 `FAILED/environment/budget` JSON、root inventory、文件 SHA 清单与 operator
-  traceback 已同步至 `docs/evidence/b11f_r01_failure`，等待独立复审。下一 Gate 为
-  `B11F_RUNTIME_FIX_EVIDENCE_READY_FOR_REVIEW / GPU_NOT_AUTHORIZED / TEST_DENIED`；三个
-  final checkpoint 审计完成前 B09T 继续阻塞。
+  traceback 已同步至 `docs/evidence/b11f_r01_failure`。独立复审确认唯一 FAILED、首 batch
+  前 traceback、environment/budget/hash/identity/预算数学关系、TEST=0 与 runtime diff
+  全部通过；证据清单 9/9 SHA 匹配，结论 `ACCEPT`。下一 Gate 为
+  `B11F_PRODUCTION_WIRING_SMOKE_PREPARATION / GPU_NOT_AUTHORIZED / TEST_DENIED`；三个 final
+  checkpoint 审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 

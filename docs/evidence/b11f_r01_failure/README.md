@@ -9,11 +9,11 @@ This directory preserves the immutable terminal evidence for
   policy prohibits committing archives).
 - Remote and local archive SHA-256:
   `ab5d97a2d9a6cf703e36efc1dc9815f2fdb4ff80fc819654c6fe318277731c98`.
-- The seven text/JSON files were copied byte-for-byte from that archive. Their checksums are in
-  `SHA256SUMS`; an independent local recomputation matched every entry.
+- The seven source text/JSON files were copied byte-for-byte from that archive. All seven
+  checksums are in `SHA256SUMS`; an independent local recomputation matched every entry.
 - `operator_traceback.png` and `operator_terminal_audit.png` are the original operator-captured
-  terminal screenshots. They provide the traceback and the terminal-carrier inspection that
-  accompanied the exported machine-readable files.
+  terminal screenshots. Their checksums are also in `SHA256SUMS`; they provide the traceback and
+  the terminal-carrier inspection that accompanied the exported machine-readable files.
 
 ## Independently checkable conclusions
 
