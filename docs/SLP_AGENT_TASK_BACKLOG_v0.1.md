@@ -465,6 +465,9 @@ Reviewer checklist:
 - PR #29 初审两项 P1 已修：validator 现在锁定完整 canonical protocol identity，并精确
   核对 runner/B01/candidate/EXP-ID/checkpoint 及全部合同字段；三模型 hard prediction
   全异时固定取 seed 42 作为预声明 tie-break，同时强制报告触发像素数与比例。
+- PR #29 已在 `3e853d7` 独立复审 ACCEPT，并 squash merge 为 `b671b8d`。后续单一任务
+  已实现 no-TEST hard-prediction evaluator、仅 validate/synthetic 的 CLI 与 synthetic
+  smoke；源码无 B01 TEST loader、opt-in、CUDA 或正式执行入口，当前待独立审查。
 
 ## 5. 产品数据后续任务，不属于 SLP
 
