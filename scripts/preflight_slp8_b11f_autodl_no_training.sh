@@ -4,13 +4,13 @@ set -euo pipefail
 # This script is preparation-only until the Owner authorizes this exact file,
 # runner SHA and bundle SHA. It probes the environment but performs no training.
 readonly B11F_BUNDLE="/root/autodl-tmp/smarttopper-b11f-main-a6a5d8e.bundle"
-readonly B11F_REPO="/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e"
+readonly B11F_REPO="/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e-r02"
 readonly B11F_FREEZE_DIR="/root/autodl-tmp/data/processed/slp8_training_tables_v0.1"
 readonly B11F_DATA_ROOT="/root/autodl-tmp/datasets/SLP_8Region_Pressure_VAL_v1.1"
 readonly B11F_GIT_SHA="a6a5d8e6f8db003149169ee48f71d6e41e445a80"
 readonly B11F_BUNDLE_SHA="5e9d855397face954cac18e3dbadb26449129f828f77d45412b3c4f30d8e6bb2"
 readonly B11F_CONFIG_SHA="a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43"
-readonly B11F_CANDIDATE_SHA="839c9482c69cf34d3c91c3acb3c7a36cb4d199117d0d6eb2ceb7906bac52b994"
+readonly B11F_CANDIDATE_SHA="34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b"
 readonly B11F_FREEZE_SHA="42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04"
 
 test -f "$B11F_BUNDLE"

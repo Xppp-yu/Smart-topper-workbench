@@ -429,9 +429,13 @@ Reviewer checklist:
   固定 runner `a6a5d8e6f8db003149169ee48f71d6e41e445a80`、完整历史 bundle、preflight
   script、config、candidate 与 B01 manifest SHA；不预留正式 EXP-ID，本地组合回归
   142 passed。直接技术复审结论 `ACCEPT`（P0/P1/P2=0，人员独立性不声明），Owner 已授权
-  closure commit/push。当前 Gate 为
-  `OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT / AUTODL_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
-  closure push 后才可由 Owner 单独授权精确 no-training preflight。三个 final
+  closure commit/push。AutoDL no-training preflight R01 随后在 candidate SHA 门禁处退出 1：
+  Windows working-tree hash 与 Linux Git blob hash 口径不同；bundle/runner/config/B01/dataset/
+  GPU/output 边界均通过，未进入环境 fingerprint、训练或 TEST。R02 改为按 runner Git blob
+  计算 tracked-input SHA，并使用新 script/checkout 路径；R02 定向 14 passed、组合回归
+  144 passed，实际 LF 上传 payload 的 Bash 语法及 SHA 均通过。当前 Gate 为
+  `OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02 / AUTODL_R02_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
+  R02 本地验证与新 release 冻结后才可精确授权。三个 final
   checkpoint 审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价

@@ -34,6 +34,19 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_lf_normalized(path: Path) -> str:
+    """Hash a shell-script transfer payload independent of Windows checkout EOLs."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _git_blob_sha256(repo_root: Path, revision: str, path: str) -> str:
+    payload = subprocess.check_output(
+        ["git", "show", f"{revision}:{path}"],
+        cwd=repo_root,
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -104,17 +117,28 @@ def validate(manifest_path: Path, repo_root: Path = ROOT) -> list[str]:
         errors.append("bundle ref/history contract mismatch")
 
     inputs = payload.get("inputs", {})
-    for key in ("config", "candidate", "b01_freeze_manifest"):
+    for key in ("config", "candidate"):
         item = inputs.get(key, {})
-        local_path = item.get("path", item.get("local_path", ""))
-        path = repo_root / str(local_path)
+        tracked_path = str(item.get("path", ""))
         expected = item.get("sha256")
         if not isinstance(expected, str) or not SHA256_RE.fullmatch(expected):
             errors.append(f"{key} SHA-256 invalid")
-        elif not path.is_file():
-            errors.append(f"{key} file missing")
-        elif _sha256(path) != expected:
-            errors.append(f"{key} SHA-256 mismatch")
+        elif isinstance(runner_sha, str) and GIT_SHA_RE.fullmatch(runner_sha):
+            try:
+                if _git_blob_sha256(repo_root, runner_sha, tracked_path) != expected:
+                    errors.append(f"{key} Git blob SHA-256 mismatch")
+            except subprocess.CalledProcessError:
+                errors.append(f"{key} Git blob missing at runner SHA")
+
+    freeze = inputs.get("b01_freeze_manifest", {})
+    freeze_path = repo_root / str(freeze.get("local_path", ""))
+    freeze_expected = freeze.get("sha256")
+    if not isinstance(freeze_expected, str) or not SHA256_RE.fullmatch(freeze_expected):
+        errors.append("b01_freeze_manifest SHA-256 invalid")
+    elif not freeze_path.is_file():
+        errors.append("b01_freeze_manifest file missing")
+    elif _sha256(freeze_path) != freeze_expected:
+        errors.append("b01_freeze_manifest SHA-256 mismatch")
 
     preflight = payload.get("preflight", {})
     required_false = (
@@ -130,6 +154,12 @@ def validate(manifest_path: Path, repo_root: Path = ROOT) -> list[str]:
         errors.append("preflight must not reserve or use a formal EXP-ID")
     if preflight.get("environment_probe_only") is not True:
         errors.append("preflight must remain an environment probe only")
+    remote_script_path = preflight.get("remote_script_path")
+    if (
+        not isinstance(remote_script_path, str)
+        or remote_script_path != "/root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r02.sh"
+    ):
+        errors.append("R02 remote preflight script path mismatch")
     script_path = repo_root / str(preflight.get("script", ""))
     script_sha = preflight.get("script_sha256")
     if not isinstance(script_sha, str) or not SHA256_RE.fullmatch(script_sha):
@@ -137,7 +167,11 @@ def validate(manifest_path: Path, repo_root: Path = ROOT) -> list[str]:
     if not script_path.is_file():
         errors.append("preflight script missing")
     else:
-        if isinstance(script_sha, str) and SHA256_RE.fullmatch(script_sha) and _sha256(script_path) != script_sha:
+        if (
+            isinstance(script_sha, str)
+            and SHA256_RE.fullmatch(script_sha)
+            and _sha256_lf_normalized(script_path) != script_sha
+        ):
             errors.append("preflight script SHA-256 mismatch")
         source = script_path.read_text(encoding="utf-8")
         fixed_paths = {
@@ -166,7 +200,7 @@ def validate(manifest_path: Path, repo_root: Path = ROOT) -> list[str]:
     test_gate = payload.get("test_gate", {})
     if test_gate != {"test_access": False, "test_rows": 0, "test_labels": 0, "test_onehot": 0}:
         errors.append("TEST gate must remain false/zero")
-    if payload.get("next_gate") != "OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT":
+    if payload.get("next_gate") != "OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02":
         errors.append("next gate mismatch")
     return errors
 
@@ -182,7 +216,7 @@ def main() -> int:
         print("B11F_AUTODL_PREFLIGHT_PREPARATION_VALIDATION_FAILED")
         return 1
     print("summary: PASS (exact bundle/input hashes and no-training boundaries)")
-    print("B11F_AUTODL_PREFLIGHT_PREPARATION_VALIDATION_PASSED TEST=0 AUTODL_NOT_AUTHORIZED GPU_NOT_RUN")
+    print("B11F_AUTODL_PREFLIGHT_PREPARATION_VALIDATION_PASSED TEST=0 AUTODL_R02_NOT_AUTHORIZED GPU_NOT_RUN")
     return 0
 
 
