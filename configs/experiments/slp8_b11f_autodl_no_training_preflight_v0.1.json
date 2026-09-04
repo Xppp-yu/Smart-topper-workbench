@@ -34,9 +34,9 @@
   },
   "preflight": {
     "script": "scripts/preflight_slp8_b11f_autodl_no_training.sh",
-    "script_sha256": "a6dc9a6530ebe0af33659c95fd833a51ee4d6c960ee8d77469f8470557d0327e",
-    "remote_script_path": "/root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r02.sh",
-    "checkout_path": "/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e-r02",
+    "script_sha256": "e9fd730e8c8cbeb3f13508c8adb1a5765bebfd0e676a884322c29387ed27519c",
+    "remote_script_path": "/root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r03.sh",
+    "checkout_path": "/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e-r03",
     "checkout_may_be_created": true,
     "formal_experiment_id": null,
     "formal_output_may_be_created": false,
@@ -58,5 +58,5 @@
     "test_labels": 0,
     "test_onehot": 0
   },
-  "next_gate": "OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02"
+  "next_gate": "OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R03"
 }

@@ -4,7 +4,7 @@ set -euo pipefail
 # This script is preparation-only until the Owner authorizes this exact file,
 # runner SHA and bundle SHA. It probes the environment but performs no training.
 readonly B11F_BUNDLE="/root/autodl-tmp/smarttopper-b11f-main-a6a5d8e.bundle"
-readonly B11F_REPO="/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e-r02"
+readonly B11F_REPO="/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e-r03"
 readonly B11F_FREEZE_DIR="/root/autodl-tmp/data/processed/slp8_training_tables_v0.1"
 readonly B11F_DATA_ROOT="/root/autodl-tmp/datasets/SLP_8Region_Pressure_VAL_v1.1"
 readonly B11F_GIT_SHA="a6a5d8e6f8db003149169ee48f71d6e41e445a80"
@@ -39,7 +39,7 @@ if test -d "$B11F_REPO/outputs/experiments"; then
 fi
 
 test "$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1)" = "NVIDIA GeForce RTX 4090"
-uv run python - <<'PY'
+uv run --extra neural python - <<'PY'
 import json
 import torch
 
@@ -57,9 +57,9 @@ assert payload["gpu_name"] == "NVIDIA GeForce RTX 4090"
 print(json.dumps(payload, allow_nan=False, sort_keys=True))
 PY
 
-uv run python scripts/validate_slp8_b11f_final_fit_preparation.py "$B11F_CONFIG"
-uv run python scripts/run_slp8_region_final_fit.py --config "$B11F_CONFIG" --validate-only
-uv run python scripts/run_slp8_region_final_fit.py --config "$B11F_CONFIG" --environment-preflight
+uv run --extra neural python scripts/validate_slp8_b11f_final_fit_preparation.py "$B11F_CONFIG"
+uv run --extra neural python scripts/run_slp8_region_final_fit.py --config "$B11F_CONFIG" --validate-only
+uv run --extra neural python scripts/run_slp8_region_final_fit.py --config "$B11F_CONFIG" --environment-preflight
 
 if test -d "$B11F_REPO/outputs/experiments"; then
   test -z "$(find "$B11F_REPO/outputs/experiments" -mindepth 1 -maxdepth 1 ! -name .gitkeep -print -quit)"

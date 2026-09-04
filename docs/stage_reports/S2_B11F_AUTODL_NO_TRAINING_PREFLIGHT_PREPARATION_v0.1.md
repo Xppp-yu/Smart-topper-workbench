@@ -17,7 +17,7 @@
   `5e9d855397face954cac18e3dbadb26449129f828f77d45412b3c4f30d8e6bb2`
 - Bundle size: `2,150,560 bytes`
 - Preflight script SHA-256:
-  `a6dc9a6530ebe0af33659c95fd833a51ee4d6c960ee8d77469f8470557d0327e`
+  `e9fd730e8c8cbeb3f13508c8adb1a5765bebfd0e676a884322c29387ed27519c`
 - Final-fit config SHA-256:
   `a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43`
 - Candidate SHA-256:
@@ -28,8 +28,11 @@
 
 The old final-fit R01 EXP-ID and authorization remain consumed and cannot be resumed, overwritten or
 reused. AutoDL no-training preflight R01 failed closed before environment collection because the
-Windows candidate working-tree SHA was incorrectly bound instead of the Linux Git blob SHA. R02 uses
-a new script hash, script path and checkout path; R01 evidence remains untouched.
+Windows candidate working-tree SHA was incorrectly bound instead of the Linux Git blob SHA. R02 used
+a corrected Git-blob hash and fresh paths, then failed before environment collection because plain
+`uv run` omitted the project-declared `neural` extra and produced `ModuleNotFoundError: torch`. R03
+uses `uv run --extra neural` consistently and fresh script/checkout paths; R01/R02 evidence remains
+untouched.
 
 ## 3. Prepared boundary
 
@@ -68,23 +71,23 @@ Temporary-directory bundle clone and detached checkout probe
 PASS; HEAD=origin/main=a6a5d8e6f8db003149169ee48f71d6e41e445a80; dirty=false.
 
 uv run python scripts/validate_slp8_b11f_autodl_preflight_preparation.py
-PASS; exact bundle/script/input hashes; TEST=0; AUTODL_R02_NOT_AUTHORIZED; GPU_NOT_RUN.
+PASS; exact bundle/script/input hashes; TEST=0; AUTODL_R03_NOT_AUTHORIZED; GPU_NOT_RUN.
 
 uv run python -m pytest tests/test_slp8_b11f_autodl_preflight_preparation.py -q
-14 passed in 5.07s.
+14 passed in 5.22s.
 
 uv run python -m pytest tests/test_slp8_b11f_autodl_preflight_preparation.py \
   tests/test_slp8_b11f_production_wiring.py \
   tests/test_slp8_region_final_fit.py \
   tests/test_slp8_b11_candidate_freeze.py \
   tests/test_slp8_region_full.py -q
-144 passed in 189.49s.
+144 passed in 160.95s.
 
-bash -n outputs/analysis/preflight_slp8_b11f_autodl_no_training_r02.lf.sh
+bash -n outputs/analysis/preflight_slp8_b11f_autodl_no_training_r03.lf.sh
 PASS against the exact ignored LF transfer payload.
 
-Get-FileHash -Algorithm SHA256 outputs/analysis/preflight_slp8_b11f_autodl_no_training_r02.lf.sh
-PASS; A6DC9A6530EBE0AF33659C95FD833A51EE4D6C960EE8D77469F8470557D0327E.
+Get-FileHash -Algorithm SHA256 outputs/analysis/preflight_slp8_b11f_autodl_no_training_r03.lf.sh
+PASS; E9FD730E8C8CBEB3F13508C8ADB1A5765BEBFD0E676A884322C29387ED27519C.
 
 uv run python -m py_compile scripts/validate_slp8_b11f_autodl_preflight_preparation.py
 PASS.
@@ -136,7 +139,9 @@ git rev-list --left-right --count HEAD...origin/main
 
 ### Unverified / NOT RUN
 
-- R02 exact script upload and fresh checkout: `NOT RUN`.
+- R02 created only its fresh checkout and `.venv`, then exited `1` at the first Torch import;
+  no environment fingerprint, formal output, training or TEST access occurred.
+- R03 exact script upload and fresh checkout: `NOT RUN`.
 - Real PyTorch/CUDA/cuDNN payload and canonical environment fingerprint: `NOT RUN`.
 - GPU final fit, resume, wall-time/VRAM behavior and three final checkpoints: `NOT RUN`.
 - TEST loading or final evaluation: `NOT RUN / DENIED`.
@@ -156,4 +161,4 @@ formal EXP-ID or GPU final fit authorization.
 
 ## 8. Current Gate
 
-`OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02 / AUTODL_R02_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`
+`OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R03 / AUTODL_R03_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`
