@@ -440,6 +440,12 @@ Reviewer checklist:
   `OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R03 / AUTODL_R03_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
   R03 本地验证与新 release 冻结后才可精确授权。三个 final
   checkpoint 审计完成前 B09T 继续阻塞。
+- AutoDL no-training preflight R03 transcript 已回传并复审 `ACCEPT`：exitcode `0`，canonical
+  environment fingerprint `a5a9342b...4569` 独立重算一致，`TEST=0`、
+  `GPU_TRAINING_NOT_RUN`、`TRAINING_NOT_STARTED`。正式 final-fit R02 授权包另立
+  `TASK-SLP-B11F-FINAL-FIT-R02-AUTHORIZATION-PACKAGE-v0.1`，固定新 EXP-ID、runner/bundle/
+  config/candidate/B01/environment/launcher SHA、连续 2700 秒预算及 fail-closed run/resume
+  wrapper；当前仍为 `GPU_NOT_AUTHORIZED / TEST_DENIED`。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 
