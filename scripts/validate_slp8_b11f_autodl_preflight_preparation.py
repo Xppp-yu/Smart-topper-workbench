@@ -157,9 +157,9 @@ def validate(manifest_path: Path, repo_root: Path = ROOT) -> list[str]:
     remote_script_path = preflight.get("remote_script_path")
     if (
         not isinstance(remote_script_path, str)
-        or remote_script_path != "/root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r02.sh"
+        or remote_script_path != "/root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r03.sh"
     ):
-        errors.append("R02 remote preflight script path mismatch")
+        errors.append("R03 remote preflight script path mismatch")
     script_path = repo_root / str(preflight.get("script", ""))
     script_sha = preflight.get("script_sha256")
     if not isinstance(script_sha, str) or not SHA256_RE.fullmatch(script_sha):
@@ -196,11 +196,14 @@ def validate(manifest_path: Path, repo_root: Path = ROOT) -> list[str]:
         for required in ("--validate-only", "--environment-preflight", "TRAINING_NOT_STARTED", "TEST=0"):
             if required not in source:
                 errors.append(f"preflight script missing required marker/command: {required}")
+        uv_run_lines = [line.strip() for line in source.splitlines() if line.strip().startswith("uv run ")]
+        if not uv_run_lines or any("uv run --extra neural python" not in line for line in uv_run_lines):
+            errors.append("every preflight uv run must select the locked neural extra")
 
     test_gate = payload.get("test_gate", {})
     if test_gate != {"test_access": False, "test_rows": 0, "test_labels": 0, "test_onehot": 0}:
         errors.append("TEST gate must remain false/zero")
-    if payload.get("next_gate") != "OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02":
+    if payload.get("next_gate") != "OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R03":
         errors.append("next gate mismatch")
     return errors
 
@@ -216,7 +219,7 @@ def main() -> int:
         print("B11F_AUTODL_PREFLIGHT_PREPARATION_VALIDATION_FAILED")
         return 1
     print("summary: PASS (exact bundle/input hashes and no-training boundaries)")
-    print("B11F_AUTODL_PREFLIGHT_PREPARATION_VALIDATION_PASSED TEST=0 AUTODL_R02_NOT_AUTHORIZED GPU_NOT_RUN")
+    print("B11F_AUTODL_PREFLIGHT_PREPARATION_VALIDATION_PASSED TEST=0 AUTODL_R03_NOT_AUTHORIZED GPU_NOT_RUN")
     return 0
 
 

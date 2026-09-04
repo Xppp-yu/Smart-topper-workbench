@@ -18,14 +18,17 @@ or access TEST.
 - Complete-history bundle: `outputs/analysis/smarttopper-b11f-main-a6a5d8e.bundle`
 - Bundle SHA-256: `5e9d855397face954cac18e3dbadb26449129f828f77d45412b3c4f30d8e6bb2`
 - Bundle size: `2,150,560 bytes`
-- R02 preflight script SHA-256: `a6dc9a6530ebe0af33659c95fd833a51ee4d6c960ee8d77469f8470557d0327e`
-- R02 remote script: `/root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r02.sh`
+- R03 preflight script SHA-256: `e9fd730e8c8cbeb3f13508c8adb1a5765bebfd0e676a884322c29387ed27519c`
+- R03 remote script: `/root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r03.sh`
 - Formal EXP-ID: `NONE / NOT RESERVED`
 
 The previous final-fit R01 EXP-ID, authorization and environment fingerprint are consumed and must
 not be reused or resumed. AutoDL no-training preflight R01 also failed closed before environment
 collection because its Windows working-tree candidate SHA did not equal the Linux Git blob SHA; its
-transcript, script and checkout must not be overwritten or reused by R02.
+transcript, script and checkout must not be overwritten or reused. R02 passed the corrected hash gate
+but failed before environment collection because plain `uv run` omitted the declared `neural` extra;
+its transcript, exitcode, script and checkout are also consumed and preserved. R03 must select the
+locked neural dependency set with `uv run --extra neural` on every Python invocation.
 
 ## 3. Allowed changes
 
@@ -44,7 +47,7 @@ Production runner/config/candidate/B01 artifacts and raw datasets are read-only.
 The exact prepared command is:
 
 ```bash
-bash /root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r02.sh
+bash /root/autodl-tmp/preflight_slp8_b11f_autodl_no_training_r03.sh
 ```
 
 The uploaded script must be byte-identical to
@@ -53,7 +56,7 @@ release commit, runner SHA, bundle SHA, script SHA and the four input identities
 may be executed.
 
 The script may create only a fresh checkout at
-`/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e-r02`. It may inspect GPU identity and collect the
+`/root/autodl-tmp/smarttopper-b11f-preflight-a6a5d8e-r03`. It may inspect GPU identity and collect the
 canonical environment fingerprint. It may not create anything under `outputs/experiments/` or call
 any formal run/resume argument.
 
@@ -91,4 +94,4 @@ The Owner authorized closure commit/push after direct technical review on `2026-
 authorization does not permit an AutoDL connection, preflight execution, GPU training or TEST
 access.
 
-`OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02 / AUTODL_R02_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`
+`OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R03 / AUTODL_R03_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`

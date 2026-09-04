@@ -433,9 +433,12 @@ Reviewer checklist:
   Windows working-tree hash 与 Linux Git blob hash 口径不同；bundle/runner/config/B01/dataset/
   GPU/output 边界均通过，未进入环境 fingerprint、训练或 TEST。R02 改为按 runner Git blob
   计算 tracked-input SHA，并使用新 script/checkout 路径；R02 定向 14 passed、组合回归
-  144 passed，实际 LF 上传 payload 的 Bash 语法及 SHA 均通过。当前 Gate 为
-  `OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02 / AUTODL_R02_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
-  R02 本地验证与新 release 冻结后才可精确授权。三个 final
+  144 passed，实际 LF 上传 payload 的 Bash 语法及 SHA 均通过；但 AutoDL R02 在首个
+  Torch import 处因普通 `uv run` 未选择项目 `neural` extra 而退出 1，同样未产生
+  fingerprint、训练、正式输出或 TEST。R03 统一使用 `uv run --extra neural` 和全新
+  script/checkout 路径。当前 Gate 为
+  `OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R03 / AUTODL_R03_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`；
+  R03 本地验证与新 release 冻结后才可精确授权。三个 final
   checkpoint 审计完成前 B09T 继续阻塞。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价

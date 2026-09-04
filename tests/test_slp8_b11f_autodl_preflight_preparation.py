@@ -69,6 +69,9 @@ def test_preflight_script_has_no_training_or_formal_run_flags():
     assert "--environment-preflight" in source
     assert "TRAINING_NOT_STARTED" in source
     assert "TEST=0" in source
+    uv_run_lines = [line.strip() for line in source.splitlines() if line.strip().startswith("uv run ")]
+    assert len(uv_run_lines) == 4
+    assert all("uv run --extra neural python" in line for line in uv_run_lines)
 
 
 def test_script_hash_accepts_only_crlf_to_lf_checkout_normalization(tmp_path: Path):
