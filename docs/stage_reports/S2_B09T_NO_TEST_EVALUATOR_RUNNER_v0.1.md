@@ -13,8 +13,11 @@ region/subject 和 fail-closed CLI 均有直接回归。
 ## Verification
 
 ```text
+uv run python -m pytest tests/test_slp8_b09t_evaluator.py -q
+11 passed
+
 uv run python -m pytest tests/test_slp8_b09t_evaluator.py tests/test_slp8_b09t_protocol.py tests/test_check_markdown_links.py -q
-36 passed
+38 passed
 
 uv run python scripts/run_slp8_b09t_evaluator.py --validate-only
 B09T_EVALUATOR_VALIDATION_PASSED TEST=0 GPU_NOT_RUN EXECUTION_NOT_AUTHORIZED
@@ -35,6 +38,13 @@ PASS
 Synthetic output is ignored and contains exactly one `synthetic_summary.json`: 2 synthetic samples,
 32,256 pixels, one deliberately exercised three-way-disagreement pixel, `test_access=false`,
 `test_rows=0`, `gpu_run=false`. Its metric values are wiring evidence only.
+
+## R02 review fixes
+
+- P1：evaluator 现在在 vote 和 metric 两层都拒绝非 `[N,192,84]` 或空 batch 输入，
+  不再只检查 seed 间 shape 相等。
+- P2：`per_region` 仅输出前景 classes 1..8；background 不再混入该表，只通过独立
+  `background_iou` 字段报告。
 
 ## Boundaries
 

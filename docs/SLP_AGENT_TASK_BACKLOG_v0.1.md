@@ -468,6 +468,8 @@ Reviewer checklist:
 - PR #29 已在 `3e853d7` 独立复审 ACCEPT，并 squash merge 为 `b671b8d`。后续单一任务
   已实现 no-TEST hard-prediction evaluator、仅 validate/synthetic 的 CLI 与 synthetic
   smoke；源码无 B01 TEST loader、opt-in、CUDA 或正式执行入口，当前待独立审查。
+- PR #30 初审 P1/P2 已修：labels 与三个 predictions 均强制 `[N,192,84]` 且非空；
+  `per_region` 只包含 foreground 1..8，background 仅独立报告 `background_iou`。
 
 ## 5. 产品数据后续任务，不属于 SLP
 

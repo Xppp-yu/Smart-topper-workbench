@@ -20,19 +20,22 @@ SCRIPT = ROOT / "scripts/run_slp8_b09t_evaluator.py"
 
 
 def test_vote_majority_all_different_and_unanimous() -> None:
-    p42 = np.array([[[1, 2, 3]]], dtype=np.int64)
-    p123 = np.array([[[1, 4, 3]]], dtype=np.int64)
-    p2026 = np.array([[[5, 6, 3]]], dtype=np.int64)
+    p42 = np.zeros((1, 192, 84), dtype=np.int64)
+    p123 = p42.copy(); p2026 = p42.copy()
+    p42[0, 0, :3] = [1, 2, 3]
+    p123[0, 0, :3] = [1, 4, 3]
+    p2026[0, 0, :3] = [5, 6, 3]
     primary, secondary, three_way = hard_plurality_vote({42: p42, 123: p123, 2026: p2026})
-    assert primary.tolist() == [[[1, 2, 3]]]
-    assert secondary.tolist() == [[[-1, -1, 3]]]
-    assert three_way.tolist() == [[[False, True, False]]]
+    assert primary[0, 0, :3].tolist() == [1, 2, 3]
+    assert secondary[0, 0, :3].tolist() == [-1, -1, 3]
+    assert three_way[0, 0, :3].tolist() == [False, True, False]
 
 
 @pytest.mark.parametrize("bad", [
-    {123: np.zeros((1, 1, 1), dtype=np.int64), 42: np.zeros((1, 1, 1), dtype=np.int64), 2026: np.zeros((1, 1, 1), dtype=np.int64)},
-    {42: np.zeros((1, 1, 1)), 123: np.zeros((1, 1, 1)), 2026: np.zeros((1, 1, 1))},
-    {42: np.full((1, 1, 1), 9), 123: np.zeros((1, 1, 1), dtype=np.int64), 2026: np.zeros((1, 1, 1), dtype=np.int64)},
+    {123: np.zeros((1, 192, 84), dtype=np.int64), 42: np.zeros((1, 192, 84), dtype=np.int64), 2026: np.zeros((1, 192, 84), dtype=np.int64)},
+    {42: np.zeros((1, 192, 84)), 123: np.zeros((1, 192, 84)), 2026: np.zeros((1, 192, 84))},
+    {42: np.full((1, 192, 84), 9), 123: np.zeros((1, 192, 84), dtype=np.int64), 2026: np.zeros((1, 192, 84), dtype=np.int64)},
+    {42: np.zeros((1, 191, 84), dtype=np.int64), 123: np.zeros((1, 191, 84), dtype=np.int64), 2026: np.zeros((1, 191, 84), dtype=np.int64)},
 ])
 def test_vote_rejects_contract_drift(bad) -> None:
     with pytest.raises(B09TEvaluatorError):
@@ -40,14 +43,25 @@ def test_vote_rejects_contract_drift(bad) -> None:
 
 
 def test_evaluator_metrics_and_tie_audit() -> None:
-    labels = np.array([[[1, 2], [0, 0]], [[2, 2], [0, 0]]], dtype=np.int64)
+    labels = np.zeros((2, 192, 84), dtype=np.int64)
+    labels[0, :96] = 1
+    labels[1, 96:] = 2
     p42 = labels.copy(); p123 = labels.copy(); p2026 = labels.copy()
     p123[0, 0, 0] = 3; p2026[0, 0, 0] = 4
     out = evaluate_hard_predictions(labels, {42: p42, 123: p123, 2026: p2026}, ["A", "B"])
     assert out["sample_count"] == 2
     assert out["primary"]["three_way_disagreement_pixel_count"] == 1
-    assert out["primary"]["three_way_disagreement_pixel_fraction"] == pytest.approx(1 / 8)
+    assert out["primary"]["three_way_disagreement_pixel_fraction"] == pytest.approx(1 / labels.size)
     assert set(out["primary"]["per_subject_fixed_foreground_macro_iou"]) == {"A", "B"}
+    assert [row["class_id"] for row in out["primary"]["per_region"]] == list(range(1, 9))
+    assert "background_iou" in out["primary"]
+
+
+def test_evaluator_rejects_non_frozen_label_shape() -> None:
+    labels = np.zeros((1, 192, 83), dtype=np.int64)
+    predictions = {seed: labels.copy() for seed in (42, 123, 2026)}
+    with pytest.raises(B09TEvaluatorError, match="frozen shape"):
+        evaluate_hard_predictions(labels, predictions, ["A"])
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:

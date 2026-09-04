@@ -15,6 +15,7 @@ from topper_perception.evaluation.slp_pressure_metrics import (
 SEED_ORDER: tuple[int, ...] = (42, 123, 2026)
 N_CLASSES = 9
 UNKNOWN_REGION = -1
+INPUT_SHAPE: tuple[int, int] = (192, 84)
 
 
 class B09TEvaluatorError(ValueError):
@@ -36,8 +37,10 @@ def hard_plurality_vote(
     arrays = [np.asarray(predictions_by_seed[seed]) for seed in SEED_ORDER]
     if not arrays or any(array.shape != arrays[0].shape for array in arrays):
         raise B09TEvaluatorError("all seed predictions must have identical non-empty shape")
-    if arrays[0].size == 0:
-        raise B09TEvaluatorError("predictions must be non-empty")
+    if arrays[0].ndim != 3 or arrays[0].shape[0] == 0 or arrays[0].shape[1:] != INPUT_SHAPE:
+        raise B09TEvaluatorError(
+            f"predictions must have frozen shape [N,{INPUT_SHAPE[0]},{INPUT_SHAPE[1]}] with N > 0"
+        )
     for seed, array in zip(SEED_ORDER, arrays):
         if not np.issubdtype(array.dtype, np.integer):
             raise B09TEvaluatorError(f"seed {seed} prediction must have integer dtype")
@@ -61,8 +64,11 @@ def evaluate_hard_predictions(
     """Evaluate already-produced hard predictions without loading any data."""
 
     labels = np.asarray(labels)
-    if labels.ndim != 3 or labels.shape[0] != len(subject_ids):
-        raise B09TEvaluatorError("labels must be [N,H,W] and match subject_ids")
+    if (labels.ndim != 3 or labels.shape[0] == 0 or
+            labels.shape[1:] != INPUT_SHAPE or labels.shape[0] != len(subject_ids)):
+        raise B09TEvaluatorError(
+            f"labels must have frozen shape [N,{INPUT_SHAPE[0]},{INPUT_SHAPE[1]}] with N > 0 and match subject_ids"
+        )
     if not np.issubdtype(labels.dtype, np.integer) or not np.all((labels >= 0) & (labels < N_CLASSES)):
         raise B09TEvaluatorError("labels must be integer class IDs 0..8")
     if any(np.asarray(value).shape != labels.shape for value in predictions_by_seed.values()):
@@ -92,7 +98,7 @@ def evaluate_hard_predictions(
     accepted_count = int(accepted.sum())
     raw_error_count = int(raw_error.sum())
     per_region = []
-    for class_id in range(N_CLASSES):
+    for class_id in DEFAULT_FOREGROUND_CLASS_IDS:
         per_region.append({
             "class_id": class_id,
             "iou": float(all_classes.per_class_iou[class_id]),

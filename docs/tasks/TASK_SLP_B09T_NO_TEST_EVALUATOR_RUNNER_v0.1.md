@@ -20,9 +20,10 @@ synthetic smoke。验证 plurality/tie-break、固定指标与输出 wiring，�
 ## Required behavior
 
 - seed 顺序严格为 42/123/2026。
+- labels 与每个 seed prediction 严格为 `[N,192,84]` 且 `N > 0`。
 - 2/3 majority；三者全异固定 seed 42 tie-break，并报告触发数与比例。
 - unanimous secondary 对任何分歧输出 `UNKNOWN_REGION=-1`。
-- 复用 fixed foreground classes 1..8、空类计 0 的指标实现。
+- `per_region` 严格只含 foreground classes 1..8、空类计 0；background 仅单独报告。
 - CLI 只有 `--validate-only` 和 `--synthetic-smoke`；不存在正式执行模式。
 - synthetic 只接受 `SMOKE-B09T-*`，拒绝既有输出且不覆盖。
 - 源码不得引用 TEST opt-in/B01 loader/CUDA/formal run flag。
