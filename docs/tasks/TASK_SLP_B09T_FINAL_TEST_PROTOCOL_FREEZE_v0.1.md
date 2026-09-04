@@ -20,7 +20,9 @@ ensemble 规则、指标、失败终态、证据输出和 anti-adaptation 规则
 ## 3. Frozen decisions
 
 - 输入仅为已审计 B11F R02 的 seeds 42/123/2026 final checkpoint。
-- primary prediction 是三 hard mask 的逐像素 majority vote。
+- primary prediction 是三 hard mask 的逐像素 plurality vote：有 2/3 majority 时取多数类；
+  三者全异时预先固定取 seed 42 hard prediction，并报告该分支的像素数与比例。该规则只补全
+  原 majority 合同的未定义分支，不允许根据 TEST 改 tie-break。
 - primary metric 是 pooled fixed foreground（classes 1..8）macro IoU；空类固定计 0。
 - 同时报 pooled Dice、background、逐 region、逐 subject、worst subject 和 pixel accuracy。
 - 3/3 unanimous reject 仅作 secondary research readout；不是概率、OOD 或安全机制。

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.validate_slp8_b09t_protocol import validate
+from scripts.validate_slp8_b09t_protocol import canonical_protocol_sha256, validate
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +28,7 @@ def test_frozen_protocol_passes_without_test_access() -> None:
     source = (ROOT / "scripts/validate_slp8_b09t_protocol.py").read_text(encoding="utf-8")
     assert "enable_test_access(" not in source
     assert "load_test=True" not in source
+    assert len(canonical_protocol_sha256(_payload())) == 64
 
 
 @pytest.mark.parametrize(
@@ -44,6 +45,15 @@ def test_frozen_protocol_passes_without_test_access() -> None:
         lambda d: d["frozen_metrics"].__setitem__("primary", "pixel_accuracy"),
         lambda d: d["frozen_metrics"].__setitem__("empty_foreground_class_policy", "skip"),
         lambda d: d["anti_adaptation"].__setitem__("no_test_driven_rerun", False),
+        lambda d: d.__setitem__("b11f_runner_git_commit", "f" * 40),
+        lambda d: d.__setitem__("b01_freeze_manifest_sha256", "f" * 64),
+        lambda d: d.__setitem__("candidate_id", "replacement_candidate"),
+        lambda d: d.__setitem__("b11f_experiment_id", "EXP-REPLACED"),
+        lambda d: d.__setitem__("fail_closed", []),
+        lambda d: d["frozen_metrics"].__setitem__("secondary", []),
+        lambda d: d.__setitem__("required_outputs", ["DONE.json_or_FAILED.json"]),
+        lambda d: d["prediction_contract"].__setitem__("three_way_disagreement_rule", "undefined"),
+        lambda d: d["prediction_contract"].pop("three_way_disagreement_audit"),
     ],
 )
 def test_protocol_drift_fails_closed(tmp_path: Path, mutate) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -13,6 +14,12 @@ HEX40 = re.compile(r"^[0-9a-f]{40}$")
 EXPECTED_SEEDS = {42: (15, "633aed4a25aa2cfc42208ef3c610a78aed3569acf0d75fddd47361623e655af3"),
                   123: (20, "e63415455816ea14dbbec4c54e9fd3c6c2f48be08de96fc8e60d2e1e94f7ffd5"),
                   2026: (12, "1ce88a9b1b4797bd158795f3e796e3682970ba881e76d7fc8759f70bb2c7578f")}
+EXPECTED_CANONICAL_PROTOCOL_SHA256 = "479d311cfa549d5851f9fc16bee28f1d16a4c2fe5796b6d59b68e39be1bc2690"
+
+
+def canonical_protocol_sha256(data: dict) -> str:
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def validate(path: Path) -> list[str]:
@@ -23,11 +30,16 @@ def validate(path: Path) -> list[str]:
         if not condition:
             errors.append(message)
 
+    require(canonical_protocol_sha256(data) == EXPECTED_CANONICAL_PROTOCOL_SHA256,
+            "canonical protocol identity drift")
+
     require(data.get("status") == "PROTOCOL_ONLY_TEST_NOT_AUTHORIZED", "status must keep TEST unauthorized")
     require(data.get("evaluation_mode") == "single_one_time_final_evaluation", "evaluation must be single and one-time")
+    require(data.get("candidate_id") == "slp8_pm_research_candidate_v0.1", "candidate identity drift")
     require(data.get("model_family") == "slp8_deeplabv3plus_lite_v0.1", "model family drift")
-    require(HEX40.fullmatch(str(data.get("b11f_runner_git_commit", ""))) is not None, "runner SHA must be 40 lowercase hex")
-    require(HEX64.fullmatch(str(data.get("b01_freeze_manifest_sha256", ""))) is not None, "B01 SHA must be 64 lowercase hex")
+    require(data.get("b11f_experiment_id") == "EXP-SLP-B11F-PM-FINAL-FIT-20260904-AUTODL-R02", "B11F EXP-ID drift")
+    require(data.get("b11f_runner_git_commit") == "a6a5d8e6f8db003149169ee48f71d6e41e445a80", "runner SHA drift")
+    require(data.get("b01_freeze_manifest_sha256") == "42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04", "B01 SHA drift")
     cohort = data.get("test_cohort", {})
     require(cohort.get("expected_subjects") == 11 and cohort.get("expected_samples") == 495, "frozen TEST structural counts drift")
     require(cohort.get("subject_isolation_required") is True, "subject isolation must be required")
@@ -38,7 +50,10 @@ def validate(path: Path) -> list[str]:
     require(all(HEX64.fullmatch(str(item.get("sha256", ""))) for item in checkpoints), "checkpoint SHA must be 64 lowercase hex")
 
     pred = data.get("prediction_contract", {})
-    require(pred.get("primary") == "per_pixel_majority_vote_across_three_seed_hard_predictions", "primary prediction drift")
+    require(pred.get("primary") == "per_pixel_plurality_vote_across_three_seed_hard_predictions", "primary prediction drift")
+    require(pred.get("majority_rule") == "if_any_class_has_at_least_2_votes_select_it", "majority rule drift")
+    require(pred.get("three_way_disagreement_rule") == "select_seed_42_hard_prediction", "three-way disagreement rule drift")
+    require(pred.get("three_way_disagreement_audit") == "report_pixel_count_and_fraction", "three-way disagreement audit missing")
     require(pred.get("class_order") == list(range(9)), "class order must be 0..8")
     require("not_probability_not_OOD_not_safety" in str(pred.get("unknown_semantics", "")), "UNKNOWN limitations missing")
 

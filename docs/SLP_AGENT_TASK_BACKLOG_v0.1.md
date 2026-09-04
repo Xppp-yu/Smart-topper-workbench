@@ -462,6 +462,9 @@ Reviewer checklist:
   foreground macro IoU（classes 1..8，空类计 0）、secondary readout、11 subjects / 495
   samples 结构合同与 anti-adaptation 规则。当前配置保持 `test_authorized=false`、
   `load_test=false`、`execution_authorized=false`；独立审查通过前不进入 evaluator 实现。
+- PR #29 初审两项 P1 已修：validator 现在锁定完整 canonical protocol identity，并精确
+  核对 runner/B01/candidate/EXP-ID/checkpoint 及全部合同字段；三模型 hard prediction
+  全异时固定取 seed 42 作为预声明 tie-break，同时强制报告触发像素数与比例。
 
 ## 5. 产品数据后续任务，不属于 SLP
 

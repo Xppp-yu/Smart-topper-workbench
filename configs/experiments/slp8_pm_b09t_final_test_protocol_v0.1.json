@@ -39,7 +39,11 @@
     }
   ],
   "prediction_contract": {
-    "primary": "per_pixel_majority_vote_across_three_seed_hard_predictions",
+    "primary": "per_pixel_plurality_vote_across_three_seed_hard_predictions",
+    "majority_rule": "if_any_class_has_at_least_2_votes_select_it",
+    "three_way_disagreement_rule": "select_seed_42_hard_prediction",
+    "three_way_disagreement_audit": "report_pixel_count_and_fraction",
+    "tie_break_rationale": "predeclared_deterministic_complete_9_class_prediction_no_test_adaptation",
     "optional_secondary": "unanimous_3_of_3_or_UNKNOWN_REGION",
     "unknown_semantics": "hard_prediction_disagreement_not_probability_not_OOD_not_safety",
     "class_order": [0, 1, 2, 3, 4, 5, 6, 7, 8]
@@ -52,7 +56,8 @@
       "per_region_iou_dice_precision_recall_support",
       "per_subject_fixed_foreground_macro_iou",
       "worst_subject_fixed_foreground_macro_iou",
-      "pixel_accuracy"
+      "pixel_accuracy",
+      "three_way_disagreement_pixel_count_and_fraction"
     ],
     "optional_reject_readout": [
       "unanimous_pixel_coverage",
