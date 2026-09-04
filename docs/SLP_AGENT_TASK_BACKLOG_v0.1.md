@@ -374,17 +374,17 @@ Reviewer checklist:
 
 ### TASK-SLP-B11：SLP 研究候选冻结
 
-- 状态：`CANDIDATE_CONTRACT_ACCEPTED / FINAL_FIT_NOT_RUN / TEST_DENIED`。
+- 状态：`CANDIDATE_CONTRACT_ACCEPTED / FINAL_FIT_R02_ACCEPTED / TEST_DENIED`。
 - 已冻结 `slp8_pm_research_candidate_v0.1`：DeepLabV3+-lite、danaLab/uncover
-  pressure-only、192×84 九类 mask。未来 B11F 在全部 91 development subjects 上
-  训练 seeds 42/123/2026，固定 epochs 15/20/12；当前 GPU/final checkpoint 均未运行。
+  pressure-only、192×84 九类 mask。B11F R02 已在全部 91 development subjects 上
+  完成 seeds 42/123/2026，固定 epochs 15/20/12；三个 final checkpoint 已独立审计通过。
 - primary 为三模型 hard majority；3/3 可选 `UNKNOWN_REGION` 拒识仅为有限研究信号，
   不是概率 confidence、OOD 或安全机制。
 - 禁止：宣称气囊控制、舒适性或产品效果。
 
 ### TASK-SLP-B11F：最终开发集拟合
 
-- 状态：`R01_FAILED_BEFORE_TRAINING_LOOP / RUNTIME_FIX_ACCEPTED / PRODUCTION_WIRING_SMOKE_NEXT / GPU_NOT_AUTHORIZED / TEST_DENIED`。
+- 状态：`R01_FAILED_IMMUTABLE / FINAL_FIT_R02_ACCEPTED / THREE_CHECKPOINTS_AUDITED / TEST_DENIED`。
 - 已实现冻结 DeepLabV3+-lite 在全部 91 development subjects / 4,095 TRAIN+VAL
   samples 上的三 seed final-fit 入口，固定 epochs 15/20/12，不使用 early stopping，
   不产生伪 validation 分数。
@@ -446,10 +446,15 @@ Reviewer checklist:
   `TASK-SLP-B11F-FINAL-FIT-R02-AUTHORIZATION-PACKAGE-v0.1`，固定新 EXP-ID、runner/bundle/
   config/candidate/B01/environment/launcher SHA、连续 2700 秒预算及 fail-closed run/resume
   wrapper；当前仍为 `GPU_NOT_AUTHORIZED / TEST_DENIED`。
+- Owner 随后精确授权正式 R02 `run`。R02 唯一根终态为 DONE，三 seed 按 15/20/12
+  fixed epochs 完成；三 final checkpoint 的 SHA/reload、六 checkpoint 的 identity/有限数值、
+  environment/budget carrier 和 TEST=0 均独立审计 `ACCEPT`。证据 archive SHA-256 为
+  `a5a98916b79dca55366d6df6a8cd19df375fdb775b6e30ea775b8578cde70dad`。空 transcript
+  和误捕获的 post-run exitcode=1 作为永久 provenance limitation 保留，不覆盖原证据。
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 
-- 状态：`BLOCKED_BY_B11F_FINAL_FIT_AND_SEPARATE_OWNER_AUTHORIZATION`。
+- 状态：`PROTOCOL_DRAFT_READY / EXECUTION_BLOCKED_BY_SEPARATE_OWNER_AUTHORIZATION / TEST_DENIED`。
 - 目标：候选、代码、超参数、阈值、选择规则和报告模板全部冻结后，对 B01 TEST subjects 执行一次最终评价。
 - 授权：必须由 Owner 单独授权 `purpose="final_evaluation"`，并由 Runner 显式 `load_test=True` 重新加载。
 - 禁止：根据 TEST 结果回到 B04A/B07 调参或改候选；如发现协议/实现缺陷，原 TEST 结果标记 INVALID，修复和任何重测必须新 TASK/EXP 并单独说明污染风险。
