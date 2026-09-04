@@ -454,10 +454,17 @@ Reviewer checklist:
 
 ### TASK-SLP-B09T：一次性最终 TEST 评价
 
-- 状态：`PROTOCOL_DRAFT_READY / EXECUTION_BLOCKED_BY_SEPARATE_OWNER_AUTHORIZATION / TEST_DENIED`。
+- 状态：`PROTOCOL_READY_FOR_INDEPENDENT_REVIEW / EXECUTION_NOT_AUTHORIZED / TEST_DENIED`。
 - 目标：候选、代码、超参数、阈值、选择规则和报告模板全部冻结后，对 B01 TEST subjects 执行一次最终评价。
 - 授权：必须由 Owner 单独授权 `purpose="final_evaluation"`，并由 Runner 显式 `load_test=True` 重新加载。
 - 禁止：根据 TEST 结果回到 B04A/B07 调参或改候选；如发现协议/实现缺陷，原 TEST 结果标记 INVALID，修复和任何重测必须新 TASK/EXP 并单独说明污染风险。
+- 协议 v0.1 已绑定 B11F R02 三个 final SHA，冻结 hard-majority primary、pooled fixed
+  foreground macro IoU（classes 1..8，空类计 0）、secondary readout、11 subjects / 495
+  samples 结构合同与 anti-adaptation 规则。当前配置保持 `test_authorized=false`、
+  `load_test=false`、`execution_authorized=false`；独立审查通过前不进入 evaluator 实现。
+- PR #29 初审两项 P1 已修：validator 现在锁定完整 canonical protocol identity，并精确
+  核对 runner/B01/candidate/EXP-ID/checkpoint 及全部合同字段；三模型 hard prediction
+  全异时固定取 seed 42 作为预声明 tie-break，同时强制报告触发像素数与比例。
 
 ## 5. 产品数据后续任务，不属于 SLP
 
