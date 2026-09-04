@@ -49,8 +49,9 @@ def test_current_preflight_preparation_is_valid():
         (lambda p: p["test_gate"].__setitem__("test_rows", 1), "TEST"),
         (lambda p: p["bundle"].__setitem__("sha256", "0" * 64), "bundle SHA-256 mismatch"),
         (lambda p: p["preflight"].__setitem__("script_sha256", "0" * 64), "script SHA-256 mismatch"),
+        (lambda p: p["preflight"].__setitem__("remote_script_path", "/tmp/drift"), "remote preflight script path"),
         (lambda p: p["preflight"].__setitem__("checkout_path", "/tmp/drift"), "fixed remote path"),
-        (lambda p: p["inputs"]["candidate"].__setitem__("sha256", "0" * 64), "candidate SHA-256 mismatch"),
+        (lambda p: p["inputs"]["candidate"].__setitem__("sha256", "0" * 64), "candidate Git blob SHA-256 mismatch"),
     ],
 )
 def test_manifest_drift_fails_closed(tmp_path: Path, mutation, expected: str):
@@ -68,3 +69,14 @@ def test_preflight_script_has_no_training_or_formal_run_flags():
     assert "--environment-preflight" in source
     assert "TRAINING_NOT_STARTED" in source
     assert "TEST=0" in source
+
+
+def test_script_hash_accepts_only_crlf_to_lf_checkout_normalization(tmp_path: Path):
+    payload = _payload()
+    source = (ROOT / payload["preflight"]["script"]).read_bytes().replace(b"\r\n", b"\n")
+    crlf = tmp_path / "preflight.sh"
+    crlf.write_bytes(source.replace(b"\n", b"\r\n"))
+    assert _module()._sha256_lf_normalized(crlf) == payload["preflight"]["script_sha256"]
+
+    crlf.write_bytes(crlf.read_bytes() + b"# drift\r\n")
+    assert _module()._sha256_lf_normalized(crlf) != payload["preflight"]["script_sha256"]

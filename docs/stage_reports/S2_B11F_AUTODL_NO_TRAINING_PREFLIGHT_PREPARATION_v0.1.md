@@ -17,16 +17,19 @@
   `5e9d855397face954cac18e3dbadb26449129f828f77d45412b3c4f30d8e6bb2`
 - Bundle size: `2,150,560 bytes`
 - Preflight script SHA-256:
-  `e9cdf8240cf5e2fe10020adb5325657b9ef53b1907f079b05edb10cc87cd85bb`
+  `a6dc9a6530ebe0af33659c95fd833a51ee4d6c960ee8d77469f8470557d0327e`
 - Final-fit config SHA-256:
   `a6590d6f068644d98fa5340ec3d4a2e02171b529ec22ab092efb54a298925a43`
 - Candidate SHA-256:
-  `839c9482c69cf34d3c91c3acb3c7a36cb4d199117d0d6eb2ceb7906bac52b994`
+  `34f0fcf45d07920b99b7baf6d595f61297f086ff3187c9ec9b3bd69400b2cd4b`
 - B01 freeze manifest SHA-256:
   `42e3cbec9def2d735dc02de3343b8dbf830960f2c9ff2ca16b90c3f46dcf3e04`
 - Formal EXP-ID: `NONE / NOT RESERVED`
 
-The old R01 EXP-ID and authorization remain consumed and cannot be resumed, overwritten or reused.
+The old final-fit R01 EXP-ID and authorization remain consumed and cannot be resumed, overwritten or
+reused. AutoDL no-training preflight R01 failed closed before environment collection because the
+Windows candidate working-tree SHA was incorrectly bound instead of the Linux Git blob SHA. R02 uses
+a new script hash, script path and checkout path; R01 evidence remains untouched.
 
 ## 3. Prepared boundary
 
@@ -65,20 +68,23 @@ Temporary-directory bundle clone and detached checkout probe
 PASS; HEAD=origin/main=a6a5d8e6f8db003149169ee48f71d6e41e445a80; dirty=false.
 
 uv run python scripts/validate_slp8_b11f_autodl_preflight_preparation.py
-PASS; exact bundle/script/input hashes; TEST=0; AUTODL_NOT_AUTHORIZED; GPU_NOT_RUN.
+PASS; exact bundle/script/input hashes; TEST=0; AUTODL_R02_NOT_AUTHORIZED; GPU_NOT_RUN.
 
 uv run python -m pytest tests/test_slp8_b11f_autodl_preflight_preparation.py -q
-12 passed in 1.87s.
+14 passed in 5.07s.
 
 uv run python -m pytest tests/test_slp8_b11f_autodl_preflight_preparation.py \
   tests/test_slp8_b11f_production_wiring.py \
   tests/test_slp8_region_final_fit.py \
   tests/test_slp8_b11_candidate_freeze.py \
   tests/test_slp8_region_full.py -q
-142 passed in 151.61s.
+144 passed in 189.49s.
 
-bash -n scripts/preflight_slp8_b11f_autodl_no_training.sh
-PASS.
+bash -n outputs/analysis/preflight_slp8_b11f_autodl_no_training_r02.lf.sh
+PASS against the exact ignored LF transfer payload.
+
+Get-FileHash -Algorithm SHA256 outputs/analysis/preflight_slp8_b11f_autodl_no_training_r02.lf.sh
+PASS; A6DC9A6530EBE0AF33659C95FD833A51EE4D6C960EE8D77469F8470557D0327E.
 
 uv run python -m py_compile scripts/validate_slp8_b11f_autodl_preflight_preparation.py
 PASS.
@@ -103,7 +109,8 @@ git rev-list --left-right --count HEAD...origin/main
 
 - The bundle contains the exact frozen runner SHA as `refs/heads/main`, verifies as complete history,
   and can recreate a clean detached checkout.
-- The manifest pins the bundle, preflight script, config, candidate and B01 manifest by SHA-256.
+- The manifest pins the bundle, LF-normalized preflight payload, config/candidate Git blobs and B01
+  manifest by SHA-256.
 - The prepared script has no formal EXP-ID and no run/resume/output authorization flags.
 - Local static validation and regression tests preserve `TEST=0`, `GPU_NOT_RUN` and
   `AUTODL_NOT_AUTHORIZED`.
@@ -116,12 +123,21 @@ git rev-list --left-right --count HEAD...origin/main
   environment fingerprint without training. This remains conditional until execution evidence is
   reviewed.
 
+### AutoDL R01 fail-closed evidence
+
+- Bundle SHA, runner SHA, config SHA and B01 SHA matched.
+- Candidate Git blob on AutoDL was `34f0fcf4...00b2cd4b`; R01 expected the Windows CRLF working-tree
+  hash `839c9482...bac52b994` and exited `1` at that check.
+- Dataset root existed, the only experiment-output entry was tracked `.gitkeep`, and GPU identity was
+  exactly `NVIDIA GeForce RTX 4090`.
+- `uv` and `screen` were present; `tmux` was absent.
+- No environment fingerprint, training data, formal EXP-ID, checkpoint, GPU training or TEST was
+  reached.
+
 ### Unverified / NOT RUN
 
-- AutoDL connection and remote filesystem state: `NOT RUN`.
-- Real RTX 4090, CUDA, PyTorch and cuDNN environment: `NOT RUN`.
-- The prepared shell script on AutoDL: `NOT RUN`.
-- Real remote bundle/input SHA checks and environment fingerprint: `NOT RUN`.
+- R02 exact script upload and fresh checkout: `NOT RUN`.
+- Real PyTorch/CUDA/cuDNN payload and canonical environment fingerprint: `NOT RUN`.
 - GPU final fit, resume, wall-time/VRAM behavior and three final checkpoints: `NOT RUN`.
 - TEST loading or final evaluation: `NOT RUN / DENIED`.
 
@@ -140,4 +156,4 @@ formal EXP-ID or GPU final fit authorization.
 
 ## 8. Current Gate
 
-`OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT / AUTODL_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`
+`OWNER_AUTHORIZATION_FOR_EXACT_AUTODL_NO_TRAINING_PREFLIGHT_R02 / AUTODL_R02_NOT_AUTHORIZED / GPU_NOT_AUTHORIZED / TEST_DENIED`
